@@ -791,6 +791,10 @@ int cmcmd::ExecuteCMakeCommand(std::vector<std::string> const& args,
     }
 
     if (args[1] == "env") {
+#ifndef CMAKE_BOOTSTRAP
+      cmSystemTools::EnvDiff env;
+#endif
+
       auto ai = args.cbegin() + 2;
       auto ae = args.cend();
       for (; ai != ae; ++ai) {
@@ -803,16 +807,40 @@ int cmcmd::ExecuteCMakeCommand(std::vector<std::string> const& args,
         }
         if (cmHasLiteralPrefix(a, "--unset=")) {
           // Unset environment variable.
+#ifdef CMAKE_BOOTSTRAP
           cmSystemTools::UnPutEnv(a.substr(8));
+#else
+          env.UnPutEnv(a.substr(8));
+#endif
+        } else if (a == "--modify") {
+#ifdef CMAKE_BOOTSTRAP
+          std::cerr
+            << "cmake -E env: --modify not available during bootstrapping\n";
+          return 1;
+#else
+          if (++ai == ae) {
+            std::cerr << "cmake -E env: --modify missing a parameter\n";
+            return 1;
+          }
+          std::string const& op = *ai;
+          if (!env.ParseOperation(op)) {
+            std::cerr << "cmake -E env: invalid parameter to --modify: " << op
+                      << '\n';
+            return 1;
+          }
+#endif
         } else if (!a.empty() && a[0] == '-') {
           // Environment variable and command names cannot start in '-',
           // so this must be an unknown option.
-          std::cerr << "cmake -E env: unknown option '" << a << '\''
-                    << std::endl;
+          std::cerr << "cmake -E env: unknown option '" << a << "'\n";
           return 1;
         } else if (a.find('=') != std::string::npos) {
           // Set environment variable.
+#ifdef CMAKE_BOOTSTRAP
           cmSystemTools::PutEnv(a);
+#else
+          env.PutEnv(a);
+#endif
         } else {
           // This is the beginning of the command.
           break;
@@ -820,9 +848,13 @@ int cmcmd::ExecuteCMakeCommand(std::vector<std::string> const& args,
       }
 
       if (ai == ae) {
-        std::cerr << "cmake -E env: no command given" << std::endl;
+        std::cerr << "cmake -E env: no command given\n";
         return 1;
       }
+
+#ifndef CMAKE_BOOTSTRAP
+      env.ApplyToCurrentEnv();
+#endif
 
       // Execute command from remaining arguments.
       std::vector<std::string> cmd(ai, ae);
@@ -2242,13 +2274,18 @@ bool cmVSLink::Parse(std::vector<std::string>::const_iterator argBeg,
   // Parse the link command to extract information we need.
   for (; arg != argEnd; ++arg) {
     if (cmSystemTools::Strucmp(arg->c_str(), "/INCREMENTAL:YES") == 0 ||
-        cmSystemTools::Strucmp(arg->c_str(), "/INCREMENTAL") == 0) {
+        cmSystemTools::Strucmp(arg->c_str(), "-INCREMENTAL:YES") == 0 ||
+        cmSystemTools::Strucmp(arg->c_str(), "/INCREMENTAL") == 0 ||
+        cmSystemTools::Strucmp(arg->c_str(), "-INCREMENTAL") == 0) {
       this->Incremental = true;
-    } else if (cmSystemTools::Strucmp(arg->c_str(), "/MANIFEST:NO") == 0) {
+    } else if (cmSystemTools::Strucmp(arg->c_str(), "/MANIFEST:NO") == 0 ||
+               cmSystemTools::Strucmp(arg->c_str(), "-MANIFEST:NO") == 0) {
       this->LinkGeneratesManifest = false;
-    } else if (cmHasLiteralPrefix(*arg, "/Fe")) {
+    } else if (cmHasLiteralPrefix(*arg, "/Fe") ||
+               cmHasLiteralPrefix(*arg, "-Fe")) {
       this->TargetFile = arg->substr(3);
-    } else if (cmHasLiteralPrefix(*arg, "/out:")) {
+    } else if (cmHasLiteralPrefix(*arg, "/out:") ||
+               cmHasLiteralPrefix(*arg, "-out:")) {
       this->TargetFile = arg->substr(5);
     }
   }

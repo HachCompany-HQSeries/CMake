@@ -51,6 +51,7 @@ is equivalent to
   To ensure consistency of the code, the following commands are not allowed:
 
   * ``if`` / ``elseif`` / ``else`` / ``endif``
+  * ``block`` / ``endblock``
   * ``while`` / ``endwhile``
   * ``foreach`` / ``endforeach``
   * ``function`` / ``endfunction``
@@ -510,7 +511,8 @@ into the given ``<output_variable>``.
 
 See :command:`message` for the possible logging levels.
 
-The current message logging level can be set either using the ``--log-level``
+The current message logging level can be set either using the
+:option:`--log-level <cmake --log-level>`
 command line option of the :manual:`cmake(1)` program or using
 the :variable:`CMAKE_MESSAGE_LOG_LEVEL` variable.
 

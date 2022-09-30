@@ -111,6 +111,7 @@ Commands
     FetchContent_Declare(
       <name>
       <contentOptions>...
+      [SYSTEM]
       [OVERRIDE_FIND_PACKAGE |
        FIND_PACKAGE_ARGS args...]
     )
@@ -229,6 +230,16 @@ Commands
       to intercept any direct call to :command:`find_package`, except if that
       call contains the ``BYPASS_PROVIDER`` option.
 
+  .. versionadded:: 3.25
+
+    ``SYSTEM``
+      If the ``SYSTEM`` argument is provided, targets created by
+      the dependency will have their :prop_tgt:`SYSTEM` property
+      set to true when populated by :command:`FetchContent_MakeAvailable`.
+      The entries in their  :prop_tgt:`INTERFACE_INCLUDE_DIRECTORIES`
+      will be treated as ``SYSTEM`` include directories when
+      compiling consumers.
+
 .. command:: FetchContent_MakeAvailable
 
   .. versionadded:: 3.14
@@ -303,13 +314,16 @@ Commands
       ``<lowercaseName>-extra.cmake`` or ``<name>Extra.cmake`` file with the
       ``OPTIONAL`` flag (so the files can be missing and won't generate a
       warning).  Similarly, if no config version file exists, a very simple
-      one will be written which sets ``PACKAGE_VERSION_COMPATIBLE`` to true.
+      one will be written which sets ``PACKAGE_VERSION_COMPATIBLE`` and
+      ``PACKAGE_VERSION_EXACT`` to true.  This ensures all future calls to
+      :command:`find_package()` for the dependency will use the redirected
+      config file, regardless of any version requirements.
       CMake cannot automatically determine an arbitrary dependency's version,
-      so it cannot set ``PACKAGE_VERSION`` or ``PACKAGE_VERSION_EXACT``.
+      so it cannot set ``PACKAGE_VERSION``.
       When a dependency is pulled in via :command:`add_subdirectory` in the
       next step, it may choose to overwrite the generated config version file
       in :variable:`CMAKE_FIND_PACKAGE_REDIRECTS_DIR` with one that also sets
-      ``PACKAGE_VERSION``, and if appropriate, ``PACKAGE_VERSION_EXACT``.
+      ``PACKAGE_VERSION``.
       The dependency may also write a ``<lowercaseName>-extra.cmake`` or
       ``<name>Extra.cmake`` file to perform custom processing or define any
       variables that their normal (installed) package config file would
@@ -363,6 +377,18 @@ Commands
     FetchContent_Declare(uses_other ...)
     FetchContent_Declare(other ...)
     FetchContent_MakeAvailable(uses_other other)
+
+  Note that :variable:`CMAKE_VERIFY_INTERFACE_HEADER_SETS` is explicitly set
+  to false upon entry to ``FetchContent_MakeAvailable()``, and is restored to
+  its original value before the command returns.  Developers typically only
+  want to verify header sets from the main project, not those from any
+  dependencies.  This local manipulation of the
+  :variable:`CMAKE_VERIFY_INTERFACE_HEADER_SETS` variable provides that
+  intuitive behavior.  You can use variables like
+  :variable:`CMAKE_PROJECT_INCLUDE` or
+  :variable:`CMAKE_PROJECT_<PROJECT-NAME>_INCLUDE` to turn verification back
+  on for all or some dependencies.  You can also set the
+  :prop_tgt:`VERIFY_INTERFACE_HEADER_SETS` property of individual targets.
 
 .. command:: FetchContent_Populate
 
@@ -760,7 +786,7 @@ to the declared details and leaving
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG        703bd9caab50b139428cea1aaff9974ebee5742e # release-1.10.0
-    FIND_PACKAGE_ARGS NAMES gtest
+    FIND_PACKAGE_ARGS NAMES GTest
   )
   FetchContent_Declare(
     Catch2
@@ -774,7 +800,7 @@ to the declared details and leaving
 
 For ``Catch2``, no additional arguments to :command:`find_package` are needed,
 so no additional arguments are provided after the ``FIND_PACKAGE_ARGS``
-keyword.  For ``googletest``, its package is more commonly called ``gtest``,
+keyword.  For ``googletest``, its package is more commonly called ``GTest``,
 so arguments are added to support it being found by that name.
 
 If the user wanted to disable :command:`FetchContent_MakeAvailable` from
@@ -810,7 +836,7 @@ details:
 
 CMake provides a FindGTest module which defines some variables that older
 projects may use instead of linking to the imported targets.  To support
-those cases, we can provide an extras file.  In keeping with the
+those cases, we can provide an extra file.  In keeping with the
 "first to define, wins" philosophy of ``FetchContent``, we only write out
 that file if something else hasn't already done so.
 
@@ -818,9 +844,9 @@ that file if something else hasn't already done so.
 
   FetchContent_MakeAvailable(googletest)
 
-  if(NOT EXISTS ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/googletest-extras.cmake AND
-     NOT EXISTS ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/googletestExtras.cmake)
-    file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/googletest-extras.cmake
+  if(NOT EXISTS ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/googletest-extra.cmake AND
+     NOT EXISTS ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/googletestExtra.cmake)
+    file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/googletest-extra.cmake
   [=[
   if("${GTEST_LIBRARIES}" STREQUAL "" AND TARGET GTest::gtest)
     set(GTEST_LIBRARIES GTest::gtest)
@@ -869,9 +895,10 @@ Overriding Where To Find CMakeLists.txt
 
 If the sub-project's ``CMakeLists.txt`` file is not at the top level of its
 source tree, the ``SOURCE_SUBDIR`` option can be used to tell ``FetchContent``
-where to find it.  The following example shows how to use that option and
+where to find it.  The following example shows how to use that option, and
 it also sets a variable which is meaningful to the subproject before pulling
-it into the main build:
+it into the main build (set as an ``INTERNAL`` cache variable to avoid
+problems with policy :policy:`CMP0077`):
 
 .. code-block:: cmake
 
@@ -882,7 +909,7 @@ it into the main build:
     GIT_TAG        ae50d9b9902526efd6c7a1907d09739f959c6297 # v3.15.0
     SOURCE_SUBDIR  cmake
   )
-  set(protobuf_BUILD_TESTS OFF)
+  set(protobuf_BUILD_TESTS OFF CACHE INTERNAL "")
   FetchContent_MakeAvailable(protobuf)
 
 Complex Dependency Hierarchies
@@ -1189,19 +1216,18 @@ function(FetchContent_Declare contentName)
     )
   endif()
 
-  set(options "")
+  # Because we are only looking for a subset of the supported keywords, we
+  # cannot check for multi-value arguments with this method. We will have to
+  # handle the URL keyword differently.
   set(oneValueArgs
     SVN_REPOSITORY
     DOWNLOAD_NO_EXTRACT
     DOWNLOAD_EXTRACT_TIMESTAMP
-    URL
     BINARY_DIR
     SOURCE_DIR
   )
-  set(multiValueArgs "")
 
-  cmake_parse_arguments(PARSE_ARGV 1 ARG
-    "${options}" "${oneValueArgs}" "${multiValueArgs}")
+  cmake_parse_arguments(PARSE_ARGV 1 ARG "" "${oneValueArgs}" "")
 
   string(TOLOWER ${contentName} contentNameLower)
 
@@ -1230,31 +1256,45 @@ function(FetchContent_Declare contentName)
   # explicitly set the relevant option if not already provided. The condition
   # here is essentially an abbreviated version of the logic in
   # ExternalProject's _ep_add_download_command() function.
-  if(ARG_URL AND
-     NOT IS_DIRECTORY "${ARG_URL}" AND
-     NOT ARG_DOWNLOAD_NO_EXTRACT AND
+  if(NOT ARG_DOWNLOAD_NO_EXTRACT AND
      NOT DEFINED ARG_DOWNLOAD_EXTRACT_TIMESTAMP)
-    cmake_policy(GET CMP0135 _FETCHCONTENT_CMP0135
-      PARENT_SCOPE # undocumented, do not use outside of CMake
-    )
-    if(_FETCHCONTENT_CMP0135 STREQUAL "")
-      message(AUTHOR_WARNING
-        "The DOWNLOAD_EXTRACT_TIMESTAMP option was not given and policy "
-        "CMP0135 is not set. The policy's OLD behavior will be used. "
-        "When using a URL download, the timestamps of extracted files "
-        "should preferably be that of the time of extraction, otherwise "
-        "code that depends on the extracted contents might not be "
-        "rebuilt if the URL changes. The OLD behavior preserves the "
-        "timestamps from the archive instead, but this is usually not "
-        "what you want. Update your project to the NEW behavior or "
-        "specify the DOWNLOAD_EXTRACT_TIMESTAMP option with a value of "
-        "true to avoid this robustness issue."
-      )
-      set(ARG_DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-    elseif(_FETCHCONTENT_CMP0135 STREQUAL "NEW")
-      set(ARG_DOWNLOAD_EXTRACT_TIMESTAMP FALSE)
-    else()
-      set(ARG_DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    list(FIND ARGN URL urlIndex)
+    if(urlIndex GREATER_EQUAL 0)
+      math(EXPR urlIndex "${urlIndex} + 1")
+      list(LENGTH ARGN numArgs)
+      if(urlIndex GREATER_EQUAL numArgs)
+        message(FATAL_ERROR
+          "URL keyword needs to be followed by at least one URL"
+        )
+      endif()
+      # If we have multiple URLs, none of them are allowed to be local paths.
+      # Therefore, we can test just the first URL, and if it is non-local, so
+      # will be the others if there are more.
+      list(GET ARGN ${urlIndex} firstUrl)
+      if(NOT IS_DIRECTORY "${firstUrl}")
+        cmake_policy(GET CMP0135 _FETCHCONTENT_CMP0135
+          PARENT_SCOPE # undocumented, do not use outside of CMake
+        )
+        if(_FETCHCONTENT_CMP0135 STREQUAL "")
+          message(AUTHOR_WARNING
+            "The DOWNLOAD_EXTRACT_TIMESTAMP option was not given and policy "
+            "CMP0135 is not set. The policy's OLD behavior will be used. "
+            "When using a URL download, the timestamps of extracted files "
+            "should preferably be that of the time of extraction, otherwise "
+            "code that depends on the extracted contents might not be "
+            "rebuilt if the URL changes. The OLD behavior preserves the "
+            "timestamps from the archive instead, but this is usually not "
+            "what you want. Update your project to the NEW behavior or "
+            "specify the DOWNLOAD_EXTRACT_TIMESTAMP option with a value of "
+            "true to avoid this robustness issue."
+          )
+          set(ARG_DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        elseif(_FETCHCONTENT_CMP0135 STREQUAL "NEW")
+          set(ARG_DOWNLOAD_EXTRACT_TIMESTAMP FALSE)
+        else()
+          set(ARG_DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        endif()
+      endif()
     endif()
   endif()
 
@@ -1801,6 +1841,13 @@ endfunction()
 # calls will be available to the caller.
 macro(FetchContent_MakeAvailable)
 
+  # We must append an item, even if the variable is unset, so prefix its value.
+  # We will strip that prefix when we pop the value at the end of the macro.
+  list(APPEND __cmake_fcCurrentVarsStack
+    "__fcprefix__${CMAKE_VERIFY_INTERFACE_HEADER_SETS}"
+  )
+  set(CMAKE_VERIFY_INTERFACE_HEADER_SETS FALSE)
+
   get_property(__cmake_providerCommand GLOBAL PROPERTY
     __FETCHCONTENT_MAKEAVAILABLE_SERIAL_PROVIDER
   )
@@ -1861,13 +1908,13 @@ macro(FetchContent_MakeAvailable)
 
         set(__cmake_fcProvider_${__cmake_contentNameLower} YES)
         cmake_language(EVAL CODE "${__cmake_providerCommand}(${__cmake_providerArgs})")
-        unset(__cmake_fcProvider_${__cmake_contentNameLower})
 
         list(POP_BACK __cmake_fcCurrentVarsStack
           __cmake_contentNameLower
           __cmake_contentName
         )
 
+        unset(__cmake_fcProvider_${__cmake_contentNameLower})
         unset(__cmake_providerArgs)
         unset(__cmake_addfpargs)
         unset(__cmake_fpargs)
@@ -1937,13 +1984,17 @@ macro(FetchContent_MakeAvailable)
       if("${__cmake_contentDetails}" STREQUAL "")
         message(FATAL_ERROR "No details have been set for content: ${__cmake_contentName}")
       endif()
-      cmake_parse_arguments(__cmake_arg "" "SOURCE_SUBDIR" "" ${__cmake_contentDetails})
+      cmake_parse_arguments(__cmake_arg "SYSTEM" "SOURCE_SUBDIR" "" ${__cmake_contentDetails})
       if(NOT "${__cmake_arg_SOURCE_SUBDIR}" STREQUAL "")
         string(APPEND __cmake_srcdir "/${__cmake_arg_SOURCE_SUBDIR}")
       endif()
 
       if(EXISTS ${__cmake_srcdir}/CMakeLists.txt)
-        add_subdirectory(${__cmake_srcdir} ${${__cmake_contentNameLower}_BINARY_DIR})
+        if (__cmake_arg_SYSTEM)
+          add_subdirectory(${__cmake_srcdir} ${${__cmake_contentNameLower}_BINARY_DIR} SYSTEM)
+        else()
+          add_subdirectory(${__cmake_srcdir} ${${__cmake_contentNameLower}_BINARY_DIR})
+        endif()
       endif()
 
       unset(__cmake_srcdir)
@@ -1952,10 +2003,18 @@ macro(FetchContent_MakeAvailable)
     endif()
   endforeach()
 
+  # Prefix will be "__fcprefix__"
+  list(POP_BACK __cmake_fcCurrentVarsStack __cmake_original_verify_setting)
+  string(SUBSTRING "${__cmake_original_verify_setting}"
+    12 -1 __cmake_original_verify_setting
+  )
+  set(CMAKE_VERIFY_INTERFACE_HEADER_SETS ${__cmake_original_verify_setting})
+
   # clear local variables to prevent leaking into the caller's scope
   unset(__cmake_contentName)
   unset(__cmake_contentNameLower)
   unset(__cmake_contentNameUpper)
   unset(__cmake_providerCommand)
+  unset(__cmake_original_verify_setting)
 
 endmacro()

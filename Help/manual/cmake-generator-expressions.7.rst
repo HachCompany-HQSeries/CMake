@@ -521,7 +521,7 @@ in cmake-style format.
 
   See :ref:`cmake_path(REMOVE_EXTENSION) <REMOVE_EXTENSION>` for more details.
 
-.. genex:: $<PATH:REPLACE_EXTENSION[,LAST_ONLY],path>
+.. genex:: $<PATH:REPLACE_EXTENSION[,LAST_ONLY],path,input>
 
   .. versionadded:: 3.24
 
@@ -593,6 +593,10 @@ Configuration Expressions
   :prop_tgt:`MAP_IMPORTED_CONFIG_<CONFIG>` is also considered by this
   expression when it is evaluated on a property of an :prop_tgt:`IMPORTED`
   target.
+
+  .. versionchanged:: 3.19
+    Multiple configurations can be specified for ``cfgs``.
+    CMake 3.18 and earlier only accepted a single configuration.
 
 .. genex:: $<OUTPUT_CONFIG:...>
 

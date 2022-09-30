@@ -122,17 +122,19 @@ endmacro()
 macro(_threads_check_flag_pthread)
   if(NOT Threads_FOUND)
     # If we did not find -lpthreads, -lpthread, or -lthread, look for -pthread
-    if(NOT DEFINED THREADS_HAVE_PTHREAD_ARG)
+    # except on compilers known to not have it.
+    if(MSVC)
+      # Compilers targeting the MSVC ABI do not have a -pthread flag.
+      set(THREADS_HAVE_PTHREAD_ARG FALSE)
+    elseif(NOT DEFINED THREADS_HAVE_PTHREAD_ARG)
       message(CHECK_START "Check if compiler accepts -pthread")
       if(CMAKE_C_COMPILER_LOADED)
-        set(_threads_src ${CMAKE_CURRENT_LIST_DIR}/CheckForPthreads.c)
+        set(_threads_src CheckForPthreads.c)
       elseif(CMAKE_CXX_COMPILER_LOADED)
-        set(_threads_src ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/FindThreads/CheckForPthreads.cxx)
-        configure_file(${CMAKE_CURRENT_LIST_DIR}/CheckForPthreads.c "${_threads_src}" COPYONLY)
+        set(_threads_src CheckForPthreads.cxx)
       endif()
       try_compile(THREADS_HAVE_PTHREAD_ARG
-        ${CMAKE_BINARY_DIR}
-        ${_threads_src}
+        SOURCE_FROM_FILE "${_threads_src}" "${CMAKE_CURRENT_LIST_DIR}/CheckForPthreads.c"
         CMAKE_FLAGS -DLINK_LIBRARIES:STRING=-pthread
         OUTPUT_VARIABLE _cmake_check_pthreads_output)
 

@@ -90,6 +90,7 @@ Properties on Directories
    /prop_dir/RULE_LAUNCH_LINK
    /prop_dir/SOURCE_DIR
    /prop_dir/SUBDIRECTORIES
+   /prop_dir/SYSTEM
    /prop_dir/TESTS
    /prop_dir/TEST_INCLUDE_FILES
    /prop_dir/VARIABLES
@@ -340,6 +341,7 @@ Properties on Targets
    /prop_tgt/MACOSX_RPATH
    /prop_tgt/MANUALLY_ADDED_DEPENDENCIES
    /prop_tgt/MAP_IMPORTED_CONFIG_CONFIG
+   /prop_tgt/MSVC_DEBUG_INFORMATION_FORMAT
    /prop_tgt/MSVC_RUNTIME_LIBRARY
    /prop_tgt/NAME
    /prop_tgt/NO_SONAME
@@ -474,6 +476,9 @@ Properties on Targets
    /prop_tgt/XCODE_SCHEME_THREAD_SANITIZER_STOP
    /prop_tgt/XCODE_SCHEME_UNDEFINED_BEHAVIOUR_SANITIZER
    /prop_tgt/XCODE_SCHEME_UNDEFINED_BEHAVIOUR_SANITIZER_STOP
+   /prop_tgt/XCODE_SCHEME_ENABLE_GPU_API_VALIDATION
+   /prop_tgt/XCODE_SCHEME_ENABLE_GPU_SHADER_VALIDATION
+   /prop_tgt/XCODE_SCHEME_LAUNCH_CONFIGURATION
    /prop_tgt/XCODE_SCHEME_WORKING_DIRECTORY
    /prop_tgt/XCODE_SCHEME_ZOMBIE_OBJECTS
    /prop_tgt/XCODE_XCCONFIG

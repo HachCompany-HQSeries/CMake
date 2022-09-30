@@ -789,6 +789,7 @@ void cmMakefile::RunListFile(cmListFile const& listFile,
       break;
     }
     if (status.GetReturnInvoked()) {
+      this->RaiseScope(status.GetReturnVariables());
       // Exit early due to return command.
       break;
     }
@@ -1782,7 +1783,8 @@ void cmMakefile::ConfigureSubDirectory(cmMakefile* mf)
 
 void cmMakefile::AddSubDirectory(const std::string& srcPath,
                                  const std::string& binPath,
-                                 bool excludeFromAll, bool immediate)
+                                 bool excludeFromAll, bool immediate,
+                                 bool system)
 {
   if (this->DeferRunning) {
     this->IssueMessage(
@@ -1811,6 +1813,9 @@ void cmMakefile::AddSubDirectory(const std::string& srcPath,
 
   if (excludeFromAll) {
     subMf->SetProperty("EXCLUDE_FROM_ALL", "TRUE");
+  }
+  if (system) {
+    subMf->SetProperty("SYSTEM", "TRUE");
   }
 
   if (immediate) {
@@ -4034,31 +4039,6 @@ std::vector<std::string> cmMakefile::GetPropertyKeys() const
   return this->StateSnapshot.GetDirectory().GetPropertyKeys();
 }
 
-void cmMakefile::CheckProperty(const std::string& prop) const
-{
-  // Certain properties need checking.
-  if (prop == "LINK_LIBRARIES") {
-    if (cmValue value = this->GetProperty(prop)) {
-      // Look for <LINK_LIBRARY:> internal pattern
-      static cmsys::RegularExpression linkPattern(
-        "(^|;)(</?LINK_(LIBRARY|GROUP):[^;>]*>)(;|$)");
-      if (!linkPattern.find(value)) {
-        return;
-      }
-
-      // Report an error.
-      this->IssueMessage(
-        MessageType::FATAL_ERROR,
-        cmStrCat("Property ", prop, " contains the invalid item \"",
-                 linkPattern.match(2), "\". The ", prop,
-                 " property may contain the generator-expression \"$<LINK_",
-                 linkPattern.match(3),
-                 ":...>\" which may be used to specify how the libraries are "
-                 "linked."));
-    }
-  }
-}
-
 cmTarget* cmMakefile::FindLocalNonAliasTarget(const std::string& name) const
 {
   auto i = this->Targets.find(name);
@@ -4186,6 +4166,18 @@ void cmMakefile::RaiseScope(const std::string& var, const char* varDef)
                          varDef, this);
   }
 #endif
+}
+
+void cmMakefile::RaiseScope(const std::vector<std::string>& variables)
+{
+  for (auto const& varName : variables) {
+    if (this->IsNormalDefinitionSet(varName)) {
+      this->RaiseScope(varName, this->GetDefinition(varName));
+    } else {
+      // unset variable in parent scope
+      this->RaiseScope(varName, nullptr);
+    }
+  }
 }
 
 cmTarget* cmMakefile::AddImportedTarget(const std::string& name,
@@ -4541,6 +4533,19 @@ bool cmMakefile::SetPolicyVersion(std::string const& version_min,
 {
   return cmPolicies::ApplyPolicyVersion(this, version_min, version_max,
                                         cmPolicies::WarnCompat::On);
+}
+
+cmMakefile::VariablePushPop::VariablePushPop(cmMakefile* m)
+  : Makefile(m)
+{
+  this->Makefile->StateSnapshot =
+    this->Makefile->GetState()->CreateVariableScopeSnapshot(
+      this->Makefile->StateSnapshot);
+}
+
+cmMakefile::VariablePushPop::~VariablePushPop()
+{
+  this->Makefile->PopSnapshot();
 }
 
 bool cmMakefile::HasCMP0054AlreadyBeenReported(

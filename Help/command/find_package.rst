@@ -103,8 +103,9 @@ Basic Signature
                [REQUIRED] [[COMPONENTS] [components...]]
                [OPTIONAL_COMPONENTS components...]
                [REGISTRY_VIEW  (64|32|64_32|32_64|HOST|TARGET|BOTH)]
+               [GLOBAL]
                [NO_POLICY_SCOPE]
-               [GLOBAL])
+               [BYPASS_PROVIDER])
 
 The basic signature is supported by both Module and Config modes.
 The ``MODULE`` keyword implies that only Module mode can be used to find
@@ -141,9 +142,9 @@ should find all components, no components or some well-defined subset of the
 available components.
 
 .. versionadded:: 3.24
-  The ``REGISTRY_VIEW`` keyword enables to specify which registry views must be
-  queried. This keyword is only meaningful on ``Windows`` platform and will be
-  ignored on all other ones. Formally, it is up to the target package how to
+  The ``REGISTRY_VIEW`` keyword specifies which registry views should be
+  queried. This keyword is only meaningful on ``Windows`` platforms and will
+  be ignored on all others. Formally, it is up to the target package how to
   interpret the registry view information given to it.
 
 .. versionadded:: 3.24
@@ -181,6 +182,14 @@ only take the single version at the lower end of the range into account.
 See the :command:`cmake_policy` command documentation for discussion
 of the ``NO_POLICY_SCOPE`` option.
 
+.. versionadded:: 3.24
+  The ``BYPASS_PROVIDER`` keyword is only allowed when ``find_package()`` is
+  being called by a :ref:`dependency provider <dependency_providers>`.
+  It can be used by providers to call the built-in ``find_package()``
+  implementation directly and prevent that call from being re-routed back to
+  itself.  Future versions of CMake may detect attempts to use this keyword
+  from places other than a dependency provider and halt with a fatal error.
+
 .. _`full signature`:
 
 Full Signature
@@ -192,8 +201,9 @@ Full Signature
                [REQUIRED] [[COMPONENTS] [components...]]
                [OPTIONAL_COMPONENTS components...]
                [CONFIG|NO_MODULE]
-               [NO_POLICY_SCOPE]
                [GLOBAL]
+               [NO_POLICY_SCOPE]
+               [BYPASS_PROVIDER]
                [NAMES name1 [name2 ...]]
                [CONFIGS config1 [config2 ...]]
                [HINTS path1 [path2 ... ]]
@@ -281,6 +291,7 @@ Each entry is meant for installation trees following Windows (``W``), UNIX
   <prefix>/(cmake|CMake)/                                         (W)
   <prefix>/<name>*/                                               (W)
   <prefix>/<name>*/(cmake|CMake)/                                 (W)
+  <prefix>/<name>*/(cmake|CMake)/<name>*/                         (W)
   <prefix>/(lib/<arch>|lib*|share)/cmake/<name>*/                 (U)
   <prefix>/(lib/<arch>|lib*|share)/<name>*/                       (U)
   <prefix>/(lib/<arch>|lib*|share)/<name>*/(cmake|CMake)/         (U)
@@ -358,7 +369,7 @@ enabled.
     See policy :policy:`CMP0074`.
 
 2. Search paths specified in cmake-specific cache variables.  These
-   are intended to be used on the command line with a ``-DVAR=value``.
+   are intended to be used on the command line with a :option:`-DVAR=VALUE <cmake -D>`.
    The values are interpreted as :ref:`semicolon-separated lists <CMake Language Lists>`.
    This can be skipped if ``NO_CMAKE_PATH`` is passed or by setting the
    :variable:`CMAKE_FIND_USE_CMAKE_PATH` to ``FALSE``:
@@ -402,7 +413,8 @@ enabled.
    package registry.
 
 7. Search cmake variables defined in the Platform files for the
-   current system. The searching of :variable:`CMAKE_INSTALL_PREFIX` can be
+   current system. The searching of :variable:`CMAKE_INSTALL_PREFIX` and
+   :variable:`CMAKE_STAGING_PREFIX` can be
    skipped if ``NO_CMAKE_INSTALL_PREFIX`` is passed or by setting the
    :variable:`CMAKE_FIND_USE_INSTALL_PREFIX` to ``FALSE``. All these locations
    can be skipped if ``NO_CMAKE_SYSTEM_PATH`` is passed or by setting the

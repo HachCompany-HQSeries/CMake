@@ -16,6 +16,7 @@
 #include <vector>
 
 #include <cm/string_view>
+#include <cmext/string_view>
 
 #include "cmGeneratedFileStream.h"
 #include "cmInstalledFile.h"
@@ -600,6 +601,9 @@ public:
   //! run the --open option
   bool Open(const std::string& dir, bool dryRun);
 
+  //! run the --workflow option
+  int Workflow(const std::string& presetName, bool listPresets);
+
   void UnwatchUnusedCli(const std::string& var);
   void WatchUnusedCli(const std::string& var);
 
@@ -740,6 +744,16 @@ private:
   void AppendExtraGeneratorsDocumentation(std::vector<cmDocumentationEntry>&);
 
 #if !defined(CMAKE_BOOTSTRAP)
+  template <typename T>
+  const T* FindPresetForWorkflow(
+    cm::static_string_view type,
+    const std::map<std::string, cmCMakePresetsGraph::PresetPair<T>>& presets,
+    const cmCMakePresetsGraph::WorkflowPreset::WorkflowStep& step);
+
+  std::function<int()> BuildWorkflowStep(const std::vector<std::string>& args);
+#endif
+
+#if !defined(CMAKE_BOOTSTRAP)
   std::unique_ptr<cmMakefileProfilingData> ProfilingOutput;
 #endif
 };
@@ -861,6 +875,7 @@ private:
   F(cxx_std_17)                                                               \
   F(cxx_std_20)                                                               \
   F(cxx_std_23)                                                               \
+  F(cxx_std_26)                                                               \
   FOR_EACH_CXX98_FEATURE(F)                                                   \
   FOR_EACH_CXX11_FEATURE(F)                                                   \
   FOR_EACH_CXX14_FEATURE(F)
@@ -871,7 +886,8 @@ private:
   F(cuda_std_14)                                                              \
   F(cuda_std_17)                                                              \
   F(cuda_std_20)                                                              \
-  F(cuda_std_23)
+  F(cuda_std_23)                                                              \
+  F(cuda_std_26)
 
 #define FOR_EACH_HIP_FEATURE(F)                                               \
   F(hip_std_98)                                                               \
@@ -879,4 +895,5 @@ private:
   F(hip_std_14)                                                               \
   F(hip_std_17)                                                               \
   F(hip_std_20)                                                               \
-  F(hip_std_23)
+  F(hip_std_23)                                                               \
+  F(hip_std_26)

@@ -295,6 +295,12 @@ public:
                                 cm::string_view fileSetType) const;
   cmValue GetFileSetPaths(cmTarget const* self, std::string const& fileSetName,
                           cm::string_view fileSetType) const;
+
+  cmListFileBacktrace GetBacktrace(
+    cm::optional<cmListFileBacktrace> const& bt) const
+  {
+    return bt ? *bt : this->Makefile->GetBacktrace();
+  }
 };
 
 cmTargetInternals::cmTargetInternals()
@@ -557,6 +563,7 @@ cmTarget::cmTarget(std::string const& name, cmStateEnums::TargetType type,
     initProp("AUTORCC_OPTIONS");
     initProp("LINK_DEPENDS_NO_SHARED");
     initProp("LINK_INTERFACE_LIBRARIES");
+    initProp("MSVC_DEBUG_INFORMATION_FORMAT");
     initProp("MSVC_RUNTIME_LIBRARY");
     initProp("WATCOM_RUNTIME_LIBRARY");
     initProp("WIN32_EXECUTABLE");
@@ -620,6 +627,9 @@ cmTarget::cmTarget(std::string const& name, cmStateEnums::TargetType type,
       initProp("XCODE_SCHEME_THREAD_SANITIZER_STOP");
       initProp("XCODE_SCHEME_UNDEFINED_BEHAVIOUR_SANITIZER");
       initProp("XCODE_SCHEME_UNDEFINED_BEHAVIOUR_SANITIZER_STOP");
+      initProp("XCODE_SCHEME_LAUNCH_CONFIGURATION");
+      initProp("XCODE_SCHEME_ENABLE_GPU_API_VALIDATION");
+      initProp("XCODE_SCHEME_ENABLE_GPU_SHADER_VALIDATION");
       initProp("XCODE_SCHEME_WORKING_DIRECTORY");
       initProp("XCODE_SCHEME_DISABLE_MAIN_THREAD_CHECKER");
       initProp("XCODE_SCHEME_MAIN_THREAD_CHECKER_STOP");
@@ -776,7 +786,7 @@ cmTarget::cmTarget(std::string const& name, cmStateEnums::TargetType type,
     }
   }
 
-  if (this->IsImported()) {
+  if (this->IsImported() || mf->GetPropertyAsBool("SYSTEM")) {
     this->SetProperty("SYSTEM", "ON");
   }
 
@@ -1243,7 +1253,8 @@ void cmTarget::AddLinkLibrary(cmMakefile& mf, std::string const& lib,
       ? targetNameGenex(lib)
       : lib;
     this->AppendProperty("LINK_LIBRARIES",
-                         this->GetDebugGeneratorExpressions(libName, llt));
+                         this->GetDebugGeneratorExpressions(libName, llt),
+                         mf.GetBacktrace());
   }
 
   if (cmGeneratorExpression::Find(lib) != std::string::npos ||
@@ -1684,7 +1695,9 @@ void cmTarget::StoreProperty(const std::string& prop, ValueType value)
 }
 
 void cmTarget::AppendProperty(const std::string& prop,
-                              const std::string& value, bool asString)
+                              const std::string& value,
+                              cm::optional<cmListFileBacktrace> const& bt,
+                              bool asString)
 {
   if (prop == "NAME") {
     this->impl->Makefile->IssueMessage(MessageType::FATAL_ERROR,
@@ -1715,32 +1728,32 @@ void cmTarget::AppendProperty(const std::string& prop,
   }
   if (prop == "INCLUDE_DIRECTORIES") {
     if (!value.empty()) {
-      cmListFileBacktrace lfbt = this->impl->Makefile->GetBacktrace();
+      cmListFileBacktrace lfbt = this->impl->GetBacktrace(bt);
       this->impl->IncludeDirectoriesEntries.emplace_back(value, lfbt);
     }
   } else if (prop == "COMPILE_OPTIONS") {
     if (!value.empty()) {
-      cmListFileBacktrace lfbt = this->impl->Makefile->GetBacktrace();
+      cmListFileBacktrace lfbt = this->impl->GetBacktrace(bt);
       this->impl->CompileOptionsEntries.emplace_back(value, lfbt);
     }
   } else if (prop == "COMPILE_FEATURES") {
     if (!value.empty()) {
-      cmListFileBacktrace lfbt = this->impl->Makefile->GetBacktrace();
+      cmListFileBacktrace lfbt = this->impl->GetBacktrace(bt);
       this->impl->CompileFeaturesEntries.emplace_back(value, lfbt);
     }
   } else if (prop == "COMPILE_DEFINITIONS") {
     if (!value.empty()) {
-      cmListFileBacktrace lfbt = this->impl->Makefile->GetBacktrace();
+      cmListFileBacktrace lfbt = this->impl->GetBacktrace(bt);
       this->impl->CompileDefinitionsEntries.emplace_back(value, lfbt);
     }
   } else if (prop == "LINK_OPTIONS") {
     if (!value.empty()) {
-      cmListFileBacktrace lfbt = this->impl->Makefile->GetBacktrace();
+      cmListFileBacktrace lfbt = this->impl->GetBacktrace(bt);
       this->impl->LinkOptionsEntries.emplace_back(value, lfbt);
     }
   } else if (prop == "LINK_DIRECTORIES") {
     if (!value.empty()) {
-      cmListFileBacktrace lfbt = this->impl->Makefile->GetBacktrace();
+      cmListFileBacktrace lfbt = this->impl->GetBacktrace(bt);
       this->impl->LinkDirectoriesEntries.emplace_back(value, lfbt);
     }
   } else if (prop == "PRECOMPILE_HEADERS") {
@@ -1753,32 +1766,32 @@ void cmTarget::AppendProperty(const std::string& prop,
       return;
     }
     if (!value.empty()) {
-      cmListFileBacktrace lfbt = this->impl->Makefile->GetBacktrace();
+      cmListFileBacktrace lfbt = this->impl->GetBacktrace(bt);
       this->impl->PrecompileHeadersEntries.emplace_back(value, lfbt);
     }
   } else if (prop == "LINK_LIBRARIES") {
     if (!value.empty()) {
-      cmListFileBacktrace lfbt = this->impl->Makefile->GetBacktrace();
+      cmListFileBacktrace lfbt = this->impl->GetBacktrace(bt);
       this->impl->LinkImplementationPropertyEntries.emplace_back(value, lfbt);
     }
   } else if (prop == propINTERFACE_LINK_LIBRARIES) {
     if (!value.empty()) {
-      cmListFileBacktrace lfbt = this->impl->Makefile->GetBacktrace();
+      cmListFileBacktrace lfbt = this->impl->GetBacktrace(bt);
       this->impl->LinkInterfacePropertyEntries.emplace_back(value, lfbt);
     }
   } else if (prop == propINTERFACE_LINK_LIBRARIES_DIRECT) {
     if (!value.empty()) {
-      cmListFileBacktrace lfbt = this->impl->Makefile->GetBacktrace();
+      cmListFileBacktrace lfbt = this->impl->GetBacktrace(bt);
       this->impl->LinkInterfaceDirectPropertyEntries.emplace_back(value, lfbt);
     }
   } else if (prop == propINTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE) {
     if (!value.empty()) {
-      cmListFileBacktrace lfbt = this->impl->Makefile->GetBacktrace();
+      cmListFileBacktrace lfbt = this->impl->GetBacktrace(bt);
       this->impl->LinkInterfaceDirectExcludePropertyEntries.emplace_back(value,
                                                                          lfbt);
     }
   } else if (prop == "SOURCES") {
-    cmListFileBacktrace lfbt = this->impl->Makefile->GetBacktrace();
+    cmListFileBacktrace lfbt = this->impl->GetBacktrace(bt);
     this->impl->SourceEntries.emplace_back(value, lfbt);
   } else if (cmHasLiteralPrefix(prop, "IMPORTED_LIBNAME")) {
     this->impl->Makefile->IssueMessage(
@@ -1935,6 +1948,97 @@ void cmTarget::AppendBuildInterfaceIncludes()
   }
 }
 
+namespace {
+bool CheckLinkLibraryPattern(cm::string_view property,
+                             const std::vector<BT<std::string>>& value,
+                             cmake* context)
+{
+  // Look for <LINK_LIBRARY:> and </LINK_LIBRARY:> internal tags
+  static cmsys::RegularExpression linkPattern(
+    "(^|;)(</?LINK_(LIBRARY|GROUP):[^;>]*>)(;|$)");
+
+  bool isValid = true;
+
+  for (const auto& item : value) {
+    if (!linkPattern.find(item.Value)) {
+      continue;
+    }
+
+    isValid = false;
+
+    // Report an error.
+    context->IssueMessage(
+      MessageType::FATAL_ERROR,
+      cmStrCat(
+        "Property ", property, " contains the invalid item \"",
+        linkPattern.match(2), "\". The ", property,
+        " property may contain the generator-expression \"$<LINK_",
+        linkPattern.match(3),
+        ":...>\" which may be used to specify how the libraries are linked."),
+      item.Backtrace);
+  }
+
+  return isValid;
+}
+}
+
+void cmTarget::FinalizeTargetConfiguration(
+  const cmBTStringRange& noConfigCompileDefinitions,
+  cm::optional<std::map<std::string, cmValue>>& perConfigCompileDefinitions)
+{
+  if (this->GetType() == cmStateEnums::GLOBAL_TARGET) {
+    return;
+  }
+
+  if (!CheckLinkLibraryPattern("LINK_LIBRARIES"_s,
+                               this->impl->LinkImplementationPropertyEntries,
+                               this->GetMakefile()->GetCMakeInstance()) ||
+      !CheckLinkLibraryPattern("INTERFACE_LINK_LIBRARIES"_s,
+                               this->impl->LinkInterfacePropertyEntries,
+                               this->GetMakefile()->GetCMakeInstance()) ||
+      !CheckLinkLibraryPattern("INTERFACE_LINK_LIBRARIES_DIRECT"_s,
+                               this->impl->LinkInterfaceDirectPropertyEntries,
+                               this->GetMakefile()->GetCMakeInstance())) {
+    return;
+  }
+
+  this->AppendBuildInterfaceIncludes();
+
+  if (this->GetType() == cmStateEnums::INTERFACE_LIBRARY) {
+    return;
+  }
+
+  for (auto const& def : noConfigCompileDefinitions) {
+    this->InsertCompileDefinition(def);
+  }
+
+  auto* mf = this->GetMakefile();
+  cmPolicies::PolicyStatus polSt = mf->GetPolicyStatus(cmPolicies::CMP0043);
+  if (polSt == cmPolicies::WARN || polSt == cmPolicies::OLD) {
+    if (perConfigCompileDefinitions) {
+      for (auto const& it : *perConfigCompileDefinitions) {
+        if (cmValue val = it.second) {
+          this->AppendProperty(it.first, *val);
+        }
+      }
+    } else {
+      perConfigCompileDefinitions.emplace();
+      std::vector<std::string> configs =
+        mf->GetGeneratorConfigs(cmMakefile::ExcludeEmptyConfig);
+
+      for (std::string const& c : configs) {
+        std::string defPropName =
+          cmStrCat("COMPILE_DEFINITIONS_", cmSystemTools::UpperCase(c));
+        cmValue val = mf->GetProperty(defPropName);
+        (*perConfigCompileDefinitions)[defPropName] = val;
+        if (val) {
+          this->AppendProperty(defPropName, *val);
+        }
+      }
+    }
+  }
+}
+
 void cmTarget::InsertInclude(BT<std::string> const& entry, bool before)
 {
   auto position = before ? this->impl->IncludeDirectoriesEntries.begin()
@@ -1978,27 +2082,6 @@ void cmTarget::InsertPrecompileHeader(BT<std::string> const& entry)
 }
 
 namespace {
-void CheckLinkLibraryPattern(const std::string& property,
-                             const std::string& value, cmMakefile* context)
-{
-  // Look for <LINK_LIBRARY:> and </LINK_LIBRARY:> internal tags
-  static cmsys::RegularExpression linkPattern(
-    "(^|;)(</?LINK_(LIBRARY|GROUP):[^;>]*>)(;|$)");
-  if (!linkPattern.find(value)) {
-    return;
-  }
-
-  // Report an error.
-  context->IssueMessage(
-    MessageType::FATAL_ERROR,
-    cmStrCat(
-      "Property ", property, " contains the invalid item \"",
-      linkPattern.match(2), "\". The ", property,
-      " property may contain the generator-expression \"$<LINK_",
-      linkPattern.match(3),
-      ":...>\" which may be used to specify how the libraries are linked."));
-}
-
 void CheckLINK_INTERFACE_LIBRARIES(const std::string& prop,
                                    const std::string& value,
                                    cmMakefile* context, bool imported)
@@ -2033,13 +2116,6 @@ void CheckLINK_INTERFACE_LIBRARIES(const std::string& prop,
     }
     context->IssueMessage(MessageType::FATAL_ERROR, e.str());
   }
-
-  CheckLinkLibraryPattern(base, value, context);
-}
-
-void CheckLINK_LIBRARIES(const std::string& value, cmMakefile* context)
-{
-  CheckLinkLibraryPattern("LINK_LIBRARIES", value, context);
 }
 
 void CheckINTERFACE_LINK_LIBRARIES(const std::string& value,
@@ -2060,8 +2136,6 @@ void CheckINTERFACE_LINK_LIBRARIES(const std::string& value,
 
     context->IssueMessage(MessageType::FATAL_ERROR, e.str());
   }
-
-  CheckLinkLibraryPattern("INTERFACE_LINK_LIBRARIES", value, context);
 }
 
 void CheckIMPORTED_GLOBAL(const cmTarget* target, cmMakefile* context)
@@ -2093,10 +2167,6 @@ void cmTarget::CheckProperty(const std::string& prop,
   } else if (cmHasLiteralPrefix(prop, "IMPORTED_LINK_INTERFACE_LIBRARIES")) {
     if (cmValue value = this->GetProperty(prop)) {
       CheckLINK_INTERFACE_LIBRARIES(prop, *value, context, true);
-    }
-  } else if (prop == "LINK_LIBRARIES") {
-    if (cmValue value = this->GetProperty(prop)) {
-      CheckLINK_LIBRARIES(*value, context);
     }
   } else if (prop == "INTERFACE_LINK_LIBRARIES") {
     if (cmValue value = this->GetProperty(prop)) {

@@ -14,6 +14,7 @@
 #include <utility>
 
 #include <cm/memory>
+#include <cm/optional>
 #include <cmext/algorithm>
 #include <cmext/string_view>
 
@@ -49,6 +50,8 @@
 #include "cmState.h"
 #include "cmStateDirectory.h"
 #include "cmStateTypes.h"
+#include "cmStringAlgorithms.h"
+#include "cmSystemTools.h"
 #include "cmValue.h"
 #include "cmVersion.h"
 #include "cmWorkingDirectory.h"
@@ -60,10 +63,6 @@
 
 #  include "cmCryptoHash.h"
 #  include "cmQtAutoGenGlobalInitializer.h"
-#endif
-
-#if defined(_MSC_VER) && _MSC_VER >= 1800
-#  define KWSYS_WINDOWS_DEPRECATED_GetVersionEx
 #endif
 
 const std::string kCMAKE_PLATFORM_INFO_INITIALIZED =
@@ -616,34 +615,12 @@ void cmGlobalGenerator::EnableLanguage(
   // what platform we are running on
   if (!mf->GetDefinition("CMAKE_SYSTEM")) {
 #if defined(_WIN32) && !defined(__CYGWIN__)
-    /* Windows version number data.  */
-    OSVERSIONINFOEXW osviex;
-    ZeroMemory(&osviex, sizeof(osviex));
-    osviex.dwOSVersionInfoSize = sizeof(osviex);
-
-#  ifdef KWSYS_WINDOWS_DEPRECATED_GetVersionEx
-#    pragma warning(push)
-#    ifdef __INTEL_COMPILER
-#      pragma warning(disable : 1478)
-#    elif defined __clang__
-#      pragma clang diagnostic push
-#      pragma clang diagnostic ignored "-Wdeprecated-declarations"
-#    else
-#      pragma warning(disable : 4996)
-#    endif
-#  endif
-    GetVersionExW((OSVERSIONINFOW*)&osviex);
-#  ifdef KWSYS_WINDOWS_DEPRECATED_GetVersionEx
-#    ifdef __clang__
-#      pragma clang diagnostic pop
-#    else
-#      pragma warning(pop)
-#    endif
-#  endif
+    cmSystemTools::WindowsVersion windowsVersion =
+      cmSystemTools::GetWindowsVersion();
     std::ostringstream windowsVersionString;
-    windowsVersionString << osviex.dwMajorVersion << "."
-                         << osviex.dwMinorVersion << "."
-                         << osviex.dwBuildNumber;
+    windowsVersionString << windowsVersion.dwMajorVersion << "."
+                         << windowsVersion.dwMinorVersion << "."
+                         << windowsVersion.dwBuildNumber;
     mf->AddDefinition("CMAKE_HOST_SYSTEM_VERSION", windowsVersionString.str());
 #endif
     // Read the DetermineSystem file
@@ -1525,7 +1502,7 @@ bool cmGlobalGenerator::Compute()
   if (!this->CheckALLOW_DUPLICATE_CUSTOM_TARGETS()) {
     return false;
   }
-  this->FinalizeTargetCompileInfo();
+  this->FinalizeTargetConfiguration();
 
   this->CreateGenerationObjects();
 
@@ -1782,6 +1759,14 @@ bool cmGlobalGenerator::AddHeaderSetVerification()
     }
   }
 
+  cmTarget* allVerifyTarget = this->Makefiles.front()->FindTargetToUse(
+    "all_verify_interface_header_sets", true);
+  if (allVerifyTarget) {
+    this->LocalGenerators.front()->AddGeneratorTarget(
+      cm::make_unique<cmGeneratorTarget>(allVerifyTarget,
+                                         this->LocalGenerators.front().get()));
+  }
+
   return true;
 }
 
@@ -1841,46 +1826,21 @@ cmGlobalGenerator::CreateMSVC60LinkLineComputer(
     cm::make_unique<cmMSVC60LinkLineComputer>(outputConverter, stateDir));
 }
 
-void cmGlobalGenerator::FinalizeTargetCompileInfo()
+void cmGlobalGenerator::FinalizeTargetConfiguration()
 {
   std::vector<std::string> const langs =
     this->CMakeInstance->GetState()->GetEnabledLanguages();
 
   // Construct per-target generator information.
   for (const auto& mf : this->Makefiles) {
-    const cmBTStringRange noconfig_compile_definitions =
+    const cmBTStringRange noConfigCompileDefinitions =
       mf->GetCompileDefinitionsEntries();
+    cm::optional<std::map<std::string, cmValue>> perConfigCompileDefinitions;
 
     for (auto& target : mf->GetTargets()) {
       cmTarget* t = &target.second;
-      if (t->GetType() == cmStateEnums::GLOBAL_TARGET) {
-        continue;
-      }
-
-      t->AppendBuildInterfaceIncludes();
-
-      if (t->GetType() == cmStateEnums::INTERFACE_LIBRARY) {
-        continue;
-      }
-
-      for (auto const& def : noconfig_compile_definitions) {
-        t->InsertCompileDefinition(def);
-      }
-
-      cmPolicies::PolicyStatus polSt =
-        mf->GetPolicyStatus(cmPolicies::CMP0043);
-      if (polSt == cmPolicies::WARN || polSt == cmPolicies::OLD) {
-        std::vector<std::string> configs =
-          mf->GetGeneratorConfigs(cmMakefile::ExcludeEmptyConfig);
-
-        for (std::string const& c : configs) {
-          std::string defPropName =
-            cmStrCat("COMPILE_DEFINITIONS_", cmSystemTools::UpperCase(c));
-          if (cmValue val = mf->GetProperty(defPropName)) {
-            t->AppendProperty(defPropName, *val);
-          }
-        }
-      }
+      t->FinalizeTargetConfiguration(noConfigCompileDefinitions,
+                                     perConfigCompileDefinitions);
     }
 
     // The standard include directories for each language
@@ -1895,6 +1855,15 @@ void cmGlobalGenerator::FinalizeTargetCompileInfo()
         cmExpandedList(standardIncludesStr);
       standardIncludesSet.insert(standardIncludesVec.begin(),
                                  standardIncludesVec.end());
+      if (li == "CUDA") {
+        std::string const& cudaSystemIncludeVar =
+          mf->GetSafeDefinition("CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES");
+        std::vector<std::string> cudaToolkitIncludeVec =
+          cmExpandedList(cudaSystemIncludeVar);
+        standardIncludesSet.insert(cudaToolkitIncludeVec.begin(),
+                                   cudaToolkitIncludeVec.end());
+        mf->AddIncludeDirectories(cudaToolkitIncludeVec);
+      }
     }
     mf->AddSystemIncludeDirectories(standardIncludesSet);
   }
@@ -2594,9 +2563,9 @@ bool cmGlobalGenerator::NameResolvesToFramework(
 // This is where we change the path to point to the framework directory.
 // .tbd files also can be located in SDK frameworks (they are
 // placeholders for actual libraries shipped with the OS)
-cm::optional<std::pair<std::string, std::string>>
+cm::optional<cmGlobalGenerator::FrameworkDescriptor>
 cmGlobalGenerator::SplitFrameworkPath(const std::string& path,
-                                      bool extendedFormat) const
+                                      FrameworkFormat format) const
 {
   // Check for framework structure:
   //    (/path/to/)?FwName.framework
@@ -2611,20 +2580,29 @@ cmGlobalGenerator::SplitFrameworkPath(const std::string& path,
     auto name = frameworkPath.match(3);
     auto libname =
       cmSystemTools::GetFilenameWithoutExtension(frameworkPath.match(6));
-    if (!libname.empty() && name != libname) {
+    if (format == FrameworkFormat::Strict && libname.empty()) {
       return cm::nullopt;
     }
-    return std::pair<std::string, std::string>{ frameworkPath.match(2), name };
+    if (!libname.empty() && !cmHasPrefix(libname, name)) {
+      return cm::nullopt;
+    }
+
+    if (libname.empty() || name.size() == libname.size()) {
+      return FrameworkDescriptor{ frameworkPath.match(2), name };
+    }
+
+    return FrameworkDescriptor{ frameworkPath.match(2), name,
+                                libname.substr(name.size()) };
   }
 
-  if (extendedFormat) {
+  if (format == FrameworkFormat::Extended) {
     // path format can be more flexible: (/path/to/)?fwName(.framework)?
     auto fwDir = cmSystemTools::GetParentDirectory(path);
     auto name = cmSystemTools::GetFilenameLastExtension(path) == ".framework"
       ? cmSystemTools::GetFilenameWithoutExtension(path)
       : cmSystemTools::GetFilenameName(path);
 
-    return std::pair<std::string, std::string>{ fwDir, name };
+    return FrameworkDescriptor{ fwDir, name };
   }
 
   return cm::nullopt;

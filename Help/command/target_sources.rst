@@ -22,10 +22,10 @@ The named ``<target>`` must have been created by a command such as
   ``<target>`` can be a custom target.
 
 The ``INTERFACE``, ``PUBLIC`` and ``PRIVATE`` keywords are required to
-specify the scope of the source file paths (``<items>``) that follow
-them.  ``PRIVATE`` and ``PUBLIC`` items will populate the :prop_tgt:`SOURCES`
-property of ``<target>``, which are used when building the target itself.
-``PUBLIC`` and ``INTERFACE`` items will populate the
+specify the :ref:`scope <Target Usage Requirements>` of the source file paths
+(``<items>``) that follow them.  ``PRIVATE`` and ``PUBLIC`` items will
+populate the :prop_tgt:`SOURCES` property of ``<target>``, which are used when
+building the target itself. ``PUBLIC`` and ``INTERFACE`` items will populate the
 :prop_tgt:`INTERFACE_SOURCES` property of ``<target>``, which are used
 when building dependents.  A target created by :command:`add_custom_target`
 can only have ``PRIVATE`` scope.
@@ -83,9 +83,9 @@ files within those directories. The acceptable types include:
 
 ``CXX_MODULES``
 
-.. note ::
+  .. note ::
 
-  Experimental. Gated by ``CMAKE_EXPERIMENTAL_CXX_MODULE_CMAKE_API``
+    Experimental. Gated by ``CMAKE_EXPERIMENTAL_CXX_MODULE_CMAKE_API``
 
   Sources which contain C++ interface module or partition units (i.e., those
   using the ``export`` keyword). This file set type may not have an
@@ -93,9 +93,9 @@ files within those directories. The acceptable types include:
 
 ``CXX_MODULE_HEADER_UNITS``
 
-.. note ::
+  .. note ::
 
-  Experimental. Gated by ``CMAKE_EXPERIMENTAL_CXX_MODULE_CMAKE_API``
+    Experimental. Gated by ``CMAKE_EXPERIMENTAL_CXX_MODULE_CMAKE_API``
 
   C++ header sources which may be imported by other C++ source code. This file
   set type may not have an ``INTERFACE`` scope except on ``IMPORTED`` targets.

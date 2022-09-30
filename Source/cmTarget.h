@@ -5,11 +5,14 @@
 #include "cmConfigure.h" // IWYU pragma: keep
 
 #include <iosfwd>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <cm/optional>
 
 #include "cmAlgorithms.h"
 #include "cmFileSet.h"
@@ -182,8 +185,10 @@ public:
   {
     this->SetProperty(prop, cmValue(value));
   }
-  void AppendProperty(const std::string& prop, const std::string& value,
-                      bool asString = false);
+  void AppendProperty(
+    const std::string& prop, const std::string& value,
+    cm::optional<cmListFileBacktrace> const& bt = cm::nullopt,
+    bool asString = false);
   //! Might return a nullptr if the property is not set or invalid
   cmValue GetProperty(const std::string& prop) const;
   //! Always returns a valid pointer
@@ -233,6 +238,9 @@ public:
   void InsertPrecompileHeader(BT<std::string> const& entry);
 
   void AppendBuildInterfaceIncludes();
+  void FinalizeTargetConfiguration(
+    const cmBTStringRange& noConfigCompileDefinitions,
+    cm::optional<std::map<std::string, cmValue>>& perConfigCompileDefinitions);
 
   std::string GetDebugGeneratorExpressions(const std::string& value,
                                            cmTargetLinkLibraryType llt) const;

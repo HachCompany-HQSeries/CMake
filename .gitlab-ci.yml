@@ -314,6 +314,33 @@ b:debian10-makefiles-inplace:
     variables:
         CMAKE_CI_JOB_NIGHTLY: "true"
 
+b:debian10-extdeps:
+    extends:
+        - .debian10_extdeps
+        - .cmake_build_linux_standalone
+        - .linux_builder_tags
+        - .run_manually
+    variables:
+        CMAKE_CI_JOB_NIGHTLY: "true"
+
+b:debian10-aarch64-extdeps:
+    extends:
+        - .debian10_aarch64_extdeps
+        - .cmake_build_linux_standalone
+        - .linux_builder_tags_aarch64
+        - .run_manually
+    variables:
+        CMAKE_CI_JOB_NIGHTLY: "true"
+
+b:fedora36-extdeps:
+    extends:
+        - .fedora36_extdeps
+        - .cmake_build_linux_standalone
+        - .linux_builder_tags
+        - .run_manually
+    variables:
+        CMAKE_CI_JOB_NIGHTLY: "true"
+
 t:fedora36-ninja:
     extends:
         - .fedora36_ninja
@@ -1052,7 +1079,7 @@ b:windows-x86_64-package:
         - .windows_x86_64_package
         - .cmake_build_windows
         - .cmake_build_package_artifacts
-        - .windows_tags_nonconcurrent_vs2022
+        - .windows_tags_x86_64_package
         - .run_only_for_package
     dependencies:
         - p:doc-package
@@ -1066,7 +1093,7 @@ k:windows-x86_64-package:
         - .windows_x86_64_package
         - .cmake_package_windows
         - .cmake_release_artifacts
-        - .windows_tags_nonconcurrent_vs2022
+        - .windows_tags_x86_64_package
         - .run_only_for_package
     dependencies:
         - b:windows-x86_64-package
@@ -1089,7 +1116,7 @@ b:windows-i386-package:
         - .windows_i386_package
         - .cmake_build_windows
         - .cmake_build_package_artifacts
-        - .windows_tags_nonconcurrent_vs2022
+        - .windows_tags_x86_64_package
         - .run_only_for_package
     dependencies:
         - p:doc-package
@@ -1103,7 +1130,7 @@ k:windows-i386-package:
         - .windows_i386_package
         - .cmake_package_windows
         - .cmake_release_artifacts
-        - .windows_tags_nonconcurrent_vs2022
+        - .windows_tags_x86_64_package
         - .run_only_for_package
     dependencies:
         - b:windows-i386-package
@@ -1126,7 +1153,7 @@ b:windows-arm64-package:
         - .windows_arm64_package
         - .cmake_build_windows
         - .cmake_build_package_artifacts
-        - .windows_tags_nonconcurrent_vs2022_arm64
+        - .windows_tags_arm64_package
         - .run_only_for_package
     dependencies:
         - p:doc-package
@@ -1140,7 +1167,7 @@ k:windows-arm64-package:
         - .windows_arm64_package
         - .cmake_package_windows
         - .cmake_release_artifacts
-        - .windows_tags_nonconcurrent_vs2022_arm64
+        - .windows_tags_arm64_package
         - .run_only_for_package
     dependencies:
         - b:windows-arm64-package

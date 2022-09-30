@@ -287,6 +287,9 @@ Variables that Change Behavior
    /variable/CMAKE_XCODE_SCHEME_THREAD_SANITIZER_STOP
    /variable/CMAKE_XCODE_SCHEME_UNDEFINED_BEHAVIOUR_SANITIZER
    /variable/CMAKE_XCODE_SCHEME_UNDEFINED_BEHAVIOUR_SANITIZER_STOP
+   /variable/CMAKE_XCODE_SCHEME_LAUNCH_CONFIGURATION
+   /variable/CMAKE_XCODE_SCHEME_ENABLE_GPU_API_VALIDATION
+   /variable/CMAKE_XCODE_SCHEME_ENABLE_GPU_SHADER_VALIDATION
    /variable/CMAKE_XCODE_SCHEME_WORKING_DIRECTORY
    /variable/CMAKE_XCODE_SCHEME_ZOMBIE_OBJECTS
    /variable/CMAKE_XCODE_XCCONFIG
@@ -301,10 +304,13 @@ Variables that Describe the System
    /variable/ANDROID
    /variable/APPLE
    /variable/BORLAND
+   /variable/BSD
    /variable/CMAKE_ANDROID_NDK_VERSION
    /variable/CMAKE_CL_64
    /variable/CMAKE_COMPILER_2005
    /variable/CMAKE_HOST_APPLE
+   /variable/CMAKE_HOST_BSD
+   /variable/CMAKE_HOST_LINUX
    /variable/CMAKE_HOST_SOLARIS
    /variable/CMAKE_HOST_SYSTEM
    /variable/CMAKE_HOST_SYSTEM_NAME
@@ -322,6 +328,7 @@ Variables that Describe the System
    /variable/CYGWIN
    /variable/GHSMULTI
    /variable/IOS
+   /variable/LINUX
    /variable/MINGW
    /variable/MSVC
    /variable/MSVC10
@@ -477,6 +484,7 @@ Variables that Control the Build
    /variable/CMAKE_MODULE_LINKER_FLAGS_CONFIG_INIT
    /variable/CMAKE_MODULE_LINKER_FLAGS_INIT
    /variable/CMAKE_MSVCIDE_RUN_PATH
+   /variable/CMAKE_MSVC_DEBUG_INFORMATION_FORMAT
    /variable/CMAKE_MSVC_RUNTIME_LIBRARY
    /variable/CMAKE_NINJA_OUTPUT_PATH_PREFIX
    /variable/CMAKE_NO_BUILTIN_CHRPATH
@@ -503,6 +511,7 @@ Variables that Control the Build
    /variable/CMAKE_STATIC_LINKER_FLAGS_CONFIG
    /variable/CMAKE_STATIC_LINKER_FLAGS_CONFIG_INIT
    /variable/CMAKE_STATIC_LINKER_FLAGS_INIT
+   /variable/CMAKE_TASKING_TOOLSET
    /variable/CMAKE_TRY_COMPILE_CONFIGURATION
    /variable/CMAKE_TRY_COMPILE_NO_PLATFORM_VARIABLES
    /variable/CMAKE_TRY_COMPILE_PLATFORM_VARIABLES

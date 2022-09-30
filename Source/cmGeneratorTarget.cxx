@@ -16,6 +16,7 @@
 #include <utility>
 
 #include <cm/memory>
+#include <cm/optional>
 #include <cm/string_view>
 #include <cmext/algorithm>
 #include <cmext/string_view>
@@ -916,9 +917,17 @@ bool cmGeneratorTarget::IsIPOEnabled(std::string const& lang,
     return false;
   }
 
-  if (lang != "C" && lang != "CXX" && lang != "Fortran") {
+  if (lang != "C" && lang != "CXX" && lang != "CUDA" && lang != "Fortran") {
     // We do not define IPO behavior for other languages.
     return false;
+  }
+
+  if (lang == "CUDA") {
+    // CUDA IPO requires both CUDA_ARCHITECTURES and CUDA_SEPARABLE_COMPILATION
+    if (cmIsOff(this->GetSafeProperty("CUDA_ARCHITECTURES")) ||
+        cmIsOff(this->GetSafeProperty("CUDA_SEPARABLE_COMPILATION"))) {
+      return false;
+    }
   }
 
   cmPolicies::PolicyStatus cmp0069 = this->GetPolicyStatusCMP0069();
@@ -1706,7 +1715,7 @@ void addFileSetEntry(cmGeneratorTarget const* headTarget,
       }
       bool found = false;
       for (auto const& sg : headTarget->Makefile->GetSourceGroups()) {
-        if (sg.MatchesFiles(path)) {
+        if (sg.MatchChildrenFiles(path)) {
           found = true;
           break;
         }
@@ -3428,7 +3437,9 @@ void cmGeneratorTarget::AddExplicitLanguageFlags(std::string& flags,
                                              "EXPLICIT_LANGUAGE");
 }
 
-void cmGeneratorTarget::AddCUDAArchitectureFlags(std::string& flags) const
+void cmGeneratorTarget::AddCUDAArchitectureFlags(cmBuildStep compileOrLink,
+                                                 const std::string& config,
+                                                 std::string& flags) const
 {
   std::string property = this->GetSafeProperty("CUDA_ARCHITECTURES");
 
@@ -3460,6 +3471,7 @@ void cmGeneratorTarget::AddCUDAArchitectureFlags(std::string& flags) const
 
   std::string const& compiler =
     this->Makefile->GetSafeDefinition("CMAKE_CUDA_COMPILER_ID");
+  const bool ipoEnabled = this->IsIPOEnabled("CUDA", config);
 
   // Check for special modes: `all`, `all-major`.
   if (property == "all" || property == "all-major") {
@@ -3539,6 +3551,13 @@ void cmGeneratorTarget::AddCUDAArchitectureFlags(std::string& flags) const
   }
 
   if (compiler == "NVIDIA") {
+    if (ipoEnabled && compileOrLink == cmBuildStep::Link) {
+      if (cmValue cudaIPOFlags =
+            this->Makefile->GetDefinition("CMAKE_CUDA_LINK_OPTIONS_IPO")) {
+        flags += cudaIPOFlags;
+      }
+    }
+
     for (CudaArchitecture& architecture : architectures) {
       flags +=
         " --generate-code=arch=compute_" + architecture.name + ",code=[";
@@ -3551,7 +3570,13 @@ void cmGeneratorTarget::AddCUDAArchitectureFlags(std::string& flags) const
         }
       }
 
-      if (architecture.real) {
+      if (ipoEnabled) {
+        if (compileOrLink == cmBuildStep::Compile) {
+          flags += "lto_" + architecture.name;
+        } else if (compileOrLink == cmBuildStep::Link) {
+          flags += "sm_" + architecture.name;
+        }
+      } else if (architecture.real) {
         flags += "sm_" + architecture.name;
       }
 
@@ -5429,9 +5454,6 @@ std::string cmGeneratorTarget::GetObjectDirectory(
   std::string obj_dir =
     this->GlobalGenerator->ExpandCFGIntDir(this->ObjectDirectory, config);
 #if defined(__APPLE__)
-  // find and replace $(PROJECT_NAME) xcode placeholder
-  const std::string projectName = this->LocalGenerator->GetProjectName();
-  cmSystemTools::ReplaceString(obj_dir, "$(PROJECT_NAME)", projectName);
   // Replace Xcode's placeholder for the object file directory since
   // installation and export scripts need to know the real directory.
   // Xcode has build-time settings (e.g. for sanitizers) that affect this,
@@ -8554,6 +8576,9 @@ bool cmGeneratorTarget::AddHeaderSetVerification()
   }
 
   cmTarget* verifyTarget = nullptr;
+  cmTarget* allVerifyTarget =
+    this->GlobalGenerator->GetMakefiles().front()->FindTargetToUse(
+      "all_verify_interface_header_sets", true);
 
   auto interfaceFileSetEntries = this->Target->GetInterfaceHeaderSetsEntries();
 
@@ -8636,6 +8661,20 @@ bool cmGeneratorTarget::AddHeaderSetVerification()
             verifyTarget->SetProperty("AUTOUIC", "OFF");
             verifyTarget->SetProperty("DISABLE_PRECOMPILE_HEADERS", "ON");
             verifyTarget->SetProperty("UNITY_BUILD", "OFF");
+            cm::optional<std::map<std::string, cmValue>>
+              perConfigCompileDefinitions;
+            verifyTarget->FinalizeTargetConfiguration(
+              this->Makefile->GetCompileDefinitionsEntries(),
+              perConfigCompileDefinitions);
+
+            if (!allVerifyTarget) {
+              allVerifyTarget = this->GlobalGenerator->GetMakefiles()
+                                  .front()
+                                  ->AddNewUtilityTarget(
+                                    "all_verify_interface_header_sets", true);
+            }
+
+            allVerifyTarget->AddUtility(verifyTarget->GetName(), false);
           }
 
           if (fileCgesContextSensitive) {
@@ -8681,6 +8720,12 @@ std::string cmGeneratorTarget::GenerateHeaderSetVerificationFile(
         if (tgtSourceLanguage == "C") {
           languages->insert("C");
         }
+      }
+
+      if (languages->empty()) {
+        std::vector<std::string> languagesVector;
+        this->GlobalGenerator->GetEnabledLanguages(languagesVector);
+        languages->insert(languagesVector.begin(), languagesVector.end());
       }
     }
 

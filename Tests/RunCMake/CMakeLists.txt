@@ -295,15 +295,32 @@ if(UNIX AND "${CMAKE_GENERATOR}" MATCHES "Unix Makefiles|Ninja")
   add_RunCMake_test(CompilerChange)
 endif()
 add_RunCMake_test(CompilerNotFound)
+if (APPLE AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  list(APPEND CompilerTest_ARGS -DCMake_TEST_OBJC=1)
+endif()
+if(CMAKE_Fortran_COMPILER)
+  list(APPEND CompilerTest_ARGS -DCMake_TEST_Fortran=1)
+endif()
+foreach(lang IN ITEMS CUDA HIP ISPC)
+  if(CMake_TEST_${lang})
+    list(APPEND CompilerTest_ARGS -DCMake_TEST_${lang}=1)
+  endif()
+endforeach()
+add_RunCMake_test(CompilerTest)
+set_property(TEST RunCMake.CompilerTest APPEND PROPERTY LABELS "CUDA" "HIP" "ISPC")
 add_RunCMake_test(Configure -DMSVC_IDE=${MSVC_IDE})
 add_RunCMake_test(DisallowedCommands)
 if("${CMAKE_GENERATOR}" MATCHES "Unix Makefiles|Ninja")
   add_RunCMake_test(ExportCompileCommands)
 endif()
 add_RunCMake_test(ExcludeFromAll)
+add_RunCMake_test(ExportImport)
 add_RunCMake_test(ExternalData)
 add_RunCMake_test(FeatureSummary)
 add_RunCMake_test(FPHSA)
+if(CMAKE_USE_SYSTEM_JSONCPP)
+  list(APPEND FileAPI_ARGS -DJsonCpp_VERSION_STRING=${JsonCpp_VERSION_STRING})
+endif()
 add_RunCMake_test(FileAPI -DPython_EXECUTABLE=${Python_EXECUTABLE}
                           -DCMAKE_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID})
 add_RunCMake_test(FindBoost)
@@ -355,6 +372,7 @@ if(MSVC)
   add_RunCMake_test(MSVCRuntimeLibrary)
   add_RunCMake_test(MSVCRuntimeTypeInfo)
   add_RunCMake_test(MSVCWarningFlags)
+  add_RunCMake_test(MSVCDebugInformationFormat)
 endif()
 if(XCODE_VERSION)
   set(ObjectLibrary_ARGS -DXCODE_VERSION=${XCODE_VERSION})
@@ -452,6 +470,7 @@ add_RunCMake_test(find_path)
 add_RunCMake_test(find_program -DCMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME})
 add_RunCMake_test(foreach)
 add_RunCMake_test(function)
+add_RunCMake_test(block)
 add_RunCMake_test(get_filename_component)
 add_RunCMake_test(get_property)
 add_RunCMake_test(if)
@@ -521,7 +540,9 @@ function(add_RunCMake_test_try_compile)
       set(CMAKE_CXX_STANDARD_DEFAULT 14)
     endif()
   endif()
-  foreach(var
+  foreach(
+    var
+    IN ITEMS
       CMAKE_SYSTEM_NAME
       CMAKE_C_COMPILER_ID
       CMAKE_C_COMPILER_VERSION
@@ -535,7 +556,7 @@ function(add_RunCMake_test_try_compile)
       CMake_TEST_FILESYSTEM_1S
       CMAKE_OBJC_STANDARD_DEFAULT
       CMAKE_OBJCXX_STANDARD_DEFAULT
-      )
+    )
     if(DEFINED ${var})
       list(APPEND try_compile_ARGS -D${var}=${${var}})
     endif()
@@ -691,6 +712,8 @@ add_RunCMake_test(target_link_libraries-LINK_LIBRARY -DCMAKE_SYSTEM_NAME=${CMAKE
                                                      -DCMAKE_C_COMPILER_ID=${CMAKE_C_COMPILER_ID}
                                                      -DCMAKE_C_COMPILER_VERSION=${CMAKE_C_COMPILER_VERSION}
                                                      -DMSVC_VERSION=${MSVC_VERSION}
+                                                     -DXCODE=${XCODE}
+                                                     -DXCODE_VERSION=${XCODE_VERSION}
                                                      -DCMAKE_SHARED_LIBRARY_PREFIX=${CMAKE_SHARED_LIBRARY_PREFIX}
                                                      -DCMAKE_SHARED_LIBRARY_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}
                                                      -DCMAKE_IMPORT_LIBRARY_PREFIX=${CMAKE_IMPORT_LIBRARY_PREFIX}
@@ -950,7 +973,7 @@ if(CMake_TEST_ANDROID_NDK OR CMake_TEST_ANDROID_STANDALONE_TOOLCHAIN)
   if(NOT "${CMAKE_GENERATOR}" MATCHES "Make|Ninja|Visual Studio 1[456]")
     message(FATAL_ERROR "Android tests supported only by Makefile, Ninja, and Visual Studio >= 14 generators")
   endif()
-  foreach(v TEST_ANDROID_NDK TEST_ANDROID_STANDALONE_TOOLCHAIN)
+  foreach(v IN ITEMS TEST_ANDROID_NDK TEST_ANDROID_STANDALONE_TOOLCHAIN)
     if(CMake_${v})
       string(REPLACE ";" "|" ${v} "${CMake_${v}}")
       list(APPEND Android_ARGS "-D${v}=${${v}}")
@@ -991,6 +1014,14 @@ add_RunCMake_test(CMakePresetsBuild
   -DCMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME}
   )
 add_RunCMake_test(CMakePresetsTest
+  -DPython_EXECUTABLE=${Python_EXECUTABLE}
+  -DCMake_TEST_JSON_SCHEMA=${CMake_TEST_JSON_SCHEMA}
+  )
+add_RunCMake_test(CMakePresetsPackage
+  -DPython_EXECUTABLE=${Python_EXECUTABLE}
+  -DCMake_TEST_JSON_SCHEMA=${CMake_TEST_JSON_SCHEMA}
+  )
+add_RunCMake_test(CMakePresetsWorkflow
   -DPython_EXECUTABLE=${Python_EXECUTABLE}
   -DCMake_TEST_JSON_SCHEMA=${CMake_TEST_JSON_SCHEMA}
   )
