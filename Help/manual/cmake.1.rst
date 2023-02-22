@@ -9,8 +9,8 @@ Synopsis
 .. parsed-literal::
 
  `Generate a Project Buildsystem`_
+  cmake [<options>] -B <path-to-build> [-S <path-to-source>]
   cmake [<options>] <path-to-source | path-to-existing-build>
-  cmake [<options>] -S <path-to-source> -B <path-to-build>
 
  `Build a Project`_
   cmake --build <dir> [<options>] [-- <build-tool-options>]
@@ -39,20 +39,20 @@ Synopsis
 Description
 ===========
 
-The **cmake** executable is the command-line interface of the cross-platform
+The :program:`cmake` executable is the command-line interface of the cross-platform
 buildsystem generator CMake.  The above `Synopsis`_ lists various actions
 the tool can perform as described in sections below.
 
 To build a software project with CMake, `Generate a Project Buildsystem`_.
-Optionally use **cmake** to `Build a Project`_, `Install a Project`_ or just
-run the corresponding build tool (e.g. ``make``) directly.  **cmake** can also
+Optionally use :program:`cmake` to `Build a Project`_, `Install a Project`_ or just
+run the corresponding build tool (e.g. ``make``) directly.  :program:`cmake` can also
 be used to `View Help`_.
 
 The other actions are meant for use by software developers writing
 scripts in the :manual:`CMake language <cmake-language(7)>` to support
 their builds.
 
-For graphical user interfaces that may be used in place of **cmake**,
+For graphical user interfaces that may be used in place of :program:`cmake`,
 see :manual:`ccmake <ccmake(1)>` and :manual:`cmake-gui <cmake-gui(1)>`.
 For command-line interfaces to the CMake testing and packaging facilities,
 see :manual:`ctest <ctest(1)>` and :manual:`cpack <cpack(1)>`.
@@ -116,6 +116,20 @@ Generate a Project Buildsystem
 Run CMake with one of the following command signatures to specify the
 source and build trees and generate a buildsystem:
 
+``cmake [<options>] -B <path-to-build> [-S <path-to-source>]``
+
+  .. versionadded:: 3.13
+
+  Uses ``<path-to-build>`` as the build tree and ``<path-to-source>``
+  as the source tree.  The specified paths may be absolute or relative
+  to the current working directory.  The source tree must contain a
+  ``CMakeLists.txt`` file.  The build tree will be created automatically
+  if it does not already exist.  For example:
+
+  .. code-block:: console
+
+    $ cmake -S src -B build
+
 ``cmake [<options>] <path-to-source>``
   Uses the current working directory as the build tree, and
   ``<path-to-source>`` as the source tree.  The specified path may
@@ -141,17 +155,6 @@ source and build trees and generate a buildsystem:
     $ cd build
     $ cmake .
 
-``cmake [<options>] -S <path-to-source> -B <path-to-build>``
-  Uses ``<path-to-build>`` as the build tree and ``<path-to-source>``
-  as the source tree.  The specified paths may be absolute or relative
-  to the current working directory.  The source tree must contain a
-  ``CMakeLists.txt`` file.  The build tree will be created automatically
-  if it does not already exist.  For example:
-
-  .. code-block:: console
-
-    $ cmake -S src -B build
-
 In all cases the ``<options>`` may be zero or more of the `Options`_ below.
 
 The above styles for specifying the source and build trees may be mixed.
@@ -164,14 +167,14 @@ the current working directory (cwd) is used for the other.  For example:
 ============================== ============ ===========
  Command Line                   Source Dir   Build Dir
 ============================== ============ ===========
+ ``cmake -B build``             `cwd`        ``build``
+ ``cmake -B build src``         ``src``      ``build``
+ ``cmake -B build -S src``      ``src``      ``build``
  ``cmake src``                  ``src``      `cwd`
  ``cmake build`` (existing)     `loaded`     ``build``
  ``cmake -S src``               ``src``      `cwd`
  ``cmake -S src build``         ``src``      ``build``
  ``cmake -S src -B build``      ``src``      ``build``
- ``cmake -B build``             `cwd`        ``build``
- ``cmake -B build src``         ``src``      ``build``
- ``cmake -B build -S src``      ``src``      ``build``
 ============================== ============ ===========
 
 .. versionchanged:: 3.23
@@ -190,7 +193,7 @@ build tool to build the project.  For example, after using the
     $ make
     $ make install
 
-Alternatively, one may use **cmake** to `Build a Project`_ by
+Alternatively, one may use :program:`cmake` to `Build a Project`_ by
 automatically choosing and invoking the appropriate native build tool.
 
 .. _`CMake Options`:
@@ -278,15 +281,24 @@ Options
 
 .. option:: --debug-trycompile
 
- Do not delete the :command:`try_compile` build tree.
- Only useful on one :command:`try_compile` at a time.
+ Do not delete the files and directories created for
+ :command:`try_compile` / :command:`try_run` calls.
+ This is useful in debugging failed checks.
 
- Do not delete the files and directories created for :command:`try_compile`
- calls.  This is useful in debugging failed try_compiles.  It may
- however change the results of the try-compiles as old junk from a
- previous try-compile may cause a different test to either pass or
- fail incorrectly.  This option is best used for one try-compile at a
- time, and only when debugging.
+ Note that some uses of :command:`try_compile` may use the same build tree,
+ which will limit the usefulness of this option if a project executes more
+ than one :command:`try_compile`.  For example, such uses may change results
+ as artifacts from a previous try-compile may cause a different test to either
+ pass or fail incorrectly.  This option is best used only when debugging.
+
+ (With respect to the preceding, the :command:`try_run` command
+ is effectively a :command:`try_compile`.  Any combination of the two
+ is subject to the potential issues described.)
+
+ .. versionadded:: 3.25
+
+   When this option is enabled, every try-compile check prints a log
+   message reporting the directory in which the check is performed.
 
 .. option:: --debug-output
 
@@ -350,9 +362,8 @@ Options
      separated by a newline ( ``\n`` ). It is guaranteed that no
      newline characters will be present inside a JSON document.
 
-     JSON trace format:
-
      .. code-block:: json
+       :caption: JSON trace format
 
        {
          "file": "/full/path/to/the/CMake/file.txt",
@@ -405,9 +416,8 @@ Options
      Additionally, the first JSON document outputted contains the
      ``version`` key for the current major and minor version of the
 
-     JSON trace format:
-
      .. code-block:: json
+       :caption: JSON version format
 
        {
          "version": {
@@ -512,6 +522,8 @@ Options
 Build a Project
 ===============
 
+.. program:: cmake
+
 CMake provides a command-line signature to build an already-generated
 project binary tree:
 
@@ -528,6 +540,8 @@ following options:
   Project binary directory to be built.  This is required (unless a preset
   is specified) and must be first.
 
+.. program:: cmake--build
+
 .. option:: --preset <preset>, --preset=<preset>
 
   Use a build preset to specify build options. The project binary directory
@@ -541,6 +555,8 @@ following options:
   contain CMake preset files.
 
 .. option:: -j [<jobs>], --parallel [<jobs>]
+
+  .. versionadded:: 3.12
 
   The maximum number of concurrent processes to use when building.
   If ``<jobs>`` is omitted the native build tool's default number is used.
@@ -563,7 +579,7 @@ following options:
 .. option:: --clean-first
 
   Build target ``clean`` first, then build.
-  (To clean only, use :option:`--target clean <cmake --target>`.)
+  (To clean only, use :option:`--target clean <cmake--build --target>`.)
 
 .. option:: --resolve-package-references=<value>
 
@@ -612,6 +628,8 @@ Run :option:`cmake --build` with no options for quick help.
 Install a Project
 =================
 
+.. program:: cmake
+
 CMake provides a command-line signature to install an already-generated
 project binary tree:
 
@@ -626,6 +644,8 @@ The options are:
 .. option:: --install <dir>
 
   Project binary directory to install. This is required and must be first.
+
+.. program:: cmake--install
 
 .. option:: --config <cfg>
 
@@ -658,6 +678,8 @@ Run :option:`cmake --install` with no options for quick help.
 Open a Project
 ==============
 
+.. program:: cmake
+
 .. code-block:: shell
 
   cmake --open <dir>
@@ -671,15 +693,19 @@ supported by some generators.
 Run a Script
 ============
 
-.. program:: cmake_P
+.. program:: cmake
 
 .. code-block:: shell
 
   cmake [-D <var>=<value>]... -P <cmake-script-file> [-- <unparsed-options>...]
 
+.. program:: cmake-P
+
 .. option:: -D <var>=<value>
 
  Define a variable for script mode.
+
+.. program:: cmake
 
 .. option:: -P <cmake-script-file>
 
@@ -698,7 +724,7 @@ script (including the ``--`` itself).
 Run a Command-Line Tool
 =======================
 
-.. program:: cmake_E
+.. program:: cmake
 
 CMake provides builtin command-line tools through the signature
 
@@ -709,6 +735,8 @@ CMake provides builtin command-line tools through the signature
 .. option:: -E [help]
 
   Run ``cmake -E`` or ``cmake -E help`` for a summary of commands.
+
+.. program:: cmake-E
 
 Available commands are:
 
@@ -753,7 +781,7 @@ Available commands are:
       (:option:`-A ... <cmake -A>`).  The value is a list of platforms known to
       be supported.
     ``extraGenerators``
-      A list of strings with all the extra generators compatible with
+      A list of strings with all the :ref:`Extra Generators` compatible with
       the generator.
 
   ``fileApi``
@@ -787,11 +815,18 @@ Available commands are:
 
   Concatenate files and print on the standard output.
 
-  .. versionadded:: 3.24
+  .. program:: cmake-E_cat
+
+  .. option:: --
+
+    .. versionadded:: 3.24
+
     Added support for the double dash argument ``--``. This basic implementation
     of ``cat`` does not support any options, so using a option starting with
     ``-`` will result in an error. Use ``--`` to indicate the end of options, in
     case a file starts with ``-``.
+
+.. program:: cmake-E
 
 .. option:: chdir <dir> <cmd> [<arg>...]
 
@@ -803,20 +838,30 @@ Available commands are:
   then returns ``0``, if not it returns ``1``.  In case of invalid
   arguments, it returns 2.
 
-  .. versionadded:: 3.14
-    The ``--ignore-eol`` option implies line-wise comparison and ignores
-    LF/CRLF differences.
+  .. program:: cmake-E_compare_files
 
-.. option:: copy <file>... <destination>
+  .. option:: --ignore-eol
+
+    .. versionadded:: 3.14
+
+    The option implies line-wise comparison and ignores LF/CRLF differences.
+
+.. program:: cmake-E
+
+.. option:: copy <file>... <destination>, copy -t <destination> <file>...
 
   Copy files to ``<destination>`` (either file or directory).
-  If multiple files are specified, the ``<destination>`` must be
-  directory and it must exist. Wildcards are not supported.
-  ``copy`` does follow symlinks. That means it does not copy symlinks,
-  but the files or directories it point to.
+  If multiple files are specified, or if ``-t`` is specified, the
+  ``<destination>`` must be directory and it must exist. If ``-t`` is not
+  specified, the last argument is assumed to be the ``<destination>``.
+  Wildcards are not supported. ``copy`` does follow symlinks. That means it
+  does not copy symlinks, but the files or directories it point to.
 
   .. versionadded:: 3.5
     Support for multiple input files.
+
+  .. versionadded:: 3.26
+    Support for ``-t`` argument.
 
 .. option:: copy_directory <dir>... <destination>
 
@@ -830,6 +875,16 @@ Available commands are:
   .. versionadded:: 3.15
     The command now fails when the source directory does not exist.
     Previously it succeeded by creating an empty destination directory.
+
+.. option:: copy_directory_if_different <dir>... <destination>
+
+  .. versionadded:: 3.26
+
+  Copy changed content of ``<dir>...`` directories to ``<destination>`` directory.
+  If ``<destination>`` directory does not exist it will be created.
+
+  ``copy_directory_if_different`` does follow symlinks.
+  The command fails when the source directory does not exist.
 
 .. option:: copy_if_different <file>... <destination>
 
@@ -876,13 +931,18 @@ Available commands are:
 
   Run command in a modified environment. Options are:
 
-  ``NAME=VALUE``
+  .. program:: cmake-E_env
+
+  .. option:: NAME=VALUE
+
     Replaces the current value of ``NAME`` with ``VALUE``.
 
-  ``--unset=NAME``
+  .. option:: --unset=NAME
+
     Unsets the current value of ``NAME``.
 
-  ``--modify ENVIRONMENT_MODIFICATION``
+  .. option:: --modify ENVIRONMENT_MODIFICATION
+
     .. versionadded:: 3.25
 
     Apply a single :prop_test:`ENVIRONMENT_MODIFICATION` operation to the
@@ -891,13 +951,18 @@ Available commands are:
     The ``NAME=VALUE`` and ``--unset=NAME`` options are equivalent to
     ``--modify NAME=set:VALUE`` and ``--modify NAME=unset:``, respectively.
     Note that ``--modify NAME=reset:`` resets ``NAME`` to the value it had
-    when ``cmake`` launched (or unsets it), not to the most recent
+    when :program:`cmake` launched (or unsets it), not to the most recent
     ``NAME=VALUE`` option.
 
-  .. versionadded:: 3.24
+  .. option:: --
+
+    .. versionadded:: 3.24
+
     Added support for the double dash argument ``--``. Use ``--`` to stop
     interpreting options/environment variables and treat the next argument as
     the command, even if it start with ``-`` or contains a ``=``.
+
+.. program:: cmake-E
 
 .. option:: environment
 
@@ -1015,25 +1080,32 @@ Available commands are:
   situations instead. Use ``--`` to stop interpreting options and treat all
   remaining arguments as paths, even if they start with ``-``.
 
-.. option:: server
-
-  Launch :manual:`cmake-server(7)` mode.
-
-.. option:: sleep <number>...
+.. option:: sleep <number>
 
   .. versionadded:: 3.0
 
-  Sleep for given number of seconds.
+  Sleep for ``<number>`` seconds. ``<number>`` may be a floating point number.
+  A practical minimum is about 0.1 seconds due to overhead in starting/stopping
+  CMake executable. This can be useful in a CMake script to insert a delay:
+
+  .. code-block:: cmake
+
+    # Sleep for about 0.5 seconds
+    execute_process(COMMAND ${CMAKE_COMMAND} -E sleep 0.5)
 
 .. option:: tar [cxt][vf][zjJ] file.tar [<options>] [--] [<pathname>...]
 
   Create or extract a tar or zip archive.  Options are:
 
-  ``c``
+  .. program:: cmake-E_tar
+
+  .. option:: c
+
     Create a new archive containing the specified files.
     If used, the ``<pathname>...`` argument is mandatory.
 
-  ``x``
+  .. option:: x
+
     Extract to disk from the archive.
 
     .. versionadded:: 3.15
@@ -1042,33 +1114,40 @@ Available commands are:
       When extracting selected files or directories, you must provide their exact
       names including the path, as printed by list (``-t``).
 
-  ``t``
+  .. option:: t
+
     List archive contents.
 
     .. versionadded:: 3.15
       The ``<pathname>...`` argument could be used to list only selected files
       or directories.
 
-  ``v``
+  .. option:: v
+
     Produce verbose output.
 
-  ``z``
+  .. option:: z
+
     Compress the resulting archive with gzip.
 
-  ``j``
+  .. option:: j
+
     Compress the resulting archive with bzip2.
 
-  ``J``
+  .. option:: J
+
     .. versionadded:: 3.1
 
     Compress the resulting archive with XZ.
 
-  ``--zstd``
+  .. option:: --zstd
+
     .. versionadded:: 3.15
 
     Compress the resulting archive with Zstandard.
 
-  ``--files-from=<file>``
+  .. option:: --files-from=<file>
+
     .. versionadded:: 3.1
 
     Read file names from the given file, one per line.
@@ -1076,25 +1155,29 @@ Available commands are:
     except for ``--add-file=<name>`` to add files whose
     names start in ``-``.
 
-  ``--format=<format>``
+  .. option:: --format=<format>
+
     .. versionadded:: 3.3
 
     Specify the format of the archive to be created.
     Supported formats are: ``7zip``, ``gnutar``, ``pax``,
     ``paxr`` (restricted pax, default), and ``zip``.
 
-  ``--mtime=<date>``
+  .. option:: --mtime=<date>
+
     .. versionadded:: 3.1
 
     Specify modification time recorded in tarball entries.
 
-  ``--touch``
+  .. option:: --touch
+
     .. versionadded:: 3.24
 
     Use current local timestamp instead of extracting file timestamps
     from the archive.
 
-  ``--``
+  .. option:: --
+
     .. versionadded:: 3.1
 
     Stop interpreting options and treat all remaining arguments
@@ -1109,9 +1192,11 @@ Available commands are:
     ``tar`` tool. The command now also parses all flags, and if an invalid flag
     was provided, a warning is issued.
 
+.. program:: cmake-E
+
 .. option:: time <command> [<args>...]
 
-  Run command and display elapsed time.
+  Run ``<command>`` and display elapsed time (including overhead of CMake frontend).
 
   .. versionadded:: 3.5
     The command now properly passes arguments with spaces or special characters
@@ -1165,6 +1250,8 @@ The following ``cmake -E`` commands are available only on Windows:
 Run the Find-Package Tool
 =========================
 
+.. program:: cmake--find-package
+
 CMake provides a pkg-config like helper for Makefile-based projects:
 
 .. code-block:: shell
@@ -1185,8 +1272,22 @@ autoconf-based projects (via ``share/aclocal/cmake.m4``).
 Run a Workflow Preset
 =====================
 
+.. program:: cmake
+
 :manual:`CMake Presets <cmake-presets(7)>` provides a way to execute multiple
 build steps in order:
+
+.. code-block:: shell
+
+  cmake --workflow [<options>]
+
+The options are:
+
+.. option:: --workflow
+
+  Select a :ref:`Workflow Preset` using one of the following options.
+
+.. program:: cmake--workflow
 
 .. option:: --preset <preset>, --preset=<preset>
 
@@ -1200,8 +1301,16 @@ build steps in order:
   Lists the available workflow presets. The current working directory must
   contain CMake preset files.
 
+.. option:: --fresh
+
+  Perform a fresh configuration of the build tree.
+  This removes any existing ``CMakeCache.txt`` file and associated
+  ``CMakeFiles/`` directory, and recreates them from scratch.
+
 View Help
 =========
+
+.. program:: cmake
 
 To print selected pages from the CMake documentation, use
 
@@ -1210,8 +1319,6 @@ To print selected pages from the CMake documentation, use
   cmake --help[-<topic>]
 
 with one of the following options:
-
-.. program:: cmake
 
 .. include:: OPTIONS_HELP.txt
 
@@ -1227,7 +1334,7 @@ To view the presets available for a project, use
 Return Value (Exit Code)
 ========================
 
-Upon regular termination, the ``cmake`` executable returns the exit code ``0``.
+Upon regular termination, the :program:`cmake` executable returns the exit code ``0``.
 
 If termination is caused by the command :command:`message(FATAL_ERROR)`,
 or another error condition, then a non-zero exit code is returned.

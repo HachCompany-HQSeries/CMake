@@ -970,8 +970,7 @@ bool cmQtAutoGenInitializer::InitScanFiles()
             uiHeader, uiHeaderGenex, cmStrCat(this->Dir.Build, "/include"_s),
             uiHeaderFilePath);
 
-          this->Uic.UiHeaders.emplace_back(
-            std::make_pair(uiHeader, uiHeaderGenex));
+          this->Uic.UiHeaders.emplace_back(uiHeader, uiHeaderGenex);
         } else {
           // Register skipped .ui file
           this->Uic.SkipUi.insert(fullPath);
@@ -1239,7 +1238,6 @@ bool cmQtAutoGenInitializer::InitAutogenTarget()
       cc->SetDepends(uicDependencies);
       cc->SetComment("");
       cc->SetWorkingDirectory(this->Dir.Work.c_str());
-      cc->SetCMP0116Status(cmPolicies::NEW);
       cc->SetEscapeOldStyle(false);
       cc->SetStdPipesUTF8(stdPipesUTF8);
       this->LocalGen->AddCustomCommandToOutput(std::move(cc));
@@ -1333,7 +1331,6 @@ bool cmQtAutoGenInitializer::InitAutogenTarget()
       cc->SetByproducts(timestampTargetProvides);
       cc->SetDepends(dependencies);
       cc->SetCommandLines(timestampTargetCommandLines);
-      cc->SetCMP0116Status(cmPolicies::NEW);
       cc->SetEscapeOldStyle(false);
       cmTarget* timestampTarget = this->LocalGen->AddUtilityCommand(
         timestampTargetName, true, std::move(cc));
@@ -1372,7 +1369,6 @@ bool cmQtAutoGenInitializer::InitAutogenTarget()
       cc->SetCommandLines(commandLines);
       cc->SetComment(autogenComment.c_str());
       cc->SetWorkingDirectory(this->Dir.Work.c_str());
-      cc->SetCMP0116Status(cmPolicies::NEW);
       cc->SetEscapeOldStyle(false);
       cc->SetDepfile(this->AutogenTarget.DepFile);
       cc->SetStdPipesUTF8(stdPipesUTF8);
@@ -1392,7 +1388,6 @@ bool cmQtAutoGenInitializer::InitAutogenTarget()
     cc->SetByproducts(autogenByproducts);
     cc->SetDepends(dependencies);
     cc->SetCommandLines(commandLines);
-    cc->SetCMP0116Status(cmPolicies::NEW);
     cc->SetEscapeOldStyle(false);
     cc->SetComment(autogenComment.c_str());
     cmTarget* autogenTarget = this->LocalGen->AddUtilityCommand(
@@ -1473,7 +1468,6 @@ bool cmQtAutoGenInitializer::InitRccTargets()
     auto cc = cm::make_unique<cmCustomCommand>();
     cc->SetWorkingDirectory(this->Dir.Work.c_str());
     cc->SetCommandLines(commandLines);
-    cc->SetCMP0116Status(cmPolicies::NEW);
     cc->SetComment(ccComment.c_str());
     cc->SetStdPipesUTF8(true);
 
@@ -1792,13 +1786,16 @@ void cmQtAutoGenInitializer::AddGeneratedSource(ConfigString const& filename,
   // XXX(xcode-per-cfg-src): Drop the Xcode-specific part of the condition
   // when the Xcode generator supports per-config sources.
   if (!this->MultiConfig || this->GlobalGen->IsXcode()) {
-    this->AddGeneratedSource(filename.Default, genVars, prepend);
+    cmSourceFile* sf =
+      this->AddGeneratedSource(filename.Default, genVars, prepend);
+    handleSkipPch(sf);
     return;
   }
   for (auto const& cfg : this->ConfigsList) {
     std::string const& filenameCfg = filename.Config.at(cfg);
     // Register source at makefile
-    this->RegisterGeneratedSource(filenameCfg);
+    cmSourceFile* sf = this->RegisterGeneratedSource(filenameCfg);
+    handleSkipPch(sf);
     // Add source file to target for this configuration.
     this->GenTarget->AddSource(
       cmStrCat("$<$<CONFIG:"_s, cfg, ">:"_s, filenameCfg, ">"_s), prepend);
@@ -2092,7 +2089,7 @@ bool cmQtAutoGenInitializer::GetQtExecutable(GenVarsT& genVars,
       // Evaluate generator expression
       {
         cmListFileBacktrace lfbt = this->Makefile->GetBacktrace();
-        cmGeneratorExpression ge(lfbt);
+        cmGeneratorExpression ge(*this->Makefile->GetCMakeInstance(), lfbt);
         std::unique_ptr<cmCompiledGeneratorExpression> cge = ge.Parse(val);
         genVars.Executable = cge->Evaluate(this->LocalGen, "");
       }
@@ -2157,4 +2154,19 @@ bool cmQtAutoGenInitializer::GetQtExecutable(GenVarsT& genVars,
   }
 
   return true;
+}
+
+void cmQtAutoGenInitializer::handleSkipPch(cmSourceFile* sf)
+{
+  bool skipPch = true;
+  for (auto const& pair : this->AutogenTarget.Sources) {
+    if (!pair.first->GetIsGenerated() &&
+        !pair.first->GetProperty("SKIP_PRECOMPILE_HEADERS")) {
+      skipPch = false;
+    }
+  }
+
+  if (skipPch) {
+    sf->SetProperty("SKIP_PRECOMPILE_HEADERS", "ON");
+  }
 }

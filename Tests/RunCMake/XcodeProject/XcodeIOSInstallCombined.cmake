@@ -1,8 +1,12 @@
-cmake_minimum_required(VERSION 3.3)
+enable_language(CXX)
 
-project(IOSInstallCombined CXX)
-
-if(XCODE_VERSION VERSION_GREATER_EQUAL 9)
+set(maybe_armv7 armv7)
+set(maybe_i386 i386)
+if(XCODE_VERSION VERSION_GREATER_EQUAL 14)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET 16)
+  set(maybe_armv7 "")
+  set(maybe_i386 "")
+elseif(XCODE_VERSION VERSION_GREATER_EQUAL 9)
   set(CMAKE_OSX_DEPLOYMENT_TARGET 10)
 endif()
 
@@ -16,7 +20,7 @@ set(CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "")
 set(CMAKE_XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf")
 set(CMAKE_XCODE_ATTRIBUTE_ENABLE_BITCODE "NO")
 
-set(CMAKE_OSX_ARCHITECTURES "armv7;arm64;i386;x86_64")
+set(CMAKE_OSX_ARCHITECTURES ${maybe_armv7} arm64 ${maybe_i386} x86_64)
 
 add_executable(foo_app MACOSX_BUNDLE main.cpp)
 install(TARGETS foo_app BUNDLE DESTINATION bin)

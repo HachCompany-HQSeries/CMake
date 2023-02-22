@@ -359,6 +359,9 @@ public:
   /** Set the output log file name */
   void SetOutputLogFileName(const std::string& name);
 
+  /** Set the output JUnit file name */
+  void SetOutputJUnitFileName(const std::string& name);
+
   /** Set the visual studio or Xcode config type */
   void SetConfigType(const std::string& ct);
 
@@ -478,7 +481,7 @@ private:
    * call this method because it sets CTEST_COMMAND to drive a build
    * through the ctest command line.
    */
-  int Initialize(const char* binary_dir, cmCTestStartCommand* command);
+  int Initialize(const std::string& binary_dir, cmCTestStartCommand* command);
 
   /** parse the option after -D and convert it into the appropriate steps */
   bool AddTestsForDashboardType(std::string& targ);

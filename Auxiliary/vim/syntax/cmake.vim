@@ -459,6 +459,7 @@ syn keyword cmakeVariable contained
             \ BUILD_SHARED_LIBS
             \ CACHE
             \ CMAKE_ABSOLUTE_DESTINATION_FILES
+            \ CMAKE_ADD_CUSTOM_COMMAND_DEPENDS_EXPLICIT_ONLY
             \ CMAKE_AIX_EXPORT_ALL_SYMBOLS
             \ CMAKE_ANDROID_ANT_ADDITIONAL_OPTIONS
             \ CMAKE_ANDROID_API
@@ -2013,6 +2014,7 @@ syn keyword cmakeKWExternalProject contained
             \ IGNORED
             \ INACTIVITY_TIMEOUT
             \ INDEPENDENT_STEP_TARGETS
+            \ INSTALL_BYPRODUCTS
             \ INSTALL_COMMAND
             \ INSTALL_DIR
             \ JOB_POOLS
@@ -2094,6 +2096,7 @@ syn keyword cmakeKWadd_custom_command contained
             \ COMMENT
             \ CROSSCOMPILING_EMULATOR
             \ DEPENDS
+            \ DEPENDS_EXPLICIT_ONLY
             \ DEPFILE
             \ GENERATED
             \ IMPLICIT_DEPENDS

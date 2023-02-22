@@ -56,8 +56,6 @@ add_custom_target(checksayhello ALL
   )
 add_dependencies(checksayhello sayhello)
 
-set(err_log ${CMAKE_BINARY_DIR}/CMakeFiles/CMakeError.log)
-file(REMOVE "${err_log}")
 include(CheckFortranSourceCompiles)
 unset(HAVE_PRINT CACHE)
 CHECK_Fortran_SOURCE_COMPILES([[
@@ -66,10 +64,24 @@ CHECK_Fortran_SOURCE_COMPILES([[
       END
 ]] HAVE_PRINT)
 if(NOT HAVE_PRINT)
-  if(EXISTS "${err_log}")
-    file(READ "${err_log}" err)
+  set(configure_log "${CMAKE_BINARY_DIR}/CMakeFiles/CMakeConfigureLog.yaml")
+  if(EXISTS "${configure_log}")
+    file(READ "${configure_log}" log_content)
+  else()
+    set(log_content "")
   endif()
-  string(REPLACE "\n" "\n  " err "  ${err}")
+  if(log_content MATCHES [[(  -
+    kind: "try_compile-v1"(
++    [^
+]+)+
+    checks:
+      - "Performing Test HAVE_PRINT"(
++    [^
+]+)+)]])
+    set(err "${CMAKE_MATCH_1}")
+  else()
+    set(err "")
+  endif()
   message(SEND_ERROR "CHECK_Fortran_SOURCE_COMPILES for HAVE_PRINT failed:\n"
     "${err}")
 endif()
@@ -140,13 +152,16 @@ if(CMAKE_Fortran_COMPILE_OPTIONS_PREPROCESS_ON AND
   set_property(SOURCE preprocess3.f PROPERTY Fortran_PREPROCESS ON)
 endif()
 
-# Test that neither the compiler nor CMake performs unnecessary preprocessing.
-add_library(no_preprocess_target_lower STATIC no_preprocess_target_lower.f)
-target_compile_options(no_preprocess_target_lower PRIVATE -DINTEGER=nonsense)
-set_property(TARGET no_preprocess_target_lower PROPERTY Fortran_PREPROCESS OFF)
-add_library(no_preprocess_source_lower STATIC no_preprocess_source_lower.f)
-target_compile_options(no_preprocess_source_lower PRIVATE -DINTEGER=nonsense)
-set_property(SOURCE no_preprocess_source_lower.f PROPERTY Fortran_PREPROCESS OFF)
+# LCC < 1.24 has no way to disable Fortran preprocessor
+if(NOT CMAKE_Fortran_COMPILER_ID STREQUAL "LCC" OR CMAKE_Fortran_COMPILER_VERSION VERSION_GREATER_EQUAL "1.24.00")
+  # Test that neither the compiler nor CMake performs unnecessary preprocessing.
+  add_library(no_preprocess_target_lower STATIC no_preprocess_target_lower.f)
+  target_compile_options(no_preprocess_target_lower PRIVATE -DINTEGER=nonsense)
+  set_property(TARGET no_preprocess_target_lower PROPERTY Fortran_PREPROCESS OFF)
+  add_library(no_preprocess_source_lower STATIC no_preprocess_source_lower.f)
+  target_compile_options(no_preprocess_source_lower PRIVATE -DINTEGER=nonsense)
+  set_property(SOURCE no_preprocess_source_lower.f PROPERTY Fortran_PREPROCESS OFF)
+endif()
 
 # Test that we can explicitly not preprocess a target or source.
 # This will not work on certain compilers due to either missing a

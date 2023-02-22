@@ -10,6 +10,7 @@
 #include <utility>
 
 #include <cm/memory>
+#include <cm/optional>
 #include <cm/string_view>
 #include <cm/vector>
 #include <cmext/algorithm>
@@ -945,9 +946,8 @@ void cmLocalUnixMakefileGenerator3::AppendCustomCommand(
   // post-build command comments.  Custom build step commands have
   // their comments generated elsewhere.
   if (echo_comment) {
-    const char* comment = ccg.GetComment();
-    if (comment && *comment) {
-      this->AppendEcho(commands, comment,
+    if (cm::optional<std::string> comment = ccg.GetComment()) {
+      this->AppendEcho(commands, *comment,
                        cmLocalUnixMakefileGenerator3::EchoGenerate);
     }
   }
@@ -1003,7 +1003,9 @@ void cmLocalUnixMakefileGenerator3::AppendCustomCommand(
 
       std::string launcher;
       // Short-circuit if there is no launcher.
-      cmValue val = this->GetRuleLauncher(target, "RULE_LAUNCH_CUSTOM");
+      std::string val = this->GetRuleLauncher(
+        target, "RULE_LAUNCH_CUSTOM",
+        this->Makefile->GetSafeDefinition("CMAKE_BUILD_TYPE"));
       if (cmNonempty(val)) {
         // Expand rule variables referenced in the given launcher command.
         cmRulePlaceholderExpander::RuleVariables vars;
@@ -1022,7 +1024,7 @@ void cmLocalUnixMakefileGenerator3::AppendCustomCommand(
         }
         vars.Output = output.c_str();
 
-        launcher = *val;
+        launcher = val;
         rulePlaceholderExpander->ExpandRuleVariables(this, launcher, vars);
         if (!launcher.empty()) {
           launcher += " ";

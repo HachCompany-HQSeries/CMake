@@ -1,4 +1,3 @@
-cmake_minimum_required(VERSION 3.4)
 include(RunCMake)
 
 # Function to build and install a project.  The latter step *-check.cmake
@@ -174,6 +173,10 @@ run_install_test(TARGETS-Parts)
 run_install_test(FILES-PERMISSIONS)
 run_install_test(TARGETS-RPATH)
 run_install_test(InstallRequiredSystemLibraries)
+
+if(UNIX)
+  run_install_test(DIRECTORY-symlink-clobber)
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
   run_cmake(TARGETS-RUNTIME_DEPENDENCIES-macos-two-bundle)

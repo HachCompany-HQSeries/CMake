@@ -60,7 +60,7 @@ if(CMAKE_CUDA_ABI_COMPILED)
       set(_CUDA_ARCHS_STATUS "")
     endif()
     string(REPLACE "\n" "\n  " _CUDA_ARCHS_OUTPUT "  ${_CUDA_ARCHS_OUTPUT}")
-    file(APPEND ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeError.log
+    message(CONFIGURE_LOG
       "Detecting the CUDA native architecture(s) failed with "
       "the following output:\n${_CUDA_ARCHS_OUTPUT}\n\n")
   endif()
@@ -96,9 +96,6 @@ if(NOT CMAKE_CUDA_COMPILER_WORKS)
   unset(CMAKE_CUDA_COMPILER_WORKS CACHE)
   if(NOT CMAKE_CUDA_COMPILER_WORKS)
     PrintTestCompilerResult(CHECK_FAIL "broken")
-    file(APPEND ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeError.log
-      "Determining if the CUDA compiler works failed with "
-      "the following output:\n${__CMAKE_CUDA_COMPILER_OUTPUT}\n\n")
     string(REPLACE "\n" "\n  " _output "${__CMAKE_CUDA_COMPILER_OUTPUT}")
     message(FATAL_ERROR "The CUDA compiler\n  \"${CMAKE_CUDA_COMPILER}\"\n"
       "is not able to compile a simple test program.\nIt fails "
@@ -106,9 +103,6 @@ if(NOT CMAKE_CUDA_COMPILER_WORKS)
       "CMake will not be able to correctly generate this project.")
   endif()
   PrintTestCompilerResult(CHECK_PASS "works")
-  file(APPEND ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeOutput.log
-    "Determining if the CUDA compiler works passed with "
-    "the following output:\n${__CMAKE_CUDA_COMPILER_OUTPUT}\n\n")
 endif()
 
 # Try to identify the compiler features
@@ -127,8 +121,10 @@ list(REMOVE_ITEM CMAKE_CUDA_IMPLICIT_LINK_LIBRARIES ${CMAKE_CUDA_IMPLICIT_LINK_L
 if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
   # Remove the CUDA Toolkit include directories from the set of
   # implicit system include directories.
-  # CMake will explicitly mark these as SYSTEM to NVCC since it implicitly
-  # adds them as user includes and not system
+  # This resolves the issue that NVCC doesn't specify these
+  # includes as SYSTEM includes when compiling device code, and sometimes
+  # they contain headers that generate warnings, so let users mark them
+  # as SYSTEM explicitly
   if(CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES)
     list(REMOVE_ITEM CMAKE_CUDA_IMPLICIT_INCLUDE_DIRECTORIES
       ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}

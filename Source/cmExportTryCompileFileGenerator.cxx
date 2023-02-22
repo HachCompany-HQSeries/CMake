@@ -70,7 +70,7 @@ std::string cmExportTryCompileFileGenerator::FindTargets(
     return std::string();
   }
 
-  cmGeneratorExpression ge;
+  cmGeneratorExpression ge(*tgt->Makefile->GetCMakeInstance());
 
   std::unique_ptr<cmGeneratorExpressionDAGChecker> parentDagChecker;
   if (propName == "INTERFACE_LINK_OPTIONS") {
@@ -85,7 +85,7 @@ std::string cmExportTryCompileFileGenerator::FindTargets(
   std::unique_ptr<cmCompiledGeneratorExpression> cge = ge.Parse(*prop);
 
   cmTarget dummyHead("try_compile_dummy_exe", cmStateEnums::EXECUTABLE,
-                     cmTarget::VisibilityNormal, tgt->Target->GetMakefile(),
+                     cmTarget::Visibility::Normal, tgt->Target->GetMakefile(),
                      cmTarget::PerConfig::Yes);
 
   cmGeneratorTarget gDummyHead(&dummyHead, tgt->GetLocalGenerator());

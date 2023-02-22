@@ -57,7 +57,7 @@ std::string cmGeneratorExpressionNode::EvaluateDependentExpression(
   cmGeneratorExpressionDAGChecker* dagChecker,
   cmGeneratorTarget const* currentTarget)
 {
-  cmGeneratorExpression ge(context->Backtrace);
+  cmGeneratorExpression ge(*lg->GetCMakeInstance(), context->Backtrace);
   std::unique_ptr<cmCompiledGeneratorExpression> cge = ge.Parse(prop);
   cge->SetEvaluateForBuildsystem(context->EvaluateForBuildsystem);
   cge->SetQuiet(context->Quiet);
@@ -113,6 +113,8 @@ static const struct OneNode : public cmGeneratorExpressionNode
 static const struct OneNode buildInterfaceNode;
 
 static const struct ZeroNode installInterfaceNode;
+
+static const struct OneNode buildLocalInterfaceNode;
 
 struct BooleanOpNode : public cmGeneratorExpressionNode
 {
@@ -1350,12 +1352,30 @@ static const struct ConfigurationTestNode : public cmGeneratorExpressionNode
     }
     static cmsys::RegularExpression configValidator("^[A-Za-z0-9_]*$");
     if (!configValidator.find(parameters.front())) {
-      reportError(context, content->GetOriginalExpression(),
-                  "Expression syntax not recognized.");
-      return std::string();
     }
+
     context->HadContextSensitiveCondition = true;
+    bool firstParam = true;
     for (auto const& param : parameters) {
+      if (!configValidator.find(param)) {
+        if (firstParam) {
+          reportError(context, content->GetOriginalExpression(),
+                      "Expression syntax not recognized.");
+          return std::string();
+        }
+        // for backwards compat invalid config names are only errors as
+        // the first parameter
+        std::ostringstream e;
+        /* clang-format off */
+        e << "Warning evaluating generator expression:\n"
+          << "  " << content->GetOriginalExpression() << "\n"
+          << "The config name of \"" << param << "\" is invalid";
+        /* clang-format on */
+        context->LG->GetCMakeInstance()->IssueMessage(
+          MessageType::WARNING, e.str(), context->Backtrace);
+      }
+
+      firstParam = false;
       if (context->Config.empty()) {
         if (param.empty()) {
           return "1";
@@ -1383,6 +1403,14 @@ static const struct ConfigurationTestNode : public cmGeneratorExpressionNode
 
           for (auto const& param : parameters) {
             if (cm::contains(mappedConfigs, cmSystemTools::UpperCase(param))) {
+              return "1";
+            }
+          }
+        } else if (!suffix.empty()) {
+          // There is no explicit mapping for the tested config, so use
+          // the configuration of the imported location that was selected.
+          for (auto const& param : parameters) {
+            if (cmStrCat('_', cmSystemTools::UpperCase(param)) == suffix) {
               return "1";
             }
           }
@@ -1440,7 +1468,8 @@ static const struct CompileLanguageNode : public cmGeneratorExpressionNode
         genName.find("Ninja") == std::string::npos &&
         genName.find("Visual Studio") == std::string::npos &&
         genName.find("Xcode") == std::string::npos &&
-        genName.find("Watcom WMake") == std::string::npos) {
+        genName.find("Watcom WMake") == std::string::npos &&
+        genName.find("Green Hills MULTI") == std::string::npos) {
       reportError(context, content->GetOriginalExpression(),
                   "$<COMPILE_LANGUAGE:...> not supported for this generator.");
       return std::string();
@@ -1488,7 +1517,8 @@ static const struct CompileLanguageAndIdNode : public cmGeneratorExpressionNode
         genName.find("Ninja") == std::string::npos &&
         genName.find("Visual Studio") == std::string::npos &&
         genName.find("Xcode") == std::string::npos &&
-        genName.find("Watcom WMake") == std::string::npos) {
+        genName.find("Watcom WMake") == std::string::npos &&
+        genName.find("Green Hills MULTI") == std::string::npos) {
       reportError(
         context, content->GetOriginalExpression(),
         "$<COMPILE_LANG_AND_ID:lang,id> not supported for this generator.");
@@ -1520,7 +1550,8 @@ static const struct LinkLanguageNode : public cmGeneratorExpressionNode
   {
     if (!context->HeadTarget || !dagChecker ||
         !(dagChecker->EvaluatingLinkExpression() ||
-          dagChecker->EvaluatingLinkLibraries())) {
+          dagChecker->EvaluatingLinkLibraries() ||
+          dagChecker->EvaluatingLinkerLauncher())) {
       reportError(context, content->GetOriginalExpression(),
                   "$<LINK_LANGUAGE:...> may only be used with binary targets "
                   "to specify link libraries, link directories, link options "
@@ -1540,7 +1571,8 @@ static const struct LinkLanguageNode : public cmGeneratorExpressionNode
         genName.find("Ninja") == std::string::npos &&
         genName.find("Visual Studio") == std::string::npos &&
         genName.find("Xcode") == std::string::npos &&
-        genName.find("Watcom WMake") == std::string::npos) {
+        genName.find("Watcom WMake") == std::string::npos &&
+        genName.find("Green Hills MULTI") == std::string::npos) {
       reportError(context, content->GetOriginalExpression(),
                   "$<LINK_LANGUAGE:...> not supported for this generator.");
       return std::string();
@@ -1613,7 +1645,8 @@ static const struct LinkLanguageAndIdNode : public cmGeneratorExpressionNode
   {
     if (!context->HeadTarget || !dagChecker ||
         !(dagChecker->EvaluatingLinkExpression() ||
-          dagChecker->EvaluatingLinkLibraries())) {
+          dagChecker->EvaluatingLinkLibraries() ||
+          dagChecker->EvaluatingLinkerLauncher())) {
       reportError(
         context, content->GetOriginalExpression(),
         "$<LINK_LANG_AND_ID:lang,id> may only be used with binary targets "
@@ -1628,7 +1661,8 @@ static const struct LinkLanguageAndIdNode : public cmGeneratorExpressionNode
         genName.find("Ninja") == std::string::npos &&
         genName.find("Visual Studio") == std::string::npos &&
         genName.find("Xcode") == std::string::npos &&
-        genName.find("Watcom WMake") == std::string::npos) {
+        genName.find("Watcom WMake") == std::string::npos &&
+        genName.find("Green Hills MULTI") == std::string::npos) {
       reportError(
         context, content->GetOriginalExpression(),
         "$<LINK_LANG_AND_ID:lang,id> not supported for this generator.");
@@ -1970,7 +2004,10 @@ static const struct TargetPropertyNode : public cmGeneratorExpressionNode
         }
         return std::string();
       }
-      target = context->LG->FindGeneratorTargetToUse(targetName);
+      cmLocalGenerator const* lg = context->CurrentTarget
+        ? context->CurrentTarget->GetLocalGenerator()
+        : context->LG;
+      target = lg->FindGeneratorTargetToUse(targetName);
 
       if (!target) {
         std::ostringstream e;
@@ -2067,7 +2104,8 @@ static const struct TargetPropertyNode : public cmGeneratorExpressionNode
 
     if (dagCheckerParent) {
       if (dagCheckerParent->EvaluatingGenexExpression() ||
-          dagCheckerParent->EvaluatingPICExpression()) {
+          dagCheckerParent->EvaluatingPICExpression() ||
+          dagCheckerParent->EvaluatingLinkerLauncher()) {
         // No check required.
       } else if (dagCheckerParent->EvaluatingLinkLibraries()) {
         evaluatingLinkLibraries = true;
@@ -3320,6 +3358,7 @@ const cmGeneratorExpressionNode* cmGeneratorExpressionNode::GetNode(
     { "GENEX_EVAL", &genexEvalNode },
     { "BUILD_INTERFACE", &buildInterfaceNode },
     { "INSTALL_INTERFACE", &installInterfaceNode },
+    { "BUILD_LOCAL_INTERFACE", &buildLocalInterfaceNode },
     { "INSTALL_PREFIX", &installPrefixNode },
     { "JOIN", &joinNode },
     { "LINK_ONLY", &linkOnlyNode },

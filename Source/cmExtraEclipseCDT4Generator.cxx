@@ -63,11 +63,12 @@ cmExtraEclipseCDT4Generator::GetFactory()
 {
   static cmExternalMakefileProjectGeneratorSimpleFactory<
     cmExtraEclipseCDT4Generator>
-    factory("Eclipse CDT4", "Generates Eclipse CDT 4.0 project files.");
+    factory("Eclipse CDT4",
+            "Generates Eclipse CDT 4.0 project files (deprecated).");
 
   if (factory.GetSupportedGlobalGenerators().empty()) {
 // TODO: Verify if __CYGWIN__ should be checked.
-//#if defined(_WIN32) && !defined(__CYGWIN__)
+// #if defined(_WIN32) && !defined(__CYGWIN__)
 #if defined(_WIN32)
     factory.AddSupportedGlobalGenerator("NMake Makefiles");
     factory.AddSupportedGlobalGenerator("MinGW Makefiles");

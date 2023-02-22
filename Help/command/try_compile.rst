@@ -18,7 +18,9 @@ Try Compiling Whole Projects
               SOURCE_DIR <srcdir>
               [BINARY_DIR <bindir>]
               [TARGET <targetName>]
+              [LOG_DESCRIPTION <text>]
               [NO_CACHE]
+              [NO_LOG]
               [CMAKE_FLAGS <flags>...]
               [OUTPUT_VARIABLE <var>])
 
@@ -40,6 +42,11 @@ below for the meaning of other options.
   Previously this was only done by the
   :ref:`source file <Try Compiling Source Files>` signature.
 
+.. versionadded:: 3.26
+  This command records a
+  :ref:`configure-log try_compile event <try_compile configure-log event>`
+  if the ``NO_LOG`` option is not specified.
+
 This command also supports an alternate signature
 which was present in older versions of CMake:
 
@@ -47,7 +54,9 @@ which was present in older versions of CMake:
 
   try_compile(<resultVar> <bindir> <srcdir>
               <projectName> [<targetName>]
+              [LOG_DESCRIPTION <text>]
               [NO_CACHE]
+              [NO_LOG]
               [CMAKE_FLAGS <flags>...]
               [OUTPUT_VARIABLE <var>])
 
@@ -59,11 +68,13 @@ Try Compiling Source Files
 .. code-block:: cmake
 
   try_compile(<resultVar>
-              <SOURCES <srcfile...>]             |
-               SOURCE_FROM_ARG <name> <content>] |
-               SOURCE_FROM_VAR <name> <var>]     |
-               SOURCE_FROM_FILE <name> <path>    >...
+              <SOURCES <srcfile...>                 |
+               SOURCE_FROM_CONTENT <name> <content> |
+               SOURCE_FROM_VAR <name> <var>         |
+               SOURCE_FROM_FILE <name> <path>       >...
+              [LOG_DESCRIPTION <text>]
               [NO_CACHE]
+              [NO_LOG]
               [CMAKE_FLAGS <flags>...]
               [COMPILE_DEFINITIONS <defs>...]
               [LINK_OPTIONS <options>...]
@@ -102,12 +113,12 @@ contain something like the following:
   target_link_options(cmTryCompileExec PRIVATE <LINK_OPTIONS from caller>)
   target_link_libraries(cmTryCompileExec ${LINK_LIBRARIES})
 
-CMake will automatically generate a unique directory for each ``try_compile``
-operation in an unspecified location within the project's binary directory.
-These directories will be cleaned automatically unless
-:option:`--debug-trycompile <cmake --debug-trycompile>` is passed to ``cmake``.
+CMake automatically generates, for each ``try_compile`` operation, a
+unique directory under ``${CMAKE_BINARY_DIR}/CMakeFiles/CMakeScratch``
+with an unspecified name.  These directories are cleaned automatically unless
+:option:`--debug-trycompile <cmake --debug-trycompile>` is passed to :program:`cmake`.
 Such directories from previous runs are also unconditionally cleaned at the
-beginning of any ``cmake`` execution.
+beginning of any :program:`cmake` execution.
 
 This command also supports an alternate signature
 which was present in older versions of CMake:
@@ -115,7 +126,9 @@ which was present in older versions of CMake:
 .. code-block:: cmake
 
   try_compile(<resultVar> <bindir> <srcfile|SOURCES srcfile...>
+              [LOG_DESCRIPTION <text>]
               [NO_CACHE]
+              [NO_LOG]
               [CMAKE_FLAGS <flags>...]
               [COMPILE_DEFINITIONS <defs>...]
               [LINK_OPTIONS <options>...]
@@ -130,7 +143,7 @@ which was present in older versions of CMake:
 In this version, ``try_compile`` will use ``<bindir>/CMakeFiles/CMakeTmp`` for
 its operation, and all such files will be cleaned automatically.
 For debugging, :option:`--debug-trycompile <cmake --debug-trycompile>` can be
-passed to ``cmake`` to avoid this clean.  However, multiple sequential
+passed to :program:`cmake` to avoid this clean.  However, multiple sequential
 ``try_compile`` operations, if given the same ``<bindir>``, will reuse this
 single output directory, such that you can only debug one such ``try_compile``
 call at a time.  Use of the newer signature is recommended to simplify
@@ -171,6 +184,12 @@ The options are:
   set the :prop_tgt:`STATIC_LIBRARY_OPTIONS` target property in the generated
   project, depending on the :variable:`CMAKE_TRY_COMPILE_TARGET_TYPE` variable.
 
+``LOG_DESCRIPTION <text>``
+  .. versionadded:: 3.26
+
+  Specify a non-empty text description of the purpose of the check.
+  This is recorded in the :manual:`cmake-configure-log(7)` entry.
+
 ``NO_CACHE``
   .. versionadded:: 3.25
 
@@ -191,10 +210,15 @@ The options are:
   the test is part of a larger inspection), ``NO_CACHE`` may be useful to avoid
   leaking the intermediate result variable into the cache.
 
+``NO_LOG``
+  .. versionadded:: 3.26
+
+  Do not record a :manual:`cmake-configure-log(7)` entry for this call.
+
 ``OUTPUT_VARIABLE <var>``
   Store the output from the build process in the given variable.
 
-``SOURCE_FROM_ARG <name> <content>``
+``SOURCE_FROM_CONTENT <name> <content>``
   .. versionadded:: 3.25
 
   Write ``<content>`` to a file named ``<name>`` in the operation directory.
@@ -202,7 +226,7 @@ The options are:
   the contents of the file are dynamically specified. The specified ``<name>``
   is not allowed to contain path components.
 
-  ``SOURCE_FROM_ARG`` may be specified multiple times.
+  ``SOURCE_FROM_CONTENT`` may be specified multiple times.
 
 ``SOURCE_FROM_FILE <name> <path>``
   .. versionadded:: 3.25
@@ -214,14 +238,15 @@ The options are:
   ``SOURCE_FROM_*``. (Otherwise, ``SOURCES`` is usually more convenient.) The
   specified ``<name>`` is not allowed to contain path components.
 
-``SOURCE_FROM_VAR <name> <content>``
+``SOURCE_FROM_VAR <name> <var>``
   .. versionadded:: 3.25
 
   Write the contents of ``<var>`` to a file named ``<name>`` in the operation
-  directory. This is the same as ``SOURCE_FROM_ARG``, but takes the contents
-  from the specified CMake variable, rather than directly, which may be useful
-  when passing arguments through a function which wraps ``try_compile``. The
-  specified ``<name>`` is not allowed to contain path components.
+  directory. This is the same as ``SOURCE_FROM_CONTENT``, but takes the
+  contents from the specified CMake variable, rather than directly, which may
+  be useful when passing arguments through a function which wraps
+  ``try_compile``. The specified ``<name>`` is not allowed to contain path
+  components.
 
   ``SOURCE_FROM_VAR`` may be specified multiple times.
 
@@ -270,7 +295,7 @@ Other Behavior Settings
   If :policy:`CMP0083` is set to ``NEW``, then in order to obtain correct
   behavior at link time, the ``check_pie_supported()`` command from the
   :module:`CheckPIESupported` module must be called before using the
-  :command:`try_compile` command.
+  ``try_compile`` command.
 
 The current settings of :policy:`CMP0065` and :policy:`CMP0083` are propagated
 through to the generated test project.
@@ -314,8 +339,9 @@ a build configuration.
   the generated project (unless overridden by an explicit option).
 
 .. versionchanged:: 3.14
-  For the :generator:`Green Hills MULTI` generator the GHS toolset and target
-  system customization cache variables are also propagated into the test project.
+  For the :generator:`Green Hills MULTI` generator, the GHS toolset and target
+  system customization cache variables are also propagated into the test
+  project.
 
 .. versionadded:: 3.24
   The :variable:`CMAKE_TRY_COMPILE_NO_PLATFORM_VARIABLES` variable may be
@@ -323,5 +349,10 @@ a build configuration.
 
 .. versionadded:: 3.25
   If :policy:`CMP0141` is set to ``NEW``, one can use
-  :variable:`CMAKE_MSVC_DEBUG_INFORMATION_FORMAT` to specify MSVC debug
+  :variable:`CMAKE_MSVC_DEBUG_INFORMATION_FORMAT` to specify the MSVC debug
   information format.
+
+See Also
+^^^^^^^^
+
+* :command:`try_run`

@@ -33,18 +33,18 @@ function(run_cmake test)
     set(platform_name msys)
   endif()
 
-  foreach(o IN ITEMS out err)
-    if(RunCMake-std${o}-file AND EXISTS ${top_src}/${RunCMake-std${o}-file})
-      file(READ ${top_src}/${RunCMake-std${o}-file} expect_std${o})
-      string(REGEX REPLACE "\n+$" "" expect_std${o} "${expect_std${o}}")
-    elseif(EXISTS ${top_src}/${test}-std${o}-${platform_name}.txt)
-      file(READ ${top_src}/${test}-std${o}-${platform_name}.txt expect_std${o})
-      string(REGEX REPLACE "\n+$" "" expect_std${o} "${expect_std${o}}")
-    elseif(EXISTS ${top_src}/${test}-std${o}.txt)
-      file(READ ${top_src}/${test}-std${o}.txt expect_std${o})
-      string(REGEX REPLACE "\n+$" "" expect_std${o} "${expect_std${o}}")
+  foreach(o IN ITEMS stdout stderr config)
+    if(RunCMake-${o}-file AND EXISTS ${top_src}/${RunCMake-${o}-file})
+      file(READ ${top_src}/${RunCMake-${o}-file} expect_${o})
+      string(REGEX REPLACE "\n+$" "" expect_${o} "${expect_${o}}")
+    elseif(EXISTS ${top_src}/${test}-${o}-${platform_name}.txt)
+      file(READ ${top_src}/${test}-${o}-${platform_name}.txt expect_${o})
+      string(REGEX REPLACE "\n+$" "" expect_${o} "${expect_${o}}")
+    elseif(EXISTS ${top_src}/${test}-${o}.txt)
+      file(READ ${top_src}/${test}-${o}.txt expect_${o})
+      string(REGEX REPLACE "\n+$" "" expect_${o} "${expect_${o}}")
     else()
-      unset(expect_std${o})
+      unset(expect_${o})
     endif()
   endforeach()
   if (NOT expect_stderr)
@@ -144,6 +144,12 @@ function(run_cmake test)
   if(NOT "${actual_result}" MATCHES "${expect_result}")
     string(APPEND msg "Result is [${actual_result}], not [${expect_result}].\n")
   endif()
+  set(config_file "${RunCMake_TEST_COMMAND_WORKING_DIRECTORY}/CMakeFiles/CMakeConfigureLog.yaml")
+  if(EXISTS "${config_file}")
+    file(READ "${config_file}" actual_config)
+  else()
+    set(actual_config "")
+  endif()
 
   # Special case: remove ninja no-op line from stderr, but not stdout.
   # Test cases that look for it should use RunCMake_TEST_OUTPUT_MERGE.
@@ -155,6 +161,7 @@ function(run_cmake test)
     "|BullseyeCoverage"
     "|[a-z]+\\([0-9]+\\) malloc:"
     "|clang[^:]*: warning: the object size sanitizer has no effect at -O0, but is explicitly enabled:"
+    "|icp?x: remark: Note that use of .-g. without any optimization-level option will turn off most compiler optimizations"
     "|lld-link: warning: procedure symbol record for .* refers to PDB item index [0-9A-Fa-fx]+ which is not a valid function ID record"
     "|Error kstat returned"
     "|Hit xcodebuild bug"
@@ -164,6 +171,7 @@ function(run_cmake test)
     "|Your license to use PGI[^\n]*expired"
     "|Please obtain a new version at"
     "|contact PGI Sales at"
+    "|icp?c: remark #10441: The Intel\\(R\\) C\\+\\+ Compiler Classic \\(ICC\\) is deprecated"
 
     "|[^\n]*install_name_tool: warning: changes being made to the file will invalidate the code signature in:"
     "|[^\n]*xcodebuild[^\n]*DVTPlugInManager"
@@ -178,17 +186,25 @@ function(run_cmake test)
     "|[^\n]*Bullseye Testing Technology"
     ")[^\n]*\n)+"
     )
-  foreach(o IN ITEMS out err)
-    string(REGEX REPLACE "\r\n" "\n" actual_std${o} "${actual_std${o}}")
-    string(REGEX REPLACE "${ignore_line_regex}" "\\1" actual_std${o} "${actual_std${o}}")
-    string(REGEX REPLACE "\n+$" "" actual_std${o} "${actual_std${o}}")
-    set(expect_${o} "")
-    if(DEFINED expect_std${o})
-      if(NOT "${actual_std${o}}" MATCHES "${expect_std${o}}")
-        string(REGEX REPLACE "\n" "\n expect-${o}> " expect_${o}
-          " expect-${o}> ${expect_std${o}}")
-        set(expect_${o} "Expected std${o} to match:\n${expect_${o}}\n")
-        string(APPEND msg "std${o} does not match that expected.\n")
+  if(RunCMake_IGNORE_POLICY_VERSION_DEPRECATION)
+    string(REGEX REPLACE [[
+^CMake Deprecation Warning at [^
+]*CMakeLists.txt:1 \(cmake_minimum_required\):
+  Compatibility with CMake < 3\.5 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a \.\.\.<max> suffix to tell
+  CMake that the project does not need compatibility with older versions\.
++
+]] "" actual_stderr "${actual_stderr}")
+  endif()
+  foreach(o IN ITEMS stdout stderr config)
+    string(REGEX REPLACE "\r\n" "\n" actual_${o} "${actual_${o}}")
+    string(REGEX REPLACE "${ignore_line_regex}" "\\1" actual_${o} "${actual_${o}}")
+    string(REGEX REPLACE "\n+$" "" actual_${o} "${actual_${o}}")
+    if(DEFINED expect_${o})
+      if(NOT "${actual_${o}}" MATCHES "${expect_${o}}")
+        string(APPEND msg "${o} does not match that expected.\n")
       endif()
     endif()
   endforeach()
@@ -213,15 +229,17 @@ function(run_cmake test)
     string(APPEND msg "Command was:\n command> ${command}\n")
   endif()
   if(msg)
-    string(REGEX REPLACE "\n" "\n actual-out> " actual_out " actual-out> ${actual_stdout}")
-    string(REGEX REPLACE "\n" "\n actual-err> " actual_err " actual-err> ${actual_stderr}")
-    message(SEND_ERROR "${test}${RunCMake_TEST_VARIANT_DESCRIPTION} - FAILED:\n"
-      "${msg}"
-      "${expect_out}"
-      "Actual stdout:\n${actual_out}\n"
-      "${expect_err}"
-      "Actual stderr:\n${actual_err}\n"
-      )
+    foreach(o IN ITEMS stdout stderr config)
+      if(DEFINED expect_${o})
+        string(REGEX REPLACE "\n" "\n expect-${o}> " expect_${o} " expect-${o}> ${expect_${o}}")
+        string(APPEND msg "Expected ${o} to match:\n${expect_${o}}\n")
+      endif()
+      if(NOT o STREQUAL "config" OR DEFINED expect_${o})
+        string(REGEX REPLACE "\n" "\n actual-${o}> " actual_${o} " actual-${o}> ${actual_${o}}")
+        string(APPEND msg "Actual ${o}:\n${actual_${o}}\n")
+      endif()
+    endforeach()
+    message(SEND_ERROR "${test}${RunCMake_TEST_VARIANT_DESCRIPTION} - FAILED:\n${msg}")
   else()
     message(STATUS "${test}${RunCMake_TEST_VARIANT_DESCRIPTION} - PASSED")
   endif()

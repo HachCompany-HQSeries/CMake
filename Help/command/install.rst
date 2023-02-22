@@ -32,7 +32,7 @@ are executed in order during installation.
 
 .. versionchanged:: 3.22
   The environment variable :envvar:`CMAKE_INSTALL_MODE` can override the
-  default copying behavior of :command:`install()`.
+  default copying behavior of ``install()``.
 
 There are multiple signatures for this command.  Some of them define
 installation options for files and targets.  Options common to
@@ -379,7 +379,7 @@ top level:
   :prop_tgt:`INTERFACE_INCLUDE_DIRECTORIES` target property of the
   ``<targets>`` when exported by the `install(EXPORT)`_ command. If a
   relative path is specified, it is treated as relative to the
-  ``$<INSTALL_PREFIX>``.
+  :genex:`$<INSTALL_PREFIX>`.
 
 ``RUNTIME_DEPENDENCY_SET``
   .. versionadded:: 3.21
@@ -968,7 +968,7 @@ Generated Installation Script
 The ``install()`` command generates a file, ``cmake_install.cmake``, inside
 the build directory, which is used internally by the generated install target
 and by CPack. You can also invoke this script manually with
-:option:`cmake -P <cmake_P -P>`. This script accepts several variables:
+:option:`cmake -P`. This script accepts several variables:
 
 ``COMPONENT``
   Set this variable to install only a single CPack component as opposed to all

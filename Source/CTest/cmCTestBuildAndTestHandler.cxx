@@ -72,11 +72,6 @@ int cmCTestBuildAndTestHandler::RunCMake(std::string* outstring,
   if (!this->CTest->GetConfigType().empty()) {
     config = this->CTest->GetConfigType().c_str();
   }
-#ifdef CMAKE_INTDIR
-  if (!config) {
-    config = CMAKE_INTDIR;
-  }
-#endif
 
   if (config) {
     args.push_back("-DCMAKE_BUILD_TYPE:STRING=" + std::string(config));
@@ -165,7 +160,7 @@ int cmCTestBuildAndTestHandler::RunCMakeAndTest(std::string* outstring)
     if (outstring) {
       *outstring = "--build-and-test requires that the generator "
                    "be provided using the --build-generator "
-                   "command line option. ";
+                   "command line option.\n";
     }
     return 1;
   }
@@ -256,11 +251,6 @@ int cmCTestBuildAndTestHandler::RunCMakeAndTest(std::string* outstring)
     if (!this->CTest->GetConfigType().empty()) {
       config = this->CTest->GetConfigType().c_str();
     }
-#ifdef CMAKE_INTDIR
-    if (!config) {
-      config = CMAKE_INTDIR;
-    }
-#endif
     if (!config) {
       config = "Debug";
     }

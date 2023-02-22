@@ -431,7 +431,10 @@ class cmMakefile;
   SELECT(POLICY, CMP0142,                                                     \
          "The Xcode generator does not append per-config suffixes to "        \
          "library search paths.",                                             \
-         3, 25, 0, cmPolicies::WARN)
+         3, 25, 0, cmPolicies::WARN)                                          \
+  SELECT(POLICY, CMP0143,                                                     \
+         "Global property USE_FOLDERS treated as ON by default", 3, 26, 0,    \
+         cmPolicies::WARN)
 
 #define CM_SELECT_ID(F, A1, A2, A3, A4, A5, A6) F(A1)
 #define CM_FOR_EACH_POLICY_ID(POLICY)                                         \
@@ -470,6 +473,8 @@ class cmMakefile;
   F(CMP0119)                                                                  \
   F(CMP0131)                                                                  \
   F(CMP0142)
+
+#define CM_FOR_EACH_CUSTOM_COMMAND_POLICY(F) F(CMP0116)
 
 /** \class cmPolicies
  * \brief Handles changes in CMake behavior and policies

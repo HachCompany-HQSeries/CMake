@@ -1,6 +1,3 @@
-cmake_minimum_required(VERSION 3.14)
-project(Minimal NONE)
-
 #
 # list of targets to test.  to add a target: put its files in the data
 # subdirectory and add it to this list...  we run each target's
@@ -38,6 +35,7 @@ set(targets
   linux-C-XL-16.1.0.0 linux-CXX-XL-16.1.0.0
   linux-CUDA-NVIDIA-10.1.168-CLANG linux-CUDA-NVIDIA-10.1.168-XLClang-v
     linux-CUDA-NVIDIA-9.2.148-GCC
+  linux-Fortran-LLVMFlang-15.0.0
   linux-custom_clang-C-Clang-13.0.0 linux-custom_clang-CXX-Clang-13.0.0
   mingw.org-C-GNU-4.9.3 mingw.org-CXX-GNU-4.9.3
   netbsd-C-GNU-4.8.5 netbsd-CXX-GNU-4.8.5

@@ -25,20 +25,19 @@ The first signature is for adding a custom command to produce an output:
                      [DEPFILE depfile]
                      [JOB_POOL job_pool]
                      [VERBATIM] [APPEND] [USES_TERMINAL]
-                     [COMMAND_EXPAND_LISTS])
+                     [COMMAND_EXPAND_LISTS]
+                     [DEPENDS_EXPLICIT_ONLY])
 
 This defines a command to generate specified ``OUTPUT`` file(s).
 A target created in the same directory (``CMakeLists.txt`` file)
 that specifies any output of the custom command as a source file
 is given a rule to generate the file using the command at build time.
-Do not list the output in more than one independent target that
-may build in parallel or the two instances of the rule may conflict
-(instead use the :command:`add_custom_target` command to drive the
-command and make the other targets depend on that one).
-In makefile terms this creates a new target in the following form::
 
-  OUTPUT: MAIN_DEPENDENCY DEPENDS
-          COMMAND
+Do not list the output in more than one independent target that
+may build in parallel or the instances of the rule may conflict.
+Instead, use the :command:`add_custom_target` command to drive the
+command and make the other targets depend on that one.  See the
+`Example: Generating Files for Multiple Targets`_ below.
 
 The options are:
 
@@ -140,6 +139,10 @@ The options are:
   Display the given message before the commands are executed at
   build time.
 
+  .. versionadded:: 3.26
+    Arguments to ``COMMENT`` may use
+    :manual:`generator expressions <cmake-generator-expressions(7)>`.
+
 ``DEPENDS``
   Specify files on which the command depends.  Each argument is converted
   to a dependency as follows:
@@ -229,14 +232,23 @@ The options are:
 
 ``OUTPUT``
   Specify the output files the command is expected to produce.
-  If an output name is a relative path it will be interpreted
-  relative to the build tree directory corresponding to the
-  current source directory.
   Each output file will be marked with the :prop_sf:`GENERATED`
   source file property automatically.
   If the output of the custom command is not actually created
   as a file on disk it should be marked with the :prop_sf:`SYMBOLIC`
   source file property.
+
+  If an output file name is a relative path, its absolute path is
+  determined by interpreting it relative to:
+
+  1. the build directory corresponding to the current source directory
+     (:variable:`CMAKE_CURRENT_BINARY_DIR`), or
+
+  2. the current source directory (:variable:`CMAKE_CURRENT_SOURCE_DIR`).
+
+  The path in the build directory is preferred unless the path in the
+  source tree is mentioned as an absolute source file path elsewhere
+  in the current directory.
 
   .. versionadded:: 3.20
     Arguments to ``OUTPUT`` may use a restricted set of
@@ -346,6 +358,24 @@ The options are:
   :ref:`Makefile Generators`, :ref:`Visual Studio Generators`,
   and the :generator:`Xcode` generator.
 
+``DEPENDS_EXPLICIT_ONLY``
+
+  .. versionadded:: 3.27
+
+  Indicate that the command's ``DEPENDS`` argument represents all files
+  required by the command and implicit dependencies are not required.
+
+  Without this option, if any target uses the output of the custom command,
+  CMake will consider that target's dependencies as implicit dependencies for
+  the custom command in case this custom command requires files implicitly
+  created by those targets.
+
+  This option can be enabled on all custom commands by setting
+  :variable:`CMAKE_ADD_CUSTOM_COMMAND_DEPENDS_EXPLICIT_ONLY` to ``ON``.
+
+  Only the :ref:`Ninja Generators` actually use this information to remove
+  unnecessary implicit dependencies.
+
 Examples: Generating Files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -384,6 +414,49 @@ will re-run whenever ``in.txt`` changes.
   adds a custom command to run ``someTool`` to generate ``out-<config>.c``,
   where ``<config>`` is the build configuration, and then compile the generated
   source as part of a library.
+
+Example: Generating Files for Multiple Targets
+""""""""""""""""""""""""""""""""""""""""""""""
+
+If multiple independent targets need the same custom command output,
+it must be attached to a single custom target on which they all depend.
+Consider the following example:
+
+.. code-block:: cmake
+
+  add_custom_command(
+    OUTPUT table.csv
+    COMMAND makeTable -i ${CMAKE_CURRENT_SOURCE_DIR}/input.dat
+                      -o table.csv
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/input.dat
+    VERBATIM)
+  add_custom_target(generate_table_csv DEPENDS table.csv)
+
+  add_custom_command(
+    OUTPUT foo.cxx
+    COMMAND genFromTable -i table.csv -case foo -o foo.cxx
+    DEPENDS table.csv           # file-level dependency
+            generate_table_csv  # target-level dependency
+    VERBATIM)
+  add_library(foo foo.cxx)
+
+  add_custom_command(
+    OUTPUT bar.cxx
+    COMMAND genFromTable -i table.csv -case bar -o bar.cxx
+    DEPENDS table.csv           # file-level dependency
+            generate_table_csv  # target-level dependency
+    VERBATIM)
+  add_library(bar bar.cxx)
+
+Output ``foo.cxx`` is needed only by target ``foo`` and output ``bar.cxx``
+is needed only by target ``bar``, but *both* targets need ``table.csv``,
+transitively.  Since ``foo`` and ``bar`` are independent targets that may
+build concurrently, we prevent them from racing to generate ``table.csv``
+by placing its custom command in a separate target, ``generate_table_csv``.
+The custom commands generating ``foo.cxx`` and ``bar.cxx`` each specify a
+target-level dependency on ``generate_table_csv``, so the targets using them,
+``foo`` and ``bar``, will not build until after target ``generate_table_csv``
+is built.
 
 .. _`add_custom_command(TARGET)`:
 
@@ -490,3 +563,8 @@ Ninja Multi-Config
   ``add_custom_command`` supports the :generator:`Ninja Multi-Config`
   generator's cross-config capabilities. See the generator documentation
   for more information.
+
+See Also
+^^^^^^^^
+
+* :command:`add_custom_target`

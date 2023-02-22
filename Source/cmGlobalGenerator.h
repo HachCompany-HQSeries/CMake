@@ -157,6 +157,8 @@ public:
 
   virtual bool InspectConfigTypeVariables() { return true; }
 
+  virtual bool CheckCxxModuleSupport() { return false; }
+
   bool Compute();
   virtual void AddExtraIDETargets() {}
 
@@ -369,7 +371,7 @@ public:
       that is a framework. */
   bool NameResolvesToFramework(const std::string& libname) const;
   /** Split a framework path to the directory and name of the framework as well
-   * as optiona; suffix.
+   * as optional suffix.
    * Returns std::nullopt if the path does not match with framework format
    * when extendedFormat is true, required format is relaxed (i.e. extension
    * `.framework' is optional). Used when FRAMEWORK link feature is
@@ -621,6 +623,8 @@ protected:
 
   virtual bool CheckALLOW_DUPLICATE_CUSTOM_TARGETS() const;
 
+  void CxxModuleSupportCheck() const;
+
   /// @brief Qt AUTOMOC/UIC/RCC target generation
   /// @return true on success
   bool QtAutoGen();
@@ -727,6 +731,8 @@ private:
   std::map<std::string, std::string> ExtensionToLanguage;
   std::map<std::string, int> LanguageToLinkerPreference;
   std::map<std::string, std::string> LanguageToOriginalSharedLibFlags;
+
+  mutable bool DiagnosedCxxModuleSupport = false;
 
   // Deferral id generation.
   size_t NextDeferId = 0;

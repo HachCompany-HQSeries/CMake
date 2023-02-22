@@ -164,10 +164,6 @@ public:
                                 const std::string& lang);
   void AddConfigVariableFlags(std::string& flags, const std::string& var,
                               const std::string& config);
-  void AddCompilerRequirementFlag(std::string& flags,
-                                  cmGeneratorTarget const* target,
-                                  const std::string& lang,
-                                  const std::string& config);
   void AddColorDiagnosticsFlags(std::string& flags, const std::string& lang);
   //! Append flags to a string.
   virtual void AppendFlags(std::string& flags,
@@ -536,7 +532,9 @@ public:
   void CreateEvaluationFileOutputs(const std::string& config);
   void ProcessEvaluationFiles(std::vector<std::string>& generatedFiles);
 
-  cmValue GetRuleLauncher(cmGeneratorTarget* target, const std::string& prop);
+  std::string GetRuleLauncher(cmGeneratorTarget* target,
+                              const std::string& prop,
+                              const std::string& config);
 
 protected:
   // The default implementation converts to a Windows shortpath to
@@ -645,6 +643,10 @@ private:
                          const std::string& ReuseFrom,
                          cmGeneratorTarget* reuseTarget,
                          std::vector<std::string> const& extensions);
+
+  // Returns MSVC_DEBUG_INFORMATION_FORMAT value if CMP0141 is NEW.
+  cm::optional<std::string> GetMSVCDebugFormatName(
+    std::string const& config, cmGeneratorTarget const* target);
 
   struct UnityBatchedSource
   {

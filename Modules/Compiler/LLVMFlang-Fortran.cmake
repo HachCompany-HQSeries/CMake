@@ -1,3 +1,5 @@
+set(CMAKE_Fortran_VERBOSE_FLAG "-v")
+
 set(CMAKE_Fortran_SUBMODULE_SEP "-")
 set(CMAKE_Fortran_SUBMODULE_EXT ".mod")
 
@@ -11,3 +13,4 @@ set(CMAKE_Fortran_MODDIR_FLAG "-module-dir")
 
 set(CMAKE_Fortran_COMPILE_OPTIONS_PREPROCESS_ON "-cpp")
 set(CMAKE_Fortran_COMPILE_OPTIONS_PREPROCESS_OFF "-nocpp")
+set(CMAKE_Fortran_POSTPROCESS_FLAG "-ffixed-line-length-72")

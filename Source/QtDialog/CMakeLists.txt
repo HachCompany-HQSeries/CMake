@@ -175,6 +175,7 @@ add_library(
   QCMakePresetComboBox.h
   QCMakePresetItemModel.cxx
   QCMakePresetItemModel.h
+  QCMakeSizeType.h
   QCMakeWidgets.cxx
   QCMakeWidgets.h
   RegexExplorer.cxx
@@ -235,7 +236,7 @@ if(FALSE) # CMake's bootstrap binary does not support automoc
 else()
   target_sources(
     CMakeGUILib
-    PUBLIC
+    PRIVATE
       ${UI_BUILT_SRCS}
       ${MOC_BUILT_SRCS}
   )
@@ -254,12 +255,17 @@ target_link_libraries(
   CMakeGUIMainLib
   PUBLIC
     CMakeGUILib
-    CMakeGUIQRCLib
-    $<TARGET_NAME_IF_EXISTS:CMakeVersion>
   )
 
 add_executable(cmake-gui WIN32 MACOSX_BUNDLE CMakeGUIExec.cxx)
-target_link_libraries(cmake-gui CMakeGUIMainLib ManifestLib Qt${INSTALLED_QT_VERSION}::Core)
+target_link_libraries(cmake-gui
+  PRIVATE
+    CMakeGUIMainLib
+    CMakeGUIQRCLib
+    $<TARGET_NAME_IF_EXISTS:CMakeVersion>
+    ManifestLib
+    Qt${INSTALLED_QT_VERSION}::Core
+  )
 
 if(WIN32)
   target_sources(CMakeGUIMainLib INTERFACE CMakeSetup.rc)

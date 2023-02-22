@@ -1,12 +1,12 @@
 # Steps for uploading artifacts
 
 .rsync_upload_package:
-    image: "fedora:36"
+    image: "fedora:37"
     stage: upload
     tags:
         - cmake
         - docker
-        - linux
+        - linux-x86_64
         - build
     environment:
         name: rsync-upload
@@ -21,11 +21,11 @@
 
 .rsync_upload_help:
     stage: upload
-    image: "fedora:36"
+    image: "fedora:37"
     tags:
         - cmake
         - docker
-        - linux
+        - linux-x86_64
         - build
     environment:
         name: rsync-upload

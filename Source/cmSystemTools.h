@@ -149,6 +149,11 @@ public:
     Always,
     OnlyIfDifferent,
   };
+  enum class CopyInputRecent
+  {
+    No,
+    Yes,
+  };
   enum class CopyResult
   {
     Success,
@@ -177,10 +182,9 @@ public:
                                          const mode_t* mode = nullptr);
 
   /** Copy a file. */
-  static bool CopySingleFile(const std::string& oldname,
-                             const std::string& newname);
   static CopyResult CopySingleFile(std::string const& oldname,
                                    std::string const& newname, CopyWhen when,
+                                   CopyInputRecent inputRecent,
                                    std::string* err = nullptr);
 
   enum class Replace
@@ -595,14 +599,16 @@ public:
   /** Create a symbolic link if the platform supports it.  Returns whether
       creation succeeded. */
   static cmsys::Status CreateSymlink(std::string const& origName,
-                                     std::string const& newName,
-                                     std::string* errorMessage = nullptr);
+                                     std::string const& newName);
+  static cmsys::Status CreateSymlinkQuietly(std::string const& origName,
+                                            std::string const& newName);
 
   /** Create a hard link if the platform supports it.  Returns whether
       creation succeeded. */
   static cmsys::Status CreateLink(std::string const& origName,
-                                  std::string const& newName,
-                                  std::string* errorMessage = nullptr);
+                                  std::string const& newName);
+  static cmsys::Status CreateLinkQuietly(std::string const& origName,
+                                         std::string const& newName);
 
   /** Get the system name. */
   static cm::string_view GetSystemName();

@@ -2,11 +2,15 @@
    file Copyright.txt or https://cmake.org/licensing for details.  */
 #include "cmcmd.h"
 
+#include <functional>
+
+#include <cm/optional>
 #include <cmext/algorithm>
 
 #include <cm3p/uv.h>
 #include <fcntl.h>
 
+#include "cmCommandLineArgument.h"
 #include "cmConsoleBuf.h"
 #include "cmDuration.h"
 #include "cmGlobalGenerator.h"
@@ -46,10 +50,10 @@
 #endif
 
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <ctime>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -105,6 +109,8 @@ void CMakeCommandUsage(std::string const& program)
     << "  copy <file>... destination  - copy files to destination "
        "(either file or directory)\n"
     << "  copy_directory <dir>... destination   - copy content of <dir>... "
+       "directories to 'destination' directory\n"
+    << "  copy_directory_if_different <dir>... destination   - copy changed content of <dir>... "
        "directories to 'destination' directory\n"
     << "  copy_if_different <file>... destination  - copy files if it has "
        "changed\n"
@@ -360,17 +366,35 @@ int HandleIWYU(const std::string& runCmd, const std::string& /* sourceFile */,
 int HandleTidy(const std::string& runCmd, const std::string& sourceFile,
                const std::vector<std::string>& orig_cmd)
 {
-  // Construct the clang-tidy command line by taking what was given
-  // and adding our compiler command line.  The clang-tidy tool will
-  // automatically skip over the compiler itself and extract the
-  // options.
-  int ret;
   std::vector<std::string> tidy_cmd = cmExpandedList(runCmd, true);
   tidy_cmd.push_back(sourceFile);
-  tidy_cmd.emplace_back("--");
-  cm::append(tidy_cmd, orig_cmd);
+
+  for (auto const& arg : tidy_cmd) {
+    if (cmHasLiteralPrefix(arg, "--export-fixes=")) {
+      cmSystemTools::RemoveFile(arg.substr(cmStrLen("--export-fixes=")));
+    }
+  }
+
+  // clang-tidy supports working out the compile commands from a
+  // compile_commands.json file in a directory given by a "-p" option, or by
+  // passing the compiler command line arguments after --. When the latter
+  // strategy is used and the build is using a compiler other than the system
+  // default, clang-tidy may erroneously use the system default compiler's
+  // headers instead of those from the custom compiler. It doesn't do that if
+  // given a compile_commands.json to work with instead, so prefer to use the
+  // compile_commands.json file when "-p" is present.
+  if (!cm::contains(tidy_cmd.cbegin(), tidy_cmd.cend() - 1, "-p")) {
+    // Construct the clang-tidy command line by taking what was given
+    // and adding our compiler command line.  The clang-tidy tool will
+    // automatically skip over the compiler itself and extract the
+    // options. If the compiler is a custom compiler, clang-tidy might
+    // not correctly handle that with this approach.
+    tidy_cmd.emplace_back("--");
+    cm::append(tidy_cmd, orig_cmd);
+  }
 
   // Run the tidy command line.  Capture its stdout and hide its stderr.
+  int ret;
   std::string stdOut;
   std::string stdErr;
   if (!cmSystemTools::RunSingleCommand(tidy_cmd, &stdOut, &stdErr, &ret,
@@ -628,20 +652,59 @@ int cmcmd::ExecuteCMakeCommand(std::vector<std::string> const& args,
   if (args.size() > 1) {
     // Copy file
     if (args[1] == "copy" && args.size() > 3) {
+      using CommandArgument =
+        cmCommandLineArgument<bool(const std::string& value)>;
+
+      cm::optional<std::string> targetArg;
+      std::vector<CommandArgument> argParsers{
+        { "-t", CommandArgument::Values::One,
+          CommandArgument::setToValue(targetArg) },
+      };
+
+      std::vector<std::string> files;
+      for (decltype(args.size()) i = 2; i < args.size(); i++) {
+        const std::string& arg = args[i];
+        bool matched = false;
+        for (auto const& m : argParsers) {
+          if (m.matches(arg)) {
+            matched = true;
+            if (m.parse(arg, i, args)) {
+              break;
+            }
+            return 1; // failed to parse
+          }
+        }
+        if (!matched) {
+          files.push_back(arg);
+        }
+      }
+
       // If multiple source files specified,
       // then destination must be directory
-      if ((args.size() > 4) &&
-          (!cmSystemTools::FileIsDirectory(args.back()))) {
-        std::cerr << "Error: Target (for copy command) \"" << args.back()
+      if (files.size() > 2 && !targetArg) {
+        targetArg = files.back();
+        files.pop_back();
+      }
+      if (targetArg && (!cmSystemTools::FileIsDirectory(*targetArg))) {
+        std::cerr << "Error: Target (for copy command) \"" << *targetArg
                   << "\" is not a directory.\n";
         return 1;
       }
+      if (!targetArg) {
+        if (files.size() < 2) {
+          std::cerr
+            << "Error: No files or target specified (for copy command).\n";
+          return 1;
+        }
+        targetArg = files.back();
+        files.pop_back();
+      }
       // If error occurs we want to continue copying next files.
       bool return_value = false;
-      for (auto const& arg : cmMakeRange(args).advance(2).retreat(1)) {
-        if (!cmsys::SystemTools::CopyFileAlways(arg, args.back())) {
-          std::cerr << "Error copying file \"" << arg << "\" to \""
-                    << args.back() << "\".\n";
+      for (auto const& file : files) {
+        if (!cmsys::SystemTools::CopyFileAlways(file, *targetArg)) {
+          std::cerr << "Error copying file \"" << file << "\" to \""
+                    << *targetArg << "\".\n";
           return_value = true;
         }
       }
@@ -670,12 +733,15 @@ int cmcmd::ExecuteCMakeCommand(std::vector<std::string> const& args,
       return return_value;
     }
 
-    // Copy directory content
-    if (args[1] == "copy_directory" && args.size() > 3) {
+    // Copy directory contents
+    if ((args[1] == "copy_directory" ||
+         args[1] == "copy_directory_if_different") &&
+        args.size() > 3) {
       // If error occurs we want to continue copying next files.
       bool return_value = false;
+      const bool copy_always = (args[1] == "copy_directory");
       for (auto const& arg : cmMakeRange(args).advance(2).retreat(1)) {
-        if (!cmSystemTools::CopyADirectory(arg, args.back())) {
+        if (!cmSystemTools::CopyADirectory(arg, args.back(), copy_always)) {
           std::cerr << "Error copying directory from \"" << arg << "\" to \""
                     << args.back() << "\".\n";
           return_value = true;
@@ -1038,27 +1104,13 @@ int cmcmd::ExecuteCMakeCommand(std::vector<std::string> const& args,
     if (args[1] == "time" && args.size() > 2) {
       std::vector<std::string> command(args.begin() + 2, args.end());
 
-      clock_t clock_start;
-      clock_t clock_finish;
-      time_t time_start;
-      time_t time_finish;
-
-      time(&time_start);
-      clock_start = clock();
       int ret = 0;
+      auto time_start = std::chrono::steady_clock::now();
       cmSystemTools::RunSingleCommand(command, nullptr, nullptr, &ret);
+      auto time_finish = std::chrono::steady_clock::now();
 
-      clock_finish = clock();
-      time(&time_finish);
-
-      double clocks_per_sec = static_cast<double>(CLOCKS_PER_SEC);
-      std::cout << "Elapsed time: "
-                << static_cast<long>(time_finish - time_start) << " s. (time)"
-                << ", "
-                << static_cast<double>(clock_finish - clock_start) /
-          clocks_per_sec
-                << " s. (clock)"
-                << "\n";
+      std::chrono::duration<double> time_elapsed = time_finish - time_start;
+      std::cout << "Elapsed time (seconds): " << time_elapsed.count() << "\n";
       return ret;
     }
 
@@ -1700,16 +1752,15 @@ cmsys::Status cmcmd::SymlinkInternal(std::string const& file,
   }
   std::string linktext = cmSystemTools::GetFilenameName(file);
 #if defined(_WIN32) && !defined(__CYGWIN__)
-  std::string errorMessage;
-  cmsys::Status status =
-    cmSystemTools::CreateSymlink(linktext, link, &errorMessage);
+  cmsys::Status status = cmSystemTools::CreateSymlinkQuietly(linktext, link);
   // Creating a symlink will fail with ERROR_PRIVILEGE_NOT_HELD if the user
   // does not have SeCreateSymbolicLinkPrivilege, or if developer mode is not
   // active. In that case, we try to copy the file.
   if (status.GetWindows() == ERROR_PRIVILEGE_NOT_HELD) {
     status = cmSystemTools::CopyFileAlways(file, link);
   } else if (!status) {
-    cmSystemTools::Error(errorMessage);
+    cmSystemTools::Error(cmStrCat("failed to create symbolic link '", link,
+                                  "': ", status.GetString()));
   }
   return status;
 #else

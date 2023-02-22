@@ -7,7 +7,7 @@
         GIT_CLONE_PATH: "$CI_BUILDS_DIR/cmake ci ext/$CI_CONCURRENT_ID"
         # TODO: Factor this out so that each job selects the Xcode version to
         # use so that different versions can be tested in a single pipeline.
-        DEVELOPER_DIR: "/Applications/Xcode-13.4.app/Contents/Developer"
+        DEVELOPER_DIR: "/Applications/Xcode-14.2.app/Contents/Developer"
         # Avoid conflicting with other projects running on the same machine.
         SCCACHE_SERVER_PORT: 4227
 
@@ -80,6 +80,14 @@
         CMAKE_GENERATOR: Xcode
         CMAKE_CI_NIGHTLY_IGNORE_DEPS: "true"
 
+.macos_x86_64_xcode_ub:
+    extends: .macos
+
+    variables:
+        CMAKE_CONFIGURATION: macos_x86_64_xcode_ub
+        CMAKE_GENERATOR: Xcode
+        CMAKE_CI_NIGHTLY_IGNORE_DEPS: "true"
+
 .macos_x86_64_ninja_multi:
     extends: .macos
 
@@ -88,47 +96,54 @@
         CMAKE_GENERATOR: "Ninja Multi-Config"
         CMAKE_CI_NIGHTLY_IGNORE_DEPS: "true"
 
+.macos_x86_64_ninja_ub:
+    extends: .macos
+
+    variables:
+        CMAKE_CONFIGURATION: macos_x86_64_ninja_ub
+        CMAKE_CI_NIGHTLY_IGNORE_DEPS: "true"
+
 ## Tags
 
-.macos_x86_64_builder_tags:
+.macos_x86_64_tags:
     tags:
         - cmake # Since this is a bare runner, pin to a project.
-        - macos
+        - macos-x86_64
         - shell
-        - xcode-13.4
+        - xcode-14.2
         - nonconcurrent
 
-.macos_x86_64_builder_tags_package:
+.macos_x86_64_tags_package:
     tags:
         - cmake # Since this is a bare runner, pin to a project.
-        - macos
+        - macos-x86_64
         - shell
-        - xcode-13.4
+        - xcode-14.2
         - nonconcurrent
         - finder
 
-.macos_x86_64_builder_ext_tags:
+.macos_x86_64_tags_ext:
     tags:
         - cmake # Since this is a bare runner, pin to a project.
-        - macos
+        - macos-x86_64
         - shell
-        - xcode-13.4
+        - xcode-14.2
         - concurrent
 
-.macos_arm64_builder_tags:
+.macos_arm64_tags:
     tags:
         - cmake # Since this is a bare runner, pin to a project.
         - macos-arm64
         - shell
-        - xcode-13.4
+        - xcode-14.2
         - nonconcurrent
 
-.macos_arm64_builder_ext_tags:
+.macos_arm64_tags_ext:
     tags:
         - cmake # Since this is a bare runner, pin to a project.
         - macos-arm64
         - shell
-        - xcode-13.4
+        - xcode-14.2
         - concurrent
 
 ## macOS-specific scripts
@@ -143,7 +158,7 @@
     - ninja --version
     # Download Qt
     - cmake -P .gitlab/ci/download_qt.cmake
-    - export CMAKE_PREFIX_PATH=$PWD/.gitlab/qt
+    - export CMAKE_PREFIX_PATH=$PWD/.gitlab/qt${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}
 
 .cmake_build_macos:
     stage: build

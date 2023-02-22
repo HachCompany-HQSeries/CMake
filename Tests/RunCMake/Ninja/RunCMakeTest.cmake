@@ -33,6 +33,33 @@ function(run_NinjaToolMissing)
 endfunction()
 run_NinjaToolMissing()
 
+function(run_Intl)
+  run_cmake(Intl)
+  set(RunCMake_TEST_NO_CLEAN 1)
+  set(RunCMake_TEST_BINARY_DIR ${RunCMake_BINARY_DIR}/Intl-build)
+  set(RunCMake_TEST_OUTPUT_MERGE 1)
+  run_cmake_command(Intl-build ${CMAKE_COMMAND} --build .)
+endfunction()
+run_Intl()
+
+if(WIN32)
+  if(RunCMake_MAKE_PROGRAM)
+    set(maybe_MAKE_PROGRAM "-DRunCMake_MAKE_PROGRAM=${RunCMake_MAKE_PROGRAM}")
+  endif()
+  run_cmake_script(ShowIncludes-437-English -DshowIncludes=${showIncludes} ${maybe_MAKE_PROGRAM})
+  run_cmake_script(ShowIncludes-437-French -DshowIncludes=${showIncludes} ${maybe_MAKE_PROGRAM})
+  run_cmake_script(ShowIncludes-437-German -DshowIncludes=${showIncludes} ${maybe_MAKE_PROGRAM})
+  run_cmake_script(ShowIncludes-437-Italian -DshowIncludes=${showIncludes} ${maybe_MAKE_PROGRAM})
+  run_cmake_script(ShowIncludes-54936-Chinese -DshowIncludes=${showIncludes} ${maybe_MAKE_PROGRAM})
+  run_cmake_script(ShowIncludes-65001-Chinese -DshowIncludes=${showIncludes} ${maybe_MAKE_PROGRAM})
+  run_cmake_script(ShowIncludes-65001-French -DshowIncludes=${showIncludes} ${maybe_MAKE_PROGRAM})
+  run_cmake_script(ShowIncludes-65001-Japanese -DshowIncludes=${showIncludes} ${maybe_MAKE_PROGRAM})
+  if(NOT CMake_TEST_NO_CODEPAGE_9xx)
+    run_cmake_script(ShowIncludes-932-Japanese -DshowIncludes=${showIncludes} ${maybe_MAKE_PROGRAM})
+  endif()
+  unset(maybe_MAKE_PROGRAM)
+endif()
+
 function(run_NoWorkToDo)
   run_cmake(NoWorkToDo)
   set(RunCMake_TEST_NO_CLEAN 1)
@@ -162,6 +189,38 @@ function (run_LooseObjectDepends)
   endif ()
 endfunction ()
 run_LooseObjectDepends()
+
+function (run_CustomCommandExplictDepends)
+  set(RunCMake_TEST_BINARY_DIR ${RunCMake_BINARY_DIR}/CustomCommandExplicitDepends-build)
+  run_cmake(CustomCommandExplicitDepends)
+
+  set(DEP_LIB "${RunCMake_TEST_BINARY_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}dep${CMAKE_SHARED_LIBRARY_SUFFIX}")
+
+  run_ninja("${RunCMake_TEST_BINARY_DIR}" "command-option.h")
+  if (EXISTS "${DEP_LIB}")
+    message(FATAL_ERROR
+      "The `dep` library was created when requesting a custom command to be "
+      "generated; this should no longer be necessary when passing "
+      "DEPENDS_EXPLICIT_ONLY option.")
+  endif ()
+
+  run_ninja("${RunCMake_TEST_BINARY_DIR}" "command-variable-on.h")
+  if (EXISTS "${DEP_LIB}")
+    message(FATAL_ERROR
+      "The `dep` library was created when requesting a custom command to be "
+      "generated; this should no longer be necessary when setting "
+      "CMAKE_ADD_CUSTOM_COMMAND_DEPENDS_EXPLICIT_ONLY variable to ON.")
+  endif ()
+
+  run_ninja("${RunCMake_TEST_BINARY_DIR}" "command-variable-off.h")
+  if (NOT EXISTS "${DEP_LIB}")
+    message(FATAL_ERROR
+      "The `dep` library was not created when requesting a custom command to be "
+      "generated; this should be necessary when setting "
+      "CMAKE_ADD_CUSTOM_COMMAND_DEPENDS_EXPLICIT_ONLY variable to OFF.")
+  endif ()
+endfunction ()
+run_CustomCommandExplictDepends()
 
 function (run_AssumedSources)
   set(RunCMake_TEST_BINARY_DIR ${RunCMake_BINARY_DIR}/AssumedSources-build)
@@ -357,6 +416,22 @@ function(run_QtAutoMocDeps)
     run_ninja("${RunCMake_TEST_BINARY_DIR}")
   endif()
 endfunction()
+
+function(run_QtAutoMocSkipPch)
+  set(QtX Qt${CMake_TEST_Qt_version})
+  if(CMake_TEST_${QtX}Core_Version VERSION_GREATER_EQUAL 5.15.0)
+    set(RunCMake_TEST_BINARY_DIR ${RunCMake_BINARY_DIR}/QtAutoMocSkipPch-build)
+    run_cmake_with_options(QtAutoMocSkipPch
+      "-Dwith_qt_version=${CMake_TEST_Qt_version}"
+      "-D${QtX}_DIR=${${QtX}_DIR}"
+      "-D${QtX}Core_DIR=${${QtX}Core_DIR}"
+      "-DCMAKE_PREFIX_PATH:STRING=${CMAKE_PREFIX_PATH}"
+    )
+    # Build the project.
+    run_ninja("${RunCMake_TEST_BINARY_DIR}")
+  endif()
+endfunction()
 if(CMake_TEST_Qt_version)
   run_QtAutoMocDeps()
+  run_QtAutoMocSkipPch()
 endif()

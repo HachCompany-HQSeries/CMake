@@ -222,6 +222,10 @@ function(_HDF5_test_regular_compiler_C success version is_parallel)
   if(NOT ${success} OR
      NOT EXISTS ${scratch_directory}/compiler_has_h5_c)
     set(test_file ${scratch_directory}/cmake_hdf5_test.c)
+    # CXX project without C enabled
+    if(CMAKE_CXX_COMPILER_LOADED AND NOT CMAKE_C_COMPILER_LOADED)
+      set(test_file ${scratch_directory}/cmake_hdf5_test.cpp)
+    endif()
     file(WRITE ${test_file}
       "#include <hdf5.h>\n"
       "const char* info_ver = \"INFO\" \":\" H5_VERSION;\n"
@@ -330,8 +334,15 @@ function(_HDF5_test_regular_compiler_Fortran success is_parallel)
         ERROR_VARIABLE config_error
         RESULT_VARIABLE config_result
         )
-      if(config_output MATCHES "Parallel HDF5: yes")
-        set(${is_parallel} TRUE PARENT_SCOPE)
+      if(config_output MATCHES "Parallel HDF5: ([A-Za-z0-9]+)")
+        # The value may be anything used when HDF5 was configured,
+        # so see if CMake interprets it as "true".
+        set(parallelHDF5 "${CMAKE_MATCH_1}")
+        if(parallelHDF5)
+          set(${is_parallel} TRUE PARENT_SCOPE)
+        else()
+          set(${is_parallel} FALSE PARENT_SCOPE)
+        endif()
       else()
         set(${is_parallel} FALSE PARENT_SCOPE)
       endif()
@@ -397,8 +408,13 @@ function( _HDF5_invoke_compiler language output_var return_value_var version_var
       string(REPLACE "HDF5 Version: " "" version "${version}")
       string(REPLACE "-patch" "." version "${version}")
     endif()
-    if(config_output MATCHES "Parallel HDF5: yes")
-      set(is_parallel TRUE)
+    if(config_output MATCHES "Parallel HDF5: ([A-Za-z0-9]+)")
+      # The value may be anything used when HDF5 was configured,
+      # so see if CMake interprets it as "true".
+      set(parallelHDF5 "${CMAKE_MATCH_1}")
+      if(parallelHDF5)
+        set(is_parallel TRUE)
+      endif()
     endif()
   endif()
   foreach(var output return_value version is_parallel)

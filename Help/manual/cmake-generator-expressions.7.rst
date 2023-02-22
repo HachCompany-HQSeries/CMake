@@ -142,9 +142,9 @@ to generate debug messages is to add a custom target:
 
   add_custom_target(genexdebug COMMAND ${CMAKE_COMMAND} -E echo "$<...>")
 
-After running ``cmake``, you can then build the ``genexdebug`` target to print
+After running :program:`cmake`, you can then build the ``genexdebug`` target to print
 the result of the ``$<...>`` expression (i.e. run the command
-``cmake --build ... --target genexdebug``).
+:option:`cmake --build ... --target genexdebug <cmake--build --target>`).
 
 Another way is to write debug messages to a file with :command:`file(GENERATE)`:
 
@@ -631,9 +631,8 @@ Platform
 
 .. genex:: $<PLATFORM_ID:platform_ids>
 
-  where ``platform_ids`` is a comma-separated list.
   ``1`` if CMake's platform id matches any one of the entries in
-  ``platform_ids``, otherwise ``0``.
+  comma-separated list ``platform_ids``, otherwise ``0``.
   See also the :variable:`CMAKE_SYSTEM_NAME` variable.
 
 Compiler Version
@@ -848,10 +847,15 @@ related to most of the expressions in this sub-section.
 
   .. versionadded:: 3.3
 
-  ``1`` when the language used for compilation unit matches any of the entries
-  in ``languages``, otherwise ``0``.  This expression may be used to specify
-  compile options, compile definitions, and include directories for source
-  files of a particular language in a target. For example:
+  .. versionchanged:: 3.15
+    Multiple languages can be specified for ``languages``.
+    CMake 3.14 and earlier only accepted a single language.
+
+  ``1`` when the language used for compilation unit matches any of the
+  comma-separated entries in ``languages``, otherwise ``0``. This expression
+  may be used to specify compile options, compile definitions, and include
+  directories for source files of a particular language in a target. For
+  example:
 
   .. code-block:: cmake
 
@@ -896,8 +900,8 @@ related to most of the expressions in this sub-section.
 
   ``1`` when the language used for compilation unit matches ``language`` and
   CMake's compiler id of the ``language`` compiler matches any one of the
-  entries in ``compiler_ids``, otherwise ``0``. This expression is a short form
-  for the combination of ``$<COMPILE_LANGUAGE:language>`` and
+  comma-separated entries in ``compiler_ids``, otherwise ``0``. This expression
+  is a short form for the combination of ``$<COMPILE_LANGUAGE:language>`` and
   ``$<LANG_COMPILER_ID:compiler_ids>``. This expression may be used to specify
   compile options, compile definitions, and include directories for source
   files of a particular language and compiler combination in a target.
@@ -971,10 +975,10 @@ Linker Language And ID
 
   .. versionadded:: 3.18
 
-  ``1`` when the language used for link step matches any of the entries
-  in ``languages``, otherwise ``0``.  This expression may be used to specify
-  link libraries, link options, link directories and link dependencies of a
-  particular language in a target. For example:
+  ``1`` when the language used for link step matches any of the comma-separated
+  entries in ``languages``, otherwise ``0``.  This expression may be used to
+  specify link libraries, link options, link directories and link dependencies
+  of a particular language in a target. For example:
 
   .. code-block:: cmake
 
@@ -1037,9 +1041,9 @@ Linker Language And ID
   .. versionadded:: 3.18
 
   ``1`` when the language used for link step matches ``language`` and the
-  CMake's compiler id of the language linker matches any one of the entries
-  in ``compiler_ids``, otherwise ``0``. This expression is a short form for the
-  combination of ``$<LINK_LANGUAGE:language>`` and
+  CMake's compiler id of the language linker matches any one of the comma-separated
+  entries in ``compiler_ids``, otherwise ``0``. This expression is a short form
+  for the combination of ``$<LINK_LANGUAGE:language>`` and
   ``$<LANG_COMPILER_ID:compiler_ids>``. This expression may be used to specify
   link libraries, link options, link directories and link dependencies of a
   particular language and linker combination in a target. For example:
@@ -1397,6 +1401,13 @@ In the following, the phrase "the ``tgt`` filename" means the name of the
   Note that ``tgt`` is not added as a dependency of the target this
   expression is evaluated on.
 
+  .. versionchanged:: 3.26
+    When encountered during evaluation of :ref:`Target Usage Requirements`,
+    typically in an ``INTERFACE_*`` target property, lookup of the ``tgt``
+    name occurs in the directory of the target specifying the requirement,
+    rather than the directory of the consuming target for which the
+    expression is being evaluated.
+
 .. genex:: $<TARGET_PROPERTY:prop>
 
   Value of the property ``prop`` on the target for which the expression
@@ -1662,8 +1673,8 @@ In the following, the phrase "the ``tgt`` filename" means the name of the
   **On non-DLL platforms, this expression always evaluates to an empty string**.
 
   This generator expression can be used to copy all of the DLLs that a target
-  depends on into its output directory in a ``POST_BUILD`` custom command. For
-  example:
+  depends on into its output directory in a ``POST_BUILD`` custom command using
+  the :option:`cmake -E copy -t <cmake-E copy>` command. For example:
 
   .. code-block:: cmake
 
@@ -1672,7 +1683,7 @@ In the following, the phrase "the ``tgt`` filename" means the name of the
     add_executable(exe main.c)
     target_link_libraries(exe PRIVATE foo::foo foo::bar)
     add_custom_command(TARGET exe POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_RUNTIME_DLLS:exe> $<TARGET_FILE_DIR:exe>
+      COMMAND ${CMAKE_COMMAND} -E copy -t $<TARGET_FILE_DIR:exe> $<TARGET_RUNTIME_DLLS:exe>
       COMMAND_EXPAND_LISTS
     )
 
@@ -1685,6 +1696,9 @@ In the following, the phrase "the ``tgt`` filename" means the name of the
     section for details.  Many :ref:`Find Modules` produce imported targets
     with the ``UNKNOWN`` type and therefore will be ignored.
 
+On platforms that support runtime paths (``RPATH``), refer to the
+:prop_tgt:`INSTALL_RPATH` target property.
+On Apple platforms, refer to the :prop_tgt:`INSTALL_NAME_DIR` target property.
 
 Export And Install Expressions
 ------------------------------
@@ -1699,6 +1713,13 @@ Export And Install Expressions
   Content of ``...`` when the property is exported using :command:`export`, or
   when the target is used by another target in the same buildsystem. Expands to
   the empty string otherwise.
+
+.. genex:: $<BUILD_LOCAL_INTERFACE:...>
+
+  .. versionadded:: 3.26
+
+  Content of ``...`` when the target is used by another target in the same
+  buildsystem. Expands to the empty string otherwise.
 
 .. genex:: $<INSTALL_PREFIX>
 

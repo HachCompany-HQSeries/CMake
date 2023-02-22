@@ -161,7 +161,7 @@ that may contain the following fields:
   presets by default (except ``name``, ``hidden``, ``inherits``,
   ``description``, and ``displayName``), but can override them as
   desired. If multiple ``inherits`` presets provide conflicting values for
-  the same field, the earlier preset in the ``inherits`` list will be
+  the same field, the earlier preset in the ``inherits`` array will be
   preferred.
 
   A preset can only inherit from another preset that is defined in the
@@ -202,7 +202,7 @@ that may contain the following fields:
   Optional fields representing the platform and toolset, respectively, for
   :manual:`generators <cmake-generators(7)>` that support them.
 
-  See :option:`cmake -A` option for for possible values for ``architecture``
+  See :option:`cmake -A` option for possible values for ``architecture``
   and :option:`cmake -T` for ``toolset``.
 
   Each may be either a string or an object with the following fields:
@@ -225,6 +225,9 @@ that may contain the following fields:
       ``architecture`` and ``toolset`` fields. In that case, CMake will
       ignore the field, but the IDE can use them to set up the environment
       before invoking CMake.
+
+    If no ``strategy`` field is given, or if the field uses the string form
+    rather than the object form, the behavior is the same as ``"set"``.
 
 ``toolchainFile``
   An optional string representing the path to the toolchain file.
@@ -388,7 +391,7 @@ that may contain the following fields:
   ``inherits`` presets by default (except ``name``, ``hidden``,
   ``inherits``, ``description``, and ``displayName``), but can override
   them as desired. If multiple ``inherits`` presets provide conflicting
-  values for the same field, the earlier preset in the ``inherits`` list
+  values for the same field, the earlier preset in the ``inherits`` array
   will be preferred.
 
   A preset can only inherit from another preset that is defined in the
@@ -460,21 +463,21 @@ that may contain the following fields:
 
 ``jobs``
   An optional integer. Equivalent to passing
-  :option:`--parallel <cmake --parallel>` or ``-j`` on the command line.
+  :option:`--parallel <cmake--build --parallel>` or ``-j`` on the command line.
 
 ``targets``
   An optional string or array of strings. Equivalent to passing
-  :option:`--target <cmake --target>` or ``-t`` on the command line.
+  :option:`--target <cmake--build --target>` or ``-t`` on the command line.
   Vendors may ignore the targets property or hide build presets that
   explicitly specify targets. This field supports macro expansion.
 
 ``configuration``
-  An optional string. Equivalent to passing :option:`--config <cmake --config>`
-  on the command line.
+  An optional string. Equivalent to passing
+  :option:`--config <cmake--build --config>` on the command line.
 
 ``cleanFirst``
   An optional bool. If true, equivalent to passing
-  :option:`--clean-first <cmake --clean-first>` on the command line.
+  :option:`--clean-first <cmake--build --clean-first>` on the command line.
 
 ``resolvePackageReferences``
   An optional string that specifies the package resolve mode. This is
@@ -498,7 +501,7 @@ that may contain the following fields:
   .. note::
 
     The command line parameter
-    :option:`--resolve-package-references <cmake --resolve-package-references>`
+    :option:`--resolve-package-references <cmake--build --resolve-package-references>`
     will take priority over this setting. If the command line parameter is not
     provided and this setting is not specified, an environment-specific cache
     variable will be evaluated to decide, if package restoration should be
@@ -512,7 +515,7 @@ that may contain the following fields:
 
 ``verbose``
   An optional bool. If true, equivalent to passing
-  :option:`--verbose <cmake --verbose>` on the command line.
+  :option:`--verbose <cmake--build --verbose>` on the command line.
 
 ``nativeToolOptions``
   An optional array of strings. Equivalent to passing options after ``--``
@@ -549,7 +552,7 @@ that may contain the following fields:
   ``inherits`` presets by default (except ``name``, ``hidden``,
   ``inherits``, ``description``, and ``displayName``), but can override
   them as desired. If multiple ``inherits`` presets provide conflicting
-  values for the same field, the earlier preset in the ``inherits`` list
+  values for the same field, the earlier preset in the ``inherits`` array
   will be preferred.
 
   A preset can only inherit from another preset that is defined in the
@@ -656,6 +659,12 @@ that may contain the following fields:
     An optional string specifying a path to a log file. Equivalent to
     passing :option:`--output-log <ctest --output-log>` on the command line.
     This field supports macro expansion.
+
+  ``outputJUnitFile``
+    An optional string specifying a path to a JUnit file. Equivalent to
+    passing :option:`--output-junit <ctest --output-junit>` on the command line.
+    This field supports macro expansion. This is allowed in preset files
+    specifying version ``6`` or above.
 
   ``labelSummary``
     An optional bool. If false, equivalent to passing
@@ -885,7 +894,7 @@ fields:
   ``inherits`` presets by default (except ``name``, ``hidden``,
   ``inherits``, ``description``, and ``displayName``), but can override
   them as desired. If multiple ``inherits`` presets provide conflicting
-  values for the same field, the earlier preset in the ``inherits`` list
+  values for the same field, the earlier preset in the ``inherits`` array
   will be preferred.
 
   A preset can only inherit from another preset that is defined in the
@@ -942,10 +951,10 @@ fields:
   explicitly specified in this package preset.
 
 ``generators``
-  An optional list of strings representing generators for CPack to use.
+  An optional array of strings representing generators for CPack to use.
 
 ``configurations``
-  An optional list of strings representing build configurations for CPack to
+  An optional array of strings representing build configurations for CPack to
   package.
 
 ``variables``
@@ -980,6 +989,8 @@ fields:
 
 ``vendorName``
   An optional string representing the vendor name.
+
+.. _`Workflow Preset`:
 
 Workflow Preset
 ^^^^^^^^^^^^^^^
@@ -1065,7 +1076,7 @@ object, it has the following fields:
       A required string to search for. This field supports macro expansion.
 
     ``list``
-      A required list of strings to search. This field supports macro
+      A required array of strings to search. This field supports macro
       expansion, and uses short-circuit evaluation.
 
   ``"matches"``

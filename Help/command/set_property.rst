@@ -82,15 +82,15 @@ It must be one of the following:
   to the installation prefix.
 
 ``TEST``
-  Scope may name zero or more existing tests.
-  See also the :command:`set_tests_properties` command.
+  Scope is limited to the directory the command is called in. It may name zero
+  or more existing tests. See also command :command:`set_tests_properties`.
 
   Test property values may be specified using
   :manual:`generator expressions <cmake-generator-expressions(7)>`
   for tests created by the :command:`add_test(NAME)` signature.
 
 ``CACHE``
-  Scope must name zero or more cache existing entries.
+  Scope must name zero or more existing cache entries.
 
 The required ``PROPERTY`` option is immediately followed by the name of
 the property to set.  Remaining arguments are used to compose the
@@ -107,10 +107,15 @@ finding the initial value to append to.  If the property is not already
 directly set in the nominated scope, the command will behave as though
 ``APPEND`` or ``APPEND_STRING`` had not been given.
 
-See the :manual:`cmake-properties(7)` manual for a list of properties
-in each scope.
-
 .. note::
 
   The :prop_sf:`GENERATED` source file property may be globally visible.
   See its documentation for details.
+
+See Also
+^^^^^^^^
+
+* :command:`define_property`
+* :command:`get_property`
+* The :manual:`cmake-properties(7)` manual for a list of properties
+  in each scope.

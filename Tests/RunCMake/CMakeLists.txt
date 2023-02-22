@@ -197,6 +197,13 @@ if(CMAKE_GENERATOR MATCHES "Ninja")
       ${ninja_qt_args}
     )
   endif()
+  if(WIN32)
+    add_executable(showIncludes showIncludes.c)
+    list(APPEND Ninja_ARGS -DshowIncludes=$<TARGET_FILE:showIncludes>)
+    if(CMake_TEST_NO_CODEPAGE_9xx)
+      list(APPEND Ninja_ARGS -DCMake_TEST_NO_CODEPAGE_9xx=1)
+    endif()
+  endif()
   add_RunCMake_test(Ninja)
   set(NinjaMultiConfig_ARGS
     -DCYGWIN=${CYGWIN} -DMSYS=${MSYS}
@@ -295,8 +302,8 @@ if(UNIX AND "${CMAKE_GENERATOR}" MATCHES "Unix Makefiles|Ninja")
   add_RunCMake_test(CompilerChange)
 endif()
 add_RunCMake_test(CompilerNotFound)
-if (APPLE AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-  list(APPEND CompilerTest_ARGS -DCMake_TEST_OBJC=1)
+if(DEFINED CMake_TEST_OBJC)
+  list(APPEND CompilerTest_ARGS -DCMake_TEST_OBJC=${CMake_TEST_OBJC})
 endif()
 if(CMAKE_Fortran_COMPILER)
   list(APPEND CompilerTest_ARGS -DCMake_TEST_Fortran=1)
@@ -316,6 +323,10 @@ endif()
 add_RunCMake_test(ExcludeFromAll)
 add_RunCMake_test(ExportImport)
 add_RunCMake_test(ExternalData)
+if(CMAKE_GENERATOR MATCHES "^(Unix Makefiles|Ninja)$"
+    AND NOT "${CMAKE_CURRENT_BINARY_DIR}" STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}")
+  add_RunCMake_test(ExtraGenerators)
+endif()
 add_RunCMake_test(FeatureSummary)
 add_RunCMake_test(FPHSA)
 if(CMAKE_USE_SYSTEM_JSONCPP)
@@ -347,6 +358,7 @@ add_RunCMake_test(GenEx-LINK_LIBRARY)
 add_RunCMake_test(GenEx-LINK_GROUP)
 add_RunCMake_test(GenEx-TARGET_FILE -DLINKER_SUPPORTS_PDB=${LINKER_SUPPORTS_PDB})
 add_RunCMake_test(GenEx-GENEX_EVAL)
+add_RunCMake_test(GenEx-TARGET_PROPERTY)
 add_RunCMake_test(GenEx-TARGET_RUNTIME_DLLS)
 add_RunCMake_test(GenEx-PATH)
 add_RunCMake_test(GenEx-PATH_EQUAL)
@@ -357,11 +369,10 @@ if(XCODE_VERSION)
   set(GeneratorToolset_ARGS -DXCODE_VERSION=${XCODE_VERSION})
 endif()
 add_RunCMake_test(GeneratorToolset)
-add_RunCMake_test(GetPrerequisites)
+add_RunCMake_test(GetPrerequisites -DSAMPLE_EXE=$<TARGET_FILE:exit_code>)
 add_RunCMake_test(GNUInstallDirs -DSYSTEM_NAME=${CMAKE_SYSTEM_NAME})
 add_RunCMake_test(GoogleTest) # Note: does not actually depend on Google Test
 add_RunCMake_test(Graphviz)
-add_RunCMake_test(TargetPropertyGeneratorExpressions)
 add_RunCMake_test(Languages)
 add_RunCMake_test(LinkItemValidation)
 add_RunCMake_test(LinkStatic)
@@ -462,6 +473,15 @@ add_RunCMake_test(ctest_fixtures)
 add_RunCMake_test(define_property)
 add_RunCMake_test(file -DCYGWIN=${CYGWIN} -DMSYS=${MSYS})
 add_RunCMake_test(file-CHMOD -DMSYS=${MSYS})
+foreach(var
+    CMake_TEST_NO_NETWORK
+    CMake_TEST_TLS_VERIFY_URL
+    )
+  if(DEFINED ${var})
+    list(APPEND file-DOWNLOAD_ARGS -D${var}=${${var}})
+  endif()
+endforeach()
+add_RunCMake_test(file-DOWNLOAD)
 add_RunCMake_test(file-RPATH -DCMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME})
 add_RunCMake_test(find_file)
 add_RunCMake_test(find_library -DCYGWIN=${CYGWIN} -DMSYS=${MSYS})
@@ -498,64 +518,15 @@ if(APPLE)
 endif()
 
 function(add_RunCMake_test_try_compile)
-  if(CMAKE_VERSION VERSION_LESS 3.9.20170907 AND "x${CMAKE_CXX_COMPILER_ID}" STREQUAL "xMSVC")
-    # Older CMake versions do not know about MSVC language standards.
-    # Approximate our logic from MSVC-CXX.cmake.
-    if ((NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19.0.24215.1 AND
-         CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19.10) OR
-         NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19.10.25017)
-      set(CMAKE_CXX_STANDARD_DEFAULT 14)
-    elseif (NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16.0)
-      set(CMAKE_CXX_STANDARD_DEFAULT "")
-    else()
-      unset(CMAKE_CXX_STANDARD_DEFAULT)
-    endif()
-  endif()
-  if(CMAKE_VERSION VERSION_LESS 3.18.20200813 AND "x${CMAKE_C_COMPILER_ID}" STREQUAL "xMSVC")
-    # Older CMake versions do not know about MSVC language standards.
-    # Approximate our logic from MSVC-C.cmake.
-    if(NOT CMAKE_C_COMPILER_VERSION VERSION_LESS 19.27)
-      set(CMAKE_C_STANDARD_DEFAULT 99)
-    else()
-      set(CMAKE_C_STANDARD_DEFAULT "")
-    endif()
-  endif()
-  if(CMAKE_VERSION VERSION_LESS 3.20.20210225 AND "x${CMAKE_C_COMPILER_ID}" STREQUAL "xClang")
-    # Older CMake versions do not know about Clang MSVC compatibility mode
-    # standards. Approximate the logic from Clang-C.cmake.
-    if(CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL 11.0)
-      set(CMAKE_C_STANDARD_DEFAULT 17)
-    elseif(CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL 3.5.2)
-      set(CMAKE_C_STANDARD_DEFAULT 11)
-    endif()
-  endif()
-  if(CMAKE_VERSION VERSION_LESS 3.20.6 AND "x${CMAKE_C_COMPILER_ID}" STREQUAL "xIntelLLVM" AND "x${CMAKE_C_SIMULATE_ID}" STREQUAL "xMSVC")
-    # Older CMake versions accidentally set the default standards to empty when
-    # IntelLLVM targets the MSVC ABI, thus not activating standard selection.
-    # Approximate the logic from IntelLLVM-{C,CXX}.cmake.
-    if(DEFINED CMAKE_C_STANDARD_DEFAULT AND "${CMAKE_C_STANDARD_DEFAULT}" STREQUAL "")
-      set(CMAKE_C_STANDARD_DEFAULT 17)
-    endif()
-    if(DEFINED CMAKE_CXX_STANDARD_DEFAULT AND "${CMAKE_CXX_STANDARD_DEFAULT}" STREQUAL "")
-      set(CMAKE_CXX_STANDARD_DEFAULT 14)
-    endif()
-  endif()
   foreach(
     var
     IN ITEMS
       CMAKE_SYSTEM_NAME
-      CMAKE_C_COMPILER_ID
-      CMAKE_C_COMPILER_VERSION
-      CMAKE_C_STANDARD_DEFAULT
-      CMAKE_CXX_COMPILER_ID
-      CMAKE_CXX_COMPILER_VERSION
-      CMAKE_CXX_STANDARD_DEFAULT
       CMake_TEST_CUDA
       CMake_TEST_ISPC
       CMake_TEST_HIP
+      CMake_TEST_OBJC
       CMake_TEST_FILESYSTEM_1S
-      CMAKE_OBJC_STANDARD_DEFAULT
-      CMAKE_OBJCXX_STANDARD_DEFAULT
     )
     if(DEFINED ${var})
       list(APPEND try_compile_ARGS -D${var}=${${var}})
@@ -680,7 +651,8 @@ if(CMAKE_GENERATOR MATCHES "^Visual Studio (1[6-9]|[2-9][0-9])")
 endif()
 
 if(XCODE_VERSION)
-  add_RunCMake_test(XcodeProject -DXCODE_VERSION=${XCODE_VERSION})
+  add_RunCMake_test(XcodeProject -DXCODE_VERSION=${XCODE_VERSION}
+                                 -DCMake_TEST_Swift=${CMake_TEST_Swift})
   add_RunCMake_test(XcodeProject-Embed -DXCODE_VERSION=${XCODE_VERSION})
 
   # This test can take a very long time due to lots of combinations.
@@ -737,6 +709,7 @@ add_RunCMake_test(target_link_options -DCMAKE_C_COMPILER_ID=${CMAKE_C_COMPILER_I
 set_property(TEST RunCMake.target_link_options APPEND
   PROPERTY LABELS "CUDA")
 
+add_RunCMake_test(add_compile_definitions)
 add_RunCMake_test(target_compile_definitions)
 add_RunCMake_test(target_compile_features)
 add_RunCMake_test(target_compile_options
@@ -748,11 +721,13 @@ add_RunCMake_test(target_sources)
 add_RunCMake_test(CheckCompilerFlag   -DCMake_TEST_CUDA=${CMake_TEST_CUDA}
                                       -DCMake_TEST_ISPC=${CMake_TEST_ISPC}
                                       -DCMAKE_Fortran_COMPILER_ID=${CMAKE_Fortran_COMPILER_ID}
-                                      -DCMake_TEST_HIP=${CMake_TEST_HIP})
+                                      -DCMake_TEST_HIP=${CMake_TEST_HIP}
+                                      -DCMake_TEST_Swift=${CMake_TEST_Swift})
 add_RunCMake_test(CheckSourceCompiles -DCMake_TEST_CUDA=${CMake_TEST_CUDA}
                                       -DCMake_TEST_ISPC=${CMake_TEST_ISPC}
                                       -DCMAKE_Fortran_COMPILER_ID=${CMAKE_Fortran_COMPILER_ID}
-                                      -DCMake_TEST_HIP=${CMake_TEST_HIP})
+                                      -DCMake_TEST_HIP=${CMake_TEST_HIP}
+                                      -DCMake_TEST_Swift=${CMake_TEST_Swift})
 add_RunCMake_test(CheckSourceRuns     -DCMake_TEST_CUDA=${CMake_TEST_CUDA}
                                       -DCMAKE_Fortran_COMPILER_ID=${CMAKE_Fortran_COMPILER_ID}
                                       -DCMake_TEST_HIP=${CMake_TEST_HIP})
@@ -802,8 +777,11 @@ add_RunCMake_test(install -DNO_NAMELINK=${NO_NAMELINK} -DCYGWIN=${CYGWIN} -DMSYS
 set_property(TEST RunCMake.install APPEND
   PROPERTY LABELS "ISPC")
 
+if(DEFINED CMake_COMPILER_FORCES_NEW_DTAGS)
+  list(APPEND file-GET_RUNTIME_DEPENDENCIES_ARGS
+    -DCMake_COMPILER_FORCES_NEW_DTAGS=${CMake_COMPILER_FORCES_NEW_DTAGS})
+endif()
 add_RunCMake_test(file-GET_RUNTIME_DEPENDENCIES
-  -DCMAKE_C_COMPILER_ID=${CMAKE_C_COMPILER_ID}
   -DCMake_INSTALL_NAME_TOOL_BUG=${CMake_INSTALL_NAME_TOOL_BUG}
   )
 
@@ -892,12 +870,12 @@ if("${CMAKE_GENERATOR}" MATCHES "Make|Ninja")
   if(DEFINED CMake_TEST_ISPC)
     list(APPEND CompilerLauncher_ARGS -DCMake_TEST_ISPC=${CMake_TEST_ISPC})
   endif()
+  if(DEFINED CMake_TEST_OBJC)
+    list(APPEND CompilerLauncher_ARGS -DCMake_TEST_OBJC=${CMake_TEST_OBJC})
+    list(APPEND LinkerLauncher_ARGS   -DCMake_TEST_OBJC=${CMake_TEST_OBJC})
+  endif()
   if(CMAKE_Fortran_COMPILER)
     list(APPEND CompilerLauncher_ARGS -DCMake_TEST_Fortran=1)
-  endif()
-  if (APPLE AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    list(APPEND CompilerLauncher_ARGS -DCMake_TEST_OBJC=1)
-    list(APPEND LinkerLauncher_ARGS -DCMake_TEST_OBJC=1)
   endif()
   add_RunCMake_test(CompilerLauncher)
   set_property(TEST RunCMake.CompilerLauncher APPEND
