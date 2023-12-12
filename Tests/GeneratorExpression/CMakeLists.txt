@@ -200,6 +200,37 @@ set_property(TARGET importedFallback PROPERTY IMPORTED_LOCATION fallback_loc)
 set_property(TARGET importedFallback PROPERTY MAP_IMPORTED_CONFIG_DEBUG "" DEBUG)
 set_property(TARGET importedFallback PROPERTY MAP_IMPORTED_CONFIG_RELEASE "")
 
+add_library(importedFallback2 SHARED IMPORTED)
+set_property(TARGET importedFallback2 PROPERTY ENABLE_EXPORTS TRUE)
+set_property(TARGET importedFallback2 PROPERTY IMPORTED_LOCATION_NOCONFIG noconfig_loc)
+set_property(TARGET importedFallback2 PROPERTY IMPORTED_IMPLIB_NOCONFIG noconfig_imp)
+set_property(TARGET importedFallback2 PROPERTY IMPORTED_LOCATION_DEBUG debug_loc)
+set_property(TARGET importedFallback2 PROPERTY IMPORTED_IMPLIB_DEBUG debug_imp)
+set_property(TARGET importedFallback2 PROPERTY IMPORTED_LOCATION_RELEASE release_loc)
+set_property(TARGET importedFallback2 PROPERTY IMPORTED_IMPLIB_RELEASE release_imp)
+set_property(TARGET importedFallback2 PROPERTY IMPORTED_LOCATION fallback_loc)
+set_property(TARGET importedFallback2 PROPERTY IMPORTED_IMPLIB fallback_imp)
+set_property(TARGET importedFallback2 PROPERTY IMPORTED_IMPLIB_SPECIAL special_imp)
+set_property(TARGET importedFallback2 PROPERTY MAP_IMPORTED_CONFIG_NOCONFIG SPECIAL "")
+set_property(TARGET importedFallback2 PROPERTY MAP_IMPORTED_CONFIG_DEBUG SPECIAL "")
+set_property(TARGET importedFallback2 PROPERTY MAP_IMPORTED_CONFIG_RELEASE SPECIAL "")
+set_property(TARGET importedFallback2 PROPERTY MAP_IMPORTED_CONFIG_RELWITHDEBINFO SPECIAL "")
+
+add_library(importedFallback3 SHARED IMPORTED)
+set_property(TARGET importedFallback3 PROPERTY IMPORTED_LOCATION_DEBUG debug_loc)
+set_property(TARGET importedFallback3 PROPERTY IMPORTED_LOCATION_RELEASE release_loc)
+set_property(TARGET importedFallback3 PROPERTY IMPORTED_LOCATION fallback_loc)
+set_property(TARGET importedFallback3 PROPERTY IMPORTED_IMPLIB imp_loc)
+set_property(TARGET importedFallback3 PROPERTY MAP_IMPORTED_CONFIG_DEBUG "" DEBUG)
+set_property(TARGET importedFallback3 PROPERTY MAP_IMPORTED_CONFIG_RELEASE "")
+
+add_library(importedFallback4 SHARED IMPORTED)
+set_property(TARGET importedFallback4 PROPERTY IMPORTED_LOCATION fallback_loc)
+set_property(TARGET importedFallback4 PROPERTY IMPORTED_IMPLIB imp_loc)
+
+add_library(importedFallback5 SHARED IMPORTED)
+set_property(TARGET importedFallback5 PROPERTY IMPORTED_IMPLIB imp_loc)
+
 add_library(importedFallback_genex STATIC IMPORTED)
 set_property(TARGET importedFallback_genex PROPERTY IMPORTED_CONFIGURATIONS RELEASE)
 set_property(TARGET importedFallback_genex PROPERTY IMPORTED_LOCATION_RELEASE release_loc)
@@ -217,6 +248,10 @@ add_custom_target(check-part3 ALL
     -Dconfig=$<CONFIGURATION>
     -Dtest_imported_includes=$<TARGET_PROPERTY:imported4,INCLUDE_DIRECTORIES>
     -Dtest_imported_fallback=$<STREQUAL:$<TARGET_FILE_NAME:importedFallback>,fallback_loc>
+    -Dtest_imported_fallback2=$<STREQUAL:$<TARGET_LINKER_FILE_NAME:importedFallback2>,special_imp>
+    -Dtest_imported_fallback3=$<IF:$<PLATFORM_ID:Windows,CYGWIN,MSYS>,$<STREQUAL:$<TARGET_LINKER_FILE_NAME:importedFallback3>,imp_loc>,$<STREQUAL:$<TARGET_LINKER_FILE_NAME:importedFallback3>,fallback_loc>>
+    -Dtest_imported_fallback4=$<IF:$<PLATFORM_ID:Windows,CYGWIN,MSYS>,$<STREQUAL:$<TARGET_LINKER_FILE_NAME:importedFallback4>,imp_loc>,$<STREQUAL:$<TARGET_LINKER_FILE_NAME:importedFallback4>,fallback_loc>>
+    -Dtest_imported_fallback5=$<STREQUAL:$<TARGET_LINKER_FILE_NAME:importedFallback5>,imp_loc>
     -Dtest_imported_fallback_genex=$<STREQUAL:$<TARGET_PROPERTY:importedFallback_genex,INTERFACE_COMPILE_DEFINITIONS>,FOOBAR=1>
     -Dtest_alias_file_exe=$<STREQUAL:$<TARGET_FILE:Alias::SomeExe>,$<TARGET_FILE:someexe>>
     -Dtest_alias_file_lib=$<STREQUAL:$<TARGET_FILE:Alias::SomeLib>,$<TARGET_FILE:empty1>>

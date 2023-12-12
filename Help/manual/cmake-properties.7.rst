@@ -130,9 +130,11 @@ Properties on Targets
    /prop_tgt/ARCHIVE_OUTPUT_NAME
    /prop_tgt/ARCHIVE_OUTPUT_NAME_CONFIG
    /prop_tgt/AUTOGEN_BUILD_DIR
+   /prop_tgt/AUTOGEN_COMMAND_LINE_LENGTH_MAX
    /prop_tgt/AUTOGEN_ORIGIN_DEPENDS
    /prop_tgt/AUTOGEN_PARALLEL
    /prop_tgt/AUTOGEN_TARGET_DEPENDS
+   /prop_tgt/AUTOGEN_USE_SYSTEM_INCLUDE
    /prop_tgt/AUTOMOC
    /prop_tgt/AUTOMOC_COMPILER_PREDEFINES
    /prop_tgt/AUTOMOC_DEPEND_FILTERS
@@ -175,7 +177,10 @@ Properties on Targets
    /prop_tgt/CONFIG_POSTFIX
    /prop_tgt/CROSSCOMPILING_EMULATOR
    /prop_tgt/CUDA_ARCHITECTURES
+   /prop_tgt/CUDA_CUBIN_COMPILATION
    /prop_tgt/CUDA_EXTENSIONS
+   /prop_tgt/CUDA_FATBIN_COMPILATION
+   /prop_tgt/CUDA_OPTIX_COMPILATION
    /prop_tgt/CUDA_PTX_COMPILATION
    /prop_tgt/CUDA_RESOLVE_DEVICE_SYMBOLS
    /prop_tgt/CUDA_RUNTIME_LIBRARY
@@ -185,11 +190,6 @@ Properties on Targets
    /prop_tgt/CXX_EXTENSIONS
    /prop_tgt/CXX_MODULE_DIRS
    /prop_tgt/CXX_MODULE_DIRS_NAME
-   /prop_tgt/CXX_MODULE_HEADER_UNIT_DIRS
-   /prop_tgt/CXX_MODULE_HEADER_UNIT_DIRS_NAME
-   /prop_tgt/CXX_MODULE_HEADER_UNIT_SET
-   /prop_tgt/CXX_MODULE_HEADER_UNIT_SET_NAME
-   /prop_tgt/CXX_MODULE_HEADER_UNIT_SETS
    /prop_tgt/CXX_MODULE_SET
    /prop_tgt/CXX_MODULE_SET_NAME
    /prop_tgt/CXX_MODULE_SETS
@@ -202,6 +202,7 @@ Properties on Targets
    /prop_tgt/DEPLOYMENT_REMOTE_DIRECTORY
    /prop_tgt/DEPRECATION
    /prop_tgt/DISABLE_PRECOMPILE_HEADERS
+   /prop_tgt/DLL_NAME_WITH_SOVERSION
    /prop_tgt/DOTNET_SDK
    /prop_tgt/DOTNET_TARGET_FRAMEWORK
    /prop_tgt/DOTNET_TARGET_FRAMEWORK_VERSION
@@ -211,6 +212,7 @@ Properties on Targets
    /prop_tgt/EXCLUDE_FROM_DEFAULT_BUILD
    /prop_tgt/EXCLUDE_FROM_DEFAULT_BUILD_CONFIG
    /prop_tgt/EXPORT_COMPILE_COMMANDS
+   /prop_tgt/EXPORT_FIND_PACKAGE_NAME
    /prop_tgt/EXPORT_NAME
    /prop_tgt/EXPORT_NO_SYSTEM
    /prop_tgt/EXPORT_PROPERTIES
@@ -240,6 +242,11 @@ Properties on Targets
    /prop_tgt/IMPORTED
    /prop_tgt/IMPORTED_COMMON_LANGUAGE_RUNTIME
    /prop_tgt/IMPORTED_CONFIGURATIONS
+   /prop_tgt/IMPORTED_CXX_MODULES_COMPILE_DEFINITIONS
+   /prop_tgt/IMPORTED_CXX_MODULES_COMPILE_FEATURES
+   /prop_tgt/IMPORTED_CXX_MODULES_COMPILE_OPTIONS
+   /prop_tgt/IMPORTED_CXX_MODULES_INCLUDE_DIRECTORIES
+   /prop_tgt/IMPORTED_CXX_MODULES_LINK_LIBRARIES
    /prop_tgt/IMPORTED_GLOBAL
    /prop_tgt/IMPORTED_IMPLIB
    /prop_tgt/IMPORTED_IMPLIB_CONFIG
@@ -257,7 +264,6 @@ Properties on Targets
    /prop_tgt/IMPORTED_LOCATION_CONFIG
    /prop_tgt/IMPORTED_NO_SONAME
    /prop_tgt/IMPORTED_NO_SONAME_CONFIG
-   /prop_tgt/IMPORTED_NO_SYSTEM
    /prop_tgt/IMPORTED_OBJECTS
    /prop_tgt/IMPORTED_OBJECTS_CONFIG
    /prop_tgt/IMPORTED_SONAME
@@ -269,11 +275,11 @@ Properties on Targets
    /prop_tgt/INSTALL_REMOVE_ENVIRONMENT_RPATH
    /prop_tgt/INSTALL_RPATH
    /prop_tgt/INSTALL_RPATH_USE_LINK_PATH
+   /prop_tgt/INTERFACE_AUTOMOC_MACRO_NAMES
    /prop_tgt/INTERFACE_AUTOUIC_OPTIONS
    /prop_tgt/INTERFACE_COMPILE_DEFINITIONS
    /prop_tgt/INTERFACE_COMPILE_FEATURES
    /prop_tgt/INTERFACE_COMPILE_OPTIONS
-   /prop_tgt/INTERFACE_CXX_MODULE_HEADER_UNIT_SETS
    /prop_tgt/INTERFACE_CXX_MODULE_SETS
    /prop_tgt/INTERFACE_HEADER_SETS
    /prop_tgt/INTERFACE_HEADER_SETS_TO_VERIFY
@@ -290,7 +296,6 @@ Properties on Targets
    /prop_tgt/INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
    /prop_tgt/INTERPROCEDURAL_OPTIMIZATION
    /prop_tgt/INTERPROCEDURAL_OPTIMIZATION_CONFIG
-   /prop_tgt/IOS_INSTALL_COMBINED
    /prop_tgt/ISPC_HEADER_DIRECTORY
    /prop_tgt/ISPC_HEADER_SUFFIX
    /prop_tgt/ISPC_INSTRUCTION_SETS
@@ -331,6 +336,7 @@ Properties on Targets
    /prop_tgt/LINK_SEARCH_START_STATIC
    /prop_tgt/LINK_WHAT_YOU_USE
    /prop_tgt/LINKER_LANGUAGE
+   /prop_tgt/LINKER_TYPE
    /prop_tgt/LOCATION
    /prop_tgt/LOCATION_CONFIG
    /prop_tgt/MACHO_COMPATIBILITY_VERSION
@@ -386,6 +392,7 @@ Properties on Targets
    /prop_tgt/STATIC_LIBRARY_FLAGS_CONFIG
    /prop_tgt/STATIC_LIBRARY_OPTIONS
    /prop_tgt/SUFFIX
+   /prop_tgt/Swift_COMPILATION_MODE
    /prop_tgt/Swift_DEPENDENCIES_FILE
    /prop_tgt/Swift_LANGUAGE_VERSION
    /prop_tgt/Swift_MODULE_DIRECTORY
@@ -439,7 +446,6 @@ Properties on Targets
    /prop_tgt/VS_USER_PROPS
    /prop_tgt/VS_WINDOWS_TARGET_PLATFORM_MIN_VERSION
    /prop_tgt/VS_WINRT_COMPONENT
-   /prop_tgt/VS_WINRT_EXTENSIONS
    /prop_tgt/VS_WINRT_REFERENCES
    /prop_tgt/WATCOM_RUNTIME_LIBRARY
    /prop_tgt/WIN32_EXECUTABLE
@@ -503,6 +509,7 @@ Properties on Tests
    /prop_test/FIXTURES_CLEANUP
    /prop_test/FIXTURES_REQUIRED
    /prop_test/FIXTURES_SETUP
+   /prop_test/GENERATED_RESOURCE_SPEC_FILE
    /prop_test/LABELS
    /prop_test/MEASUREMENT
    /prop_test/PASS_REGULAR_EXPRESSION
@@ -516,6 +523,8 @@ Properties on Tests
    /prop_test/SKIP_RETURN_CODE
    /prop_test/TIMEOUT
    /prop_test/TIMEOUT_AFTER_MATCH
+   /prop_test/TIMEOUT_SIGNAL_GRACE_PERIOD
+   /prop_test/TIMEOUT_SIGNAL_NAME
    /prop_test/WILL_FAIL
    /prop_test/WORKING_DIRECTORY
 
@@ -551,6 +560,7 @@ Properties on Source Files
    /prop_sf/SKIP_AUTOMOC
    /prop_sf/SKIP_AUTORCC
    /prop_sf/SKIP_AUTOUIC
+   /prop_sf/SKIP_LINTING
    /prop_sf/SKIP_PRECOMPILE_HEADERS
    /prop_sf/SKIP_UNITY_BUILD_INCLUSION
    /prop_sf/Swift_DEPENDENCIES_FILE
@@ -631,8 +641,11 @@ Deprecated Properties on Targets
    :maxdepth: 1
 
    /prop_tgt/COMPILE_DEFINITIONS_CONFIG
+   /prop_tgt/IMPORTED_NO_SYSTEM
+   /prop_tgt/IOS_INSTALL_COMBINED
    /prop_tgt/POST_INSTALL_SCRIPT
    /prop_tgt/PRE_INSTALL_SCRIPT
+   /prop_tgt/VS_WINRT_EXTENSIONS
 
 
 Deprecated Properties on Source Files

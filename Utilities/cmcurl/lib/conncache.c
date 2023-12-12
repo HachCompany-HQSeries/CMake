@@ -45,13 +45,6 @@
 
 #define HASHKEY_SIZE 128
 
-static void conn_llist_dtor(void *user, void *element)
-{
-  struct connectdata *conn = element;
-  (void)user;
-  conn->bundle = NULL;
-}
-
 static CURLcode bundle_create(struct connectbundle **bundlep)
 {
   DEBUGASSERT(*bundlep == NULL);
@@ -62,17 +55,12 @@ static CURLcode bundle_create(struct connectbundle **bundlep)
   (*bundlep)->num_connections = 0;
   (*bundlep)->multiuse = BUNDLE_UNKNOWN;
 
-  Curl_llist_init(&(*bundlep)->conn_list, (Curl_llist_dtor) conn_llist_dtor);
+  Curl_llist_init(&(*bundlep)->conn_list, NULL);
   return CURLE_OK;
 }
 
 static void bundle_destroy(struct connectbundle *bundle)
 {
-  if(!bundle)
-    return;
-
-  Curl_llist_destroy(&bundle->conn_list, NULL);
-
   free(bundle);
 }
 
@@ -119,6 +107,7 @@ int Curl_conncache_init(struct conncache *connc, int size)
   connc->closure_handle = curl_easy_init();
   if(!connc->closure_handle)
     return 1; /* bad */
+  connc->closure_handle->internal = true;
 
   Curl_hash_init(&connc->hash, size, Curl_hash_str,
                  Curl_str_key_compare, free_bundle_hash_entry);
@@ -258,7 +247,7 @@ CURLcode Curl_conncache_add_conn(struct Curl_easy *data)
                "The cache now contains %zu members",
                conn->connection_id, connc->num_conn));
 
-  unlock:
+unlock:
   CONNCACHE_UNLOCK(data);
 
   return result;

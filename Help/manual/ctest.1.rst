@@ -354,6 +354,8 @@ Run Tests
 
 .. option:: --test-dir <dir>
 
+ .. versionadded:: 3.20
+
  Specify the directory in which to look for tests, typically a CMake project
  build directory. If not specified, the current directory is used.
 
@@ -651,6 +653,8 @@ a `CDash`_ server. The command-line signature used to submit to `CDash`_ is::
   ctest -M <model> -T <action> [-- <dashboard-options>...]
   ctest -S <script>            [-- <dashboard-options>...]
   ctest -SP <script>           [-- <dashboard-options>...]
+
+.. _`CDash`: https://www.cdash.org
 
 Options for Dashboard Client include:
 
@@ -1230,7 +1234,8 @@ Configuration settings include:
 
 ``TimeOut``
   The default timeout for each test if not specified by the
-  :prop_test:`TIMEOUT` test property.
+  :prop_test:`TIMEOUT` test property or the
+  :option:`--timeout <ctest --timeout>` flag.
 
   * `CTest Script`_ variable: :variable:`CTEST_TEST_TIMEOUT`
   * :module:`CTest` module variable: ``DART_TESTING_TIMEOUT``
@@ -1817,9 +1822,51 @@ The following variables are passed to the test process:
   uppercase in the ``CTEST_RESOURCE_GROUP_<num>_<resource-type>`` environment
   variable.
 
+.. _`ctest-resource-dynamically-generated-spec-file`:
+
+Dynamically-Generated Resource Specification File
+-------------------------------------------------
+
+.. versionadded:: 3.28
+
+A project may optionally specify a single test which will be used to
+dynamically generate the resource specification file that CTest will use for
+scheduling tests that use resources. The test that generates the file must
+have the :prop_test:`GENERATED_RESOURCE_SPEC_FILE` property set, and must have
+exactly one fixture in its :prop_test:`FIXTURES_SETUP` property. This fixture
+is considered by CTest to have special meaning: it's the fixture that generates
+the resource spec file. The fixture may have any name. If such a fixture
+exists, all tests that have :prop_test:`RESOURCE_GROUPS` set must have the
+fixture in their :prop_test:`FIXTURES_REQUIRED`, and a resource spec file may
+not be specified with the ``--resource-spec-file`` argument or the
+:variable:`CTEST_RESOURCE_SPEC_FILE` variable.
+
+.. _`ctest-job-server-integration`:
+
+Job Server Integration
+======================
+
+.. versionadded:: 3.29
+
+On POSIX systems, when running under the context of a `Job Server`_,
+CTest shares its job slots.  This is independent of the :prop_test:`PROCESSORS`
+test property, which still counts against CTest's :option:`-j <ctest -j>`
+parallel level.  CTest acquires exactly one token from the job server before
+running each test, and returns it when the test finishes.
+
+For example, consider the ``Makefile``:
+
+.. literalinclude:: CTEST_EXAMPLE_MAKEFILE_JOB_SERVER.make
+  :language: make
+
+When invoked via ``make -j 2 test``, ``ctest`` connects to the job server,
+acquires a token for each test, and runs at most 2 tests concurrently.
+
+On Windows systems, job server integration is not yet implemented.
+
+.. _`Job Server`: https://www.gnu.org/software/make/manual/html_node/Job-Slots.html
+
 See Also
 ========
 
 .. include:: LINKS.txt
-
-_`CDash`: https://cdash.org

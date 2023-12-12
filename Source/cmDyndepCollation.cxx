@@ -73,20 +73,36 @@ Json::Value CollationInformationCxxModules(
                                   gt->LocalGenerator, config, gt);
     }
 
-    std::map<std::string, cmSourceFile const*> sf_map;
+    enum class CompileType
     {
-      std::vector<cmSourceFile const*> objectSources;
-      gt->GetObjectSources(objectSources, config);
-      for (auto const* sf : objectSources) {
+      ObjectAndBmi,
+      BmiOnly,
+    };
+    std::map<std::string, std::pair<cmSourceFile const*, CompileType>> sf_map;
+    {
+      auto fill_sf_map = [gt, tgt, &sf_map](cmSourceFile const* sf,
+                                            CompileType type) {
         auto full_path = sf->GetFullPath();
         if (full_path.empty()) {
           gt->Makefile->IssueMessage(
             MessageType::INTERNAL_ERROR,
             cmStrCat("Target \"", tgt->GetName(),
                      "\" has a full path-less source file."));
-          continue;
+          return;
         }
-        sf_map[full_path] = sf;
+        sf_map[full_path] = std::make_pair(sf, type);
+      };
+
+      std::vector<cmSourceFile const*> objectSources;
+      gt->GetObjectSources(objectSources, config);
+      for (auto const* sf : objectSources) {
+        fill_sf_map(sf, CompileType::ObjectAndBmi);
+      }
+
+      std::vector<cmSourceFile const*> cxxModuleSources;
+      gt->GetCxxModuleSources(cxxModuleSources, config);
+      for (auto const* sf : cxxModuleSources) {
+        fill_sf_map(sf, CompileType::BmiOnly);
       }
     }
 
@@ -106,14 +122,16 @@ Json::Value CollationInformationCxxModules(
         auto lookup = sf_map.find(file);
         if (lookup == sf_map.end()) {
           gt->Makefile->IssueMessage(
-            MessageType::INTERNAL_ERROR,
-            cmStrCat("Target \"", tgt->GetName(), "\" has source file \"",
+            MessageType::FATAL_ERROR,
+            cmStrCat("Target \"", tgt->GetName(), "\" has source file\n  ",
                      file,
-                     R"(" which is not in any of its "FILE_SET BASE_DIRS".)"));
+                     "\nin a \"FILE_SET TYPE CXX_MODULES\" but it is not "
+                     "scheduled for compilation."));
           continue;
         }
 
-        auto const* sf = lookup->second;
+        auto const* sf = lookup->second.first;
+        CompileType const ct = lookup->second.second;
 
         if (!sf) {
           gt->Makefile->IssueMessage(
@@ -123,11 +141,14 @@ Json::Value CollationInformationCxxModules(
           continue;
         }
 
-        auto obj_path = cb.ObjectFilePath(sf, config);
+        auto obj_path = ct == CompileType::ObjectAndBmi
+          ? cb.ObjectFilePath(sf, config)
+          : cb.BmiFilePath(sf, config);
         Json::Value& tdi_module_info = tdi_cxx_module_info[obj_path] =
           Json::objectValue;
 
         tdi_module_info["source"] = file;
+        tdi_module_info["bmi-only"] = ct == CompileType::BmiOnly;
         tdi_module_info["relative-directory"] = files_per_dir.first;
         tdi_module_info["name"] = file_set->GetName();
         tdi_module_info["type"] = file_set->GetType();
@@ -221,14 +242,16 @@ Json::Value CollationInformationExports(cmGeneratorTarget const* gt)
 
   auto const& all_build_exports = gt->Makefile->GetExportBuildFileGenerators();
   for (auto const& exp : all_build_exports) {
-    std::vector<std::string> targets;
+    std::vector<cmExportBuildFileGenerator::TargetExport> targets;
     exp->GetTargets(targets);
 
     // Ignore exports sets which are not for this target.
     auto const& name = gt->GetName();
     bool has_current_target =
       std::any_of(targets.begin(), targets.end(),
-                  [name](std::string const& tname) { return tname == name; });
+                  [name](cmExportBuildFileGenerator::TargetExport const& te) {
+                    return te.Name == name;
+                  });
     if (!has_current_target) {
       continue;
     }
@@ -269,10 +292,11 @@ void cmDyndepCollation::AddCollationInformation(
 struct CxxModuleFileSet
 {
   std::string Name;
+  bool BmiOnly = false;
   std::string RelativeDirectory;
   std::string SourcePath;
   std::string Type;
-  cmFileSetVisibility Visibility;
+  cmFileSetVisibility Visibility = cmFileSetVisibility::Private;
   cm::optional<std::string> Destination;
 };
 
@@ -356,8 +380,13 @@ cmDyndepCollation::ParseExportInfo(Json::Value const& tdi)
       CxxModuleFileSet& fsi = export_info->ObjectToFileSet[i.key().asString()];
       auto const& tdi_cxx_module_info = *i;
       fsi.Name = tdi_cxx_module_info["name"].asString();
+      fsi.BmiOnly = tdi_cxx_module_info["bmi-only"].asBool();
       fsi.RelativeDirectory =
         tdi_cxx_module_info["relative-directory"].asString();
+      if (!fsi.RelativeDirectory.empty() &&
+          fsi.RelativeDirectory.back() != '/') {
+        fsi.RelativeDirectory = cmStrCat(fsi.RelativeDirectory, '/');
+      }
       fsi.SourcePath = tdi_cxx_module_info["source"].asString();
       fsi.Type = tdi_cxx_module_info["type"].asString();
       fsi.Visibility = cmFileSetVisibilityFromName(
@@ -441,20 +470,16 @@ bool cmDyndepCollation::WriteDyndepMetadata(
     auto fileset_info_itr = export_info.ObjectToFileSet.find(output_path);
     bool const has_provides = !object.Provides.empty();
     if (fileset_info_itr == export_info.ObjectToFileSet.end()) {
-      // If it provides anything, it should have a `CXX_MODULES` or
-      // `CXX_MODULE_INTERNAL_PARTITIONS` type and be present.
+      // If it provides anything, it should have type `CXX_MODULES`
+      // and be present.
       if (has_provides) {
         // Take the first module provided to provide context.
         auto const& provides = object.Provides[0];
-        char const* ok_types = "`CXX_MODULES`";
-        if (provides.LogicalName.find(':') != std::string::npos) {
-          ok_types = "`CXX_MODULES` (or `CXX_MODULE_INTERNAL_PARTITIONS` if "
-                     "it is not `export`ed)";
-        }
-        cmSystemTools::Error(cmStrCat(
-          "Output ", object.PrimaryOutput, " provides the `",
-          provides.LogicalName,
-          "` module but it is not found in a `FILE_SET` of type ", ok_types));
+        cmSystemTools::Error(
+          cmStrCat("Output ", object.PrimaryOutput, " provides the `",
+                   provides.LogicalName,
+                   "` module but it is not found in a `FILE_SET` of type "
+                   "`CXX_MODULES`"));
         result = false;
       }
 
@@ -474,38 +499,15 @@ bool cmDyndepCollation::WriteDyndepMetadata(
         result = false;
         continue;
       }
-    } else if (file_set.Type == "CXX_MODULE_INTERNAL_PARTITIONS"_s) {
-      if (!has_provides) {
-        cmSystemTools::Error(
-          cmStrCat("Source ", file_set.SourcePath,
-                   " is of type `CXX_MODULE_INTERNAL_PARTITIONS` but does not "
-                   "provide a module"));
-        result = false;
-        continue;
-      }
-      auto const& provides = object.Provides[0];
-      if (provides.LogicalName.find(':') == std::string::npos) {
-        cmSystemTools::Error(
-          cmStrCat("Source ", file_set.SourcePath,
-                   " is of type `CXX_MODULE_INTERNAL_PARTITIONS` but does not "
-                   "provide a module partition"));
-        result = false;
-        continue;
-      }
     } else if (file_set.Type == "CXX_MODULE_HEADERS"_s) {
       // TODO.
     } else {
       if (has_provides) {
         auto const& provides = object.Provides[0];
-        char const* ok_types = "`CXX_MODULES`";
-        if (provides.LogicalName.find(':') != std::string::npos) {
-          ok_types = "`CXX_MODULES` (or `CXX_MODULE_INTERNAL_PARTITIONS` if "
-                     "it is not `export`ed)";
-        }
-        cmSystemTools::Error(
-          cmStrCat("Source ", file_set.SourcePath, " provides the `",
-                   provides.LogicalName, "` C++ module but is of type `",
-                   file_set.Type, "` module but must be of type ", ok_types));
+        cmSystemTools::Error(cmStrCat(
+          "Source ", file_set.SourcePath, " provides the `",
+          provides.LogicalName, "` C++ module but is of type `", file_set.Type,
+          "` module but must be of type `CXX_MODULES`"));
         result = false;
       }
 
@@ -649,4 +651,34 @@ bool cmDyndepCollation::WriteDyndepMetadata(
   }
 
   return result;
+}
+
+bool cmDyndepCollation::IsObjectPrivate(
+  std::string const& object, cmCxxModuleExportInfo const& export_info)
+{
+#ifdef _WIN32
+  std::string output_path = object;
+  cmSystemTools::ConvertToUnixSlashes(output_path);
+#else
+  std::string const& output_path = object;
+#endif
+  auto fileset_info_itr = export_info.ObjectToFileSet.find(output_path);
+  if (fileset_info_itr == export_info.ObjectToFileSet.end()) {
+    return false;
+  }
+  auto const& file_set = fileset_info_itr->second;
+  return !cmFileSetVisibilityIsForInterface(file_set.Visibility);
+}
+
+bool cmDyndepCollation::IsBmiOnly(cmCxxModuleExportInfo const& exportInfo,
+                                  std::string const& object)
+{
+#ifdef _WIN32
+  auto object_path = object;
+  cmSystemTools::ConvertToUnixSlashes(object_path);
+#else
+  auto const& object_path = object;
+#endif
+  auto fs = exportInfo.ObjectToFileSet.find(object_path);
+  return (fs != exportInfo.ObjectToFileSet.end()) && fs->second.BmiOnly;
 }

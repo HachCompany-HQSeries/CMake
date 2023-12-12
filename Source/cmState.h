@@ -8,7 +8,6 @@
 #include <memory>
 #include <set>
 #include <string>
-#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -184,7 +183,8 @@ public:
   void AddFlowControlCommand(std::string const& name, Command command);
   void AddFlowControlCommand(std::string const& name, BuiltinCommand command);
   void AddDisallowedCommand(std::string const& name, BuiltinCommand command,
-                            cmPolicies::PolicyID policy, const char* message);
+                            cmPolicies::PolicyID policy, const char* message,
+                            const char* additionalWarning = nullptr);
   void AddUnexpectedCommand(std::string const& name, const char* error);
   void AddUnexpectedFlowControlCommand(std::string const& name,
                                        const char* error);
@@ -194,7 +194,7 @@ public:
   void RemoveUserDefinedCommands();
   std::vector<std::string> GetCommandNames() const;
 
-  void SetGlobalProperty(const std::string& prop, const char* value);
+  void SetGlobalProperty(const std::string& prop, const std::string& value);
   void SetGlobalProperty(const std::string& prop, cmValue value);
   void AppendGlobalProperty(const std::string& prop, const std::string& value,
                             bool asString = false);
@@ -253,20 +253,8 @@ public:
 
 private:
   friend class cmake;
-  void AddCacheEntry(const std::string& key, const char* value,
-                     const char* helpString, cmStateEnums::CacheEntryType type)
-  {
-    this->AddCacheEntry(key,
-                        value ? cmValue(std::string(value)) : cmValue(nullptr),
-                        helpString, type);
-  }
-  void AddCacheEntry(const std::string& key, const std::string& value,
-                     const char* helpString, cmStateEnums::CacheEntryType type)
-  {
-    this->AddCacheEntry(key, cmValue(value), helpString, type);
-  }
   void AddCacheEntry(const std::string& key, cmValue value,
-                     const char* helpString,
+                     const std::string& helpString,
                      cmStateEnums::CacheEntryType type);
 
   bool DoWriteGlobVerifyTarget() const;

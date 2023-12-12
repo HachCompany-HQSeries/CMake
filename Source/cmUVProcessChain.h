@@ -2,12 +2,14 @@
    file Copyright.txt or https://cmake.org/licensing for details.  */
 #pragma once
 
+#include "cmConfigure.h" // IWYU pragma: keep
+
 #include <array>
 #include <cstddef> // IWYU pragma: keep
 #include <cstdint>
-#include <iosfwd>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <cm3p/uv.h>
@@ -28,9 +30,15 @@ public:
 
   cmUVProcessChainBuilder& AddCommand(
     const std::vector<std::string>& arguments);
+  cmUVProcessChainBuilder& SetBuiltinLoop();
+  cmUVProcessChainBuilder& SetExternalLoop(uv_loop_t& loop);
   cmUVProcessChainBuilder& SetNoStream(Stream stdio);
   cmUVProcessChainBuilder& SetBuiltinStream(Stream stdio);
+  cmUVProcessChainBuilder& SetMergedBuiltinStreams();
   cmUVProcessChainBuilder& SetExternalStream(Stream stdio, int fd);
+  cmUVProcessChainBuilder& SetWorkingDirectory(std::string dir);
+
+  uv_loop_t* GetLoop() const;
 
   cmUVProcessChain Start() const;
 
@@ -57,15 +65,33 @@ private:
 
   std::array<StdioConfiguration, 3> Stdio;
   std::vector<ProcessConfiguration> Processes;
+  std::string WorkingDirectory;
+  bool MergedBuiltinStreams = false;
+  uv_loop_t* Loop = nullptr;
 };
 
 class cmUVProcessChain
 {
 public:
+  enum class ExceptionCode
+  {
+    None,
+    Fault,
+    Illegal,
+    Interrupt,
+    Numerical,
+    Spawn,
+    Other,
+  };
+
   struct Status
   {
+    int SpawnResult;
+    bool Finished;
     int64_t ExitStatus;
     int TermSignal;
+
+    std::pair<ExceptionCode, std::string> GetException() const;
   };
 
   cmUVProcessChain(const cmUVProcessChain& other) = delete;
@@ -79,13 +105,14 @@ public:
   uv_loop_t& GetLoop();
 
   // FIXME: Add stdin support
-  std::istream* OutputStream();
-  std::istream* ErrorStream();
+  int OutputStream();
+  int ErrorStream();
 
   bool Valid() const;
-  bool Wait(int64_t milliseconds = -1);
+  bool Wait(uint64_t milliseconds = 0);
   std::vector<const Status*> GetStatus() const;
-  const Status* GetStatus(std::size_t index) const;
+  const Status& GetStatus(std::size_t index) const;
+  bool Finished() const;
 
 private:
   friend class cmUVProcessChainBuilder;

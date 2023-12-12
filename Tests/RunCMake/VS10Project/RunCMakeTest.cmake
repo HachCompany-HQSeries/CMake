@@ -8,6 +8,12 @@ if(CMAKE_C_COMPILER_ID STREQUAL "MSVC" AND CMAKE_C_COMPILER_VERSION VERSION_GREA
 endif()
 
 run_cmake(CustomCommandGenex)
+if(NOT RunCMake_GENERATOR MATCHES "^Visual Studio 1[1-5] ")
+  run_cmake(CustomCommandParallel)
+endif()
+run_cmake_with_options(VsCharacterSet -DSET_CHARSET=MultiByte)
+run_cmake_with_options(VsCharacterSet -DSET_CHARSET=Unicode)
+run_cmake_with_options(VsCharacterSet -DSET_CHARSET=NotSet)
 run_cmake(VsCsharpSourceGroup)
 run_cmake(VsCSharpCompilerOpts)
 run_cmake(ExplicitCMakeLists)
