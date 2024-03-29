@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
@@ -909,8 +910,7 @@ std::string cmLocalGenerator::GetIncludeFlags(
   for (std::string const& i : includes) {
     if (cmNonempty(fwSearchFlag) && this->Makefile->IsOn("APPLE") &&
         cmSystemTools::IsPathToFramework(i)) {
-      std::string const frameworkDir =
-        cmSystemTools::CollapseFullPath(cmStrCat(i, "/../"));
+      std::string const frameworkDir = cmSystemTools::GetFilenamePath(i);
       if (emitted.insert(frameworkDir).second) {
         if (sysFwSearchFlag && target &&
             target->IsSystemIncludeDirectory(frameworkDir, config, lang)) {
@@ -1366,7 +1366,7 @@ std::vector<BT<std::string>> cmLocalGenerator::GetStaticLibraryFlags(
 {
   const std::string configUpper = cmSystemTools::UpperCase(config);
   std::vector<BT<std::string>> flags;
-  if (linkLanguage != "Swift") {
+  if (linkLanguage != "Swift" && !this->IsSplitSwiftBuild()) {
     std::string staticLibFlags;
     this->AppendFlags(
       staticLibFlags,
@@ -2011,14 +2011,49 @@ void cmLocalGenerator::AddArchitectureFlags(std::string& flags,
 
     cmValue deploymentTarget =
       this->Makefile->GetDefinition("CMAKE_OSX_DEPLOYMENT_TARGET");
-    std::string deploymentTargetFlagVar =
-      "CMAKE_" + lang + "_OSX_DEPLOYMENT_TARGET_FLAG";
-    cmValue deploymentTargetFlag =
-      this->Makefile->GetDefinition(deploymentTargetFlagVar);
-    if (cmNonempty(deploymentTargetFlag) && cmNonempty(deploymentTarget)) {
-      flags += " ";
-      flags += *deploymentTargetFlag;
-      flags += *deploymentTarget;
+    if (cmNonempty(deploymentTarget)) {
+      std::string deploymentTargetFlagVar =
+        "CMAKE_" + lang + "_OSX_DEPLOYMENT_TARGET_FLAG";
+      cmValue deploymentTargetFlag =
+        this->Makefile->GetDefinition(deploymentTargetFlagVar);
+      if (cmNonempty(deploymentTargetFlag) &&
+          // CMAKE_<LANG>_COMPILER_TARGET overrides a --target= for
+          // CMAKE_OSX_DEPLOYMENT_TARGET, e.g., for visionOS.
+          (!cmHasLiteralPrefix(*deploymentTarget, "--target=") ||
+           this->Makefile
+             ->GetDefinition(cmStrCat("CMAKE_", lang, "_COMPILER_TARGET"))
+             .IsEmpty())) {
+        std::string flag = *deploymentTargetFlag;
+
+        // Add the deployment target architecture to the flag, if needed.
+        static const std::string kARCH = "<ARCH>";
+        std::string::size_type archPos = flag.find(kARCH);
+        if (archPos != std::string::npos) {
+          // This placeholder is meant for visionOS, so default to arm64
+          // unless only non-arm64 archs are given.
+          std::string const arch =
+            (archs.empty() || cm::contains(archs, "arm64")) ? "arm64"
+                                                            : archs[0];
+          // Replace the placeholder with its value.
+          flag = cmStrCat(flag.substr(0, archPos), arch,
+                          flag.substr(archPos + kARCH.size()));
+        }
+
+        // Add the deployment target version to the flag.
+        static const std::string kVERSION_MIN = "<VERSION_MIN>";
+        std::string::size_type verPos = flag.find(kVERSION_MIN);
+        if (verPos != std::string::npos) {
+          // Replace the placeholder with its value.
+          flag = cmStrCat(flag.substr(0, verPos), *deploymentTarget,
+                          flag.substr(verPos + kVERSION_MIN.size()));
+        } else {
+          // There is no placeholder, so append the value.
+          flag = cmStrCat(flag, *deploymentTarget);
+        }
+
+        flags += " ";
+        flags += flag;
+      }
     }
   }
 }
@@ -2829,15 +2864,10 @@ void cmLocalGenerator::AddPchDependencies(cmGeneratorTarget* target)
                   cm::nullopt, true);
               } else if (reuseTarget->GetType() ==
                          cmStateEnums::OBJECT_LIBRARY) {
-                // FIXME: This can propagate more than one level, unlike
-                // the rest of the object files in an object library.
-                // Find another way to do this.
                 target->Target->AppendProperty(
                   "INTERFACE_LINK_LIBRARIES",
                   cmStrCat("$<$<CONFIG:", config,
                            ">:$<LINK_ONLY:", pchSourceObj, ">>"));
-                // We updated the link interface, so ensure it is recomputed.
-                target->ClearLinkInterfaceCache();
               }
             }
           } else {
@@ -3018,6 +3048,12 @@ cm::optional<cmSwiftCompileMode> cmLocalGenerator::GetSwiftCompileMode(
     return cmSwiftCompileMode::Incremental;
   }
   return cmSwiftCompileMode::Unknown;
+}
+
+bool cmLocalGenerator::IsSplitSwiftBuild() const
+{
+  return cmNonempty(this->GetMakefile()->GetDefinition(
+    "CMAKE_Swift_COMPILATION_MODE_DEFAULT"));
 }
 
 namespace {
@@ -3201,9 +3237,19 @@ void cmLocalGenerator::AddUnityBuild(cmGeneratorTarget* target)
 
   for (size_t ci = 0; ci < configs.size(); ++ci) {
     // FIXME: Refactor collection of sources to not evaluate object libraries.
+    // Their final set of object files might be transformed by unity builds.
     std::vector<cmSourceFile*> sources;
     target->GetSourceFiles(sources, configs[ci]);
     for (cmSourceFile* sf : sources) {
+      // Files which need C++ scanning cannot participate in unity builds as
+      // there is a single place in TUs that may perform module-dependency bits
+      // and a unity source cannot `#include` them in-order and represent a
+      // valid TU.
+      if (sf->GetLanguage() == "CXX"_s &&
+          target->NeedDyndepForSource("CXX", configs[ci], sf)) {
+        continue;
+      }
+
       auto mi = index.find(sf);
       if (mi == index.end()) {
         unitySources.emplace_back(sf);
@@ -3311,10 +3357,22 @@ void cmLocalGenerator::AppendLinkerTypeFlags(std::string& flags,
       this->AppendFlags(flags, linkerFlags);
     }
   } else if (linkerType != "DEFAULT"_s) {
-    this->IssueMessage(MessageType::FATAL_ERROR,
-                       cmStrCat("LINKER_TYPE '", linkerType,
-                                "' is unknown. Did you forgot to define '",
-                                usingLinker, "' variable?"));
+    auto isCMakeLinkerType = [](const std::string& type) -> bool {
+      return std::all_of(type.cbegin(), type.cend(),
+                         [](char c) { return std::isupper(c); });
+    };
+    if (isCMakeLinkerType(linkerType)) {
+      this->IssueMessage(
+        MessageType::FATAL_ERROR,
+        cmStrCat("LINKER_TYPE '", linkerType,
+                 "' is unknown or not supported by this toolchain."));
+    } else {
+      this->IssueMessage(
+        MessageType::FATAL_ERROR,
+        cmStrCat("LINKER_TYPE '", linkerType,
+                 "' is unknown. Did you forget to define the '", usingLinker,
+                 "' variable?"));
+    }
   }
 }
 
@@ -3366,7 +3424,7 @@ void cmLocalGenerator::AppendPositionIndependentLinkerFlags(
   const std::string mode = cmIsOn(PICValue) ? "PIE" : "NO_PIE";
 
   std::string supported = "CMAKE_" + lang + "_LINK_" + mode + "_SUPPORTED";
-  if (cmIsOff(this->Makefile->GetDefinition(supported))) {
+  if (this->Makefile->GetDefinition(supported).IsOff()) {
     return;
   }
 

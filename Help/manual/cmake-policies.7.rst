@@ -51,12 +51,25 @@ The :variable:`CMAKE_MINIMUM_REQUIRED_VERSION` variable may also be used
 to determine whether to report an error on use of deprecated macros or
 functions.
 
+Policies Introduced by CMake 3.30
+=================================
+
+.. toctree::
+   :maxdepth: 1
+
+   CMP0163: The GENERATED source file property is now visible in all directories. </policy/CMP0163>
+   CMP0162: Visual Studio generators add UseDebugLibraries indicators by default. </policy/CMP0162>
+
 Policies Introduced by CMake 3.29
 =================================
 
 .. toctree::
    :maxdepth: 1
 
+   CMP0161: CPACK_PRODUCTBUILD_DOMAINS defaults to true. </policy/CMP0161>
+   CMP0160: More read-only target properties now error when trying to set them. </policy/CMP0160>
+   CMP0159: file(STRINGS) with REGEX updates CMAKE_MATCH_<n>. </policy/CMP0159>
+   CMP0158: add_test() honors CMAKE_CROSSCOMPILING_EMULATOR only when cross-compiling. </policy/CMP0158>
    CMP0157: Swift compilation mode is selected by an abstraction. </policy/CMP0157>
    CMP0156: De-duplicate libraries on link lines based on linker capabilities. </policy/CMP0156>
 
@@ -159,7 +172,7 @@ Policies Introduced by CMake 3.20
 
    CMP0120: The WriteCompilerDetectionHeader module is removed. </policy/CMP0120>
    CMP0119: LANGUAGE source file property explicitly compiles as language. </policy/CMP0119>
-   CMP0118: The GENERATED source file property is now visible in all directories. </policy/CMP0118>
+   CMP0118: GENERATED sources may be used across directories without manual marking. </policy/CMP0118>
    CMP0117: MSVC RTTI flag /GR is not added to CMAKE_CXX_FLAGS by default. </policy/CMP0117>
    CMP0116: Ninja generators transform DEPFILEs from add_custom_command(). </policy/CMP0116>
    CMP0115: Source file extensions must be explicit. </policy/CMP0115>

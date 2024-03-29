@@ -727,7 +727,10 @@ public:
    */
   void ClearSourcesCache();
 
-  // Do not use.  This is only for a specific call site with a FIXME comment.
+  /**
+   * Clears cached evaluations of INTERFACE_LINK_LIBRARIES.
+   * They will be recomputed on demand.
+   */
   void ClearLinkInterfaceCache();
 
   void AddSource(const std::string& src, bool before = false);
@@ -804,6 +807,9 @@ public:
   std::string GetLinkerTool(const std::string& config) const;
   std::string GetLinkerTool(const std::string& lang,
                             const std::string& config) const;
+
+  /** Is the linker known to enforce '--no-allow-shlib-undefined'? */
+  bool LinkerEnforcesNoAllowShLibUndefined(std::string const& config) const;
 
   /** Does this target have a GNU implib to convert to MS format?  */
   bool HasImplibGNUtoMS(std::string const& config) const;

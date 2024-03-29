@@ -2333,10 +2333,13 @@ Export And Install Expressions
 
   Content of the install prefix when the target is exported via
   :command:`install(EXPORT)`, or when evaluated in the
-  :prop_tgt:`INSTALL_NAME_DIR` property, the ``INSTALL_NAME_DIR`` argument of
-  :command:`install(RUNTIME_DEPENDENCY_SET)`, the code argument of
-  :command:`install(CODE)`, or the file argument of :command:`install(SCRIPT)`,
-  and empty otherwise.
+  :prop_tgt:`INSTALL_NAME_DIR` property or the ``INSTALL_NAME_DIR`` argument of
+  :command:`install(RUNTIME_DEPENDENCY_SET)`, and empty otherwise.
+
+  .. versionchanged:: 3.27
+    Evaluates to the content of the install prefix
+    in the code argument of :command:`install(CODE)` or
+    the file argument of :command:`install(SCRIPT)`.
 
 Multi-level Expression Evaluation
 ---------------------------------
@@ -2406,6 +2409,13 @@ special meaning.
 .. genex:: $<SEMICOLON>
 
   A literal ``;``. Used to prevent list expansion on an argument with ``;``.
+
+.. genex:: $<QUOTE>
+
+  .. versionadded:: 3.30
+
+  A literal ``"``. Used to allow string literal quotes inside a generator expression.
+
 
 Deprecated Expressions
 ----------------------

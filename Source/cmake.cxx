@@ -27,7 +27,6 @@
 #include "cmsys/Glob.hxx"
 #include "cmsys/RegularExpression.hxx"
 
-#include "cm_fileno.hxx"
 #include "cm_sys_stat.h"
 
 #include "cmBuildOptions.h"
@@ -49,6 +48,7 @@
 #include "cmExternalMakefileProjectGenerator.h"
 #include "cmFileTimeCache.h"
 #include "cmGeneratorTarget.h"
+#include "cmGlobCacheEntry.h"
 #include "cmGlobalGenerator.h"
 #include "cmGlobalGeneratorFactory.h"
 #include "cmLinkLineComputer.h"
@@ -1576,14 +1576,15 @@ void cmake::SetArgs(const std::vector<std::string>& args)
     if (!expandedPreset->ArchitectureStrategy ||
         expandedPreset->ArchitectureStrategy ==
           cmCMakePresetsGraph::ArchToolsetStrategy::Set) {
-      if (!this->GeneratorPlatformSet) {
+      if (!this->GeneratorPlatformSet &&
+          !expandedPreset->Architecture.empty()) {
         this->SetGeneratorPlatform(expandedPreset->Architecture);
       }
     }
     if (!expandedPreset->ToolsetStrategy ||
         expandedPreset->ToolsetStrategy ==
           cmCMakePresetsGraph::ArchToolsetStrategy::Set) {
-      if (!this->GeneratorToolsetSet) {
+      if (!this->GeneratorToolsetSet && !expandedPreset->Toolset.empty()) {
         this->SetGeneratorToolset(expandedPreset->Toolset);
       }
     }
@@ -2346,16 +2347,16 @@ int cmake::Configure()
   // so we cannot rely on command line options alone. Always ensure our
   // messenger is in sync with the cache.
   cmValue value = this->State->GetCacheEntryValue("CMAKE_WARN_DEPRECATED");
-  this->Messenger->SetSuppressDeprecatedWarnings(value && cmIsOff(*value));
+  this->Messenger->SetSuppressDeprecatedWarnings(value && value.IsOff());
 
   value = this->State->GetCacheEntryValue("CMAKE_ERROR_DEPRECATED");
-  this->Messenger->SetDeprecatedWarningsAsErrors(cmIsOn(value));
+  this->Messenger->SetDeprecatedWarningsAsErrors(value.IsOn());
 
   value = this->State->GetCacheEntryValue("CMAKE_SUPPRESS_DEVELOPER_WARNINGS");
-  this->Messenger->SetSuppressDevWarnings(cmIsOn(value));
+  this->Messenger->SetSuppressDevWarnings(value.IsOn());
 
   value = this->State->GetCacheEntryValue("CMAKE_SUPPRESS_DEVELOPER_ERRORS");
-  this->Messenger->SetDevWarningsAsErrors(value && cmIsOff(*value));
+  this->Messenger->SetDevWarningsAsErrors(value && value.IsOff());
 
   int ret = this->ActualConfigure();
   cmValue delCacheVars =
@@ -2819,7 +2820,7 @@ int cmake::Run(const std::vector<std::string>& args, bool noconfigure)
     if (cmSystemTools::GetErrorOccurredFlag()) {
       return -1;
     }
-    return 0;
+    return this->HasScriptModeExitCode() ? this->GetScriptModeExitCode() : 0;
   }
 
   // If MAKEFLAGS are given in the environment, remove the environment
@@ -2924,13 +2925,13 @@ void cmake::AddCacheEntry(const std::string& key, cmValue value,
   this->UnwatchUnusedCli(key);
 
   if (key == "CMAKE_WARN_DEPRECATED"_s) {
-    this->Messenger->SetSuppressDeprecatedWarnings(value && cmIsOff(value));
+    this->Messenger->SetSuppressDeprecatedWarnings(value && value.IsOff());
   } else if (key == "CMAKE_ERROR_DEPRECATED"_s) {
-    this->Messenger->SetDeprecatedWarningsAsErrors(cmIsOn(value));
+    this->Messenger->SetDeprecatedWarningsAsErrors(value.IsOn());
   } else if (key == "CMAKE_SUPPRESS_DEVELOPER_WARNINGS"_s) {
-    this->Messenger->SetSuppressDevWarnings(cmIsOn(value));
+    this->Messenger->SetSuppressDevWarnings(value.IsOn());
   } else if (key == "CMAKE_SUPPRESS_DEVELOPER_ERRORS"_s) {
-    this->Messenger->SetDevWarningsAsErrors(value && cmIsOff(value));
+    this->Messenger->SetDevWarningsAsErrors(value && value.IsOff());
   }
 }
 
@@ -2949,16 +2950,17 @@ std::string const& cmake::GetGlobVerifyStamp() const
   return this->State->GetGlobVerifyStamp();
 }
 
-void cmake::AddGlobCacheEntry(bool recurse, bool listDirectories,
-                              bool followSymlinks, const std::string& relative,
-                              const std::string& expression,
-                              const std::vector<std::string>& files,
+void cmake::AddGlobCacheEntry(const cmGlobCacheEntry& entry,
                               const std::string& variable,
                               cmListFileBacktrace const& backtrace)
 {
-  this->State->AddGlobCacheEntry(recurse, listDirectories, followSymlinks,
-                                 relative, expression, files, variable,
-                                 backtrace, this->Messenger.get());
+  this->State->AddGlobCacheEntry(entry, variable, backtrace,
+                                 this->Messenger.get());
+}
+
+std::vector<cmGlobCacheEntry> cmake::GetGlobCacheEntries() const
+{
+  return this->State->GetGlobCacheEntries();
 }
 
 std::vector<std::string> cmake::GetAllExtensions() const
@@ -3769,7 +3771,7 @@ int cmake::Build(int jobs, std::string dir, std::vector<std::string> targets,
   }
   projName = *cachedProjectName;
 
-  if (cmIsOn(this->State->GetCacheEntryValue("CMAKE_VERBOSE_MAKEFILE"))) {
+  if (this->State->GetCacheEntryValue("CMAKE_VERBOSE_MAKEFILE").IsOn()) {
     verbose = true;
   }
 
@@ -3933,10 +3935,8 @@ std::function<int()> cmake::BuildWorkflowStep(
 {
   cmUVProcessChainBuilder builder;
   builder.AddCommand(args)
-    .SetExternalStream(cmUVProcessChainBuilder::Stream_OUTPUT,
-                       cm_fileno(stdout))
-    .SetExternalStream(cmUVProcessChainBuilder::Stream_ERROR,
-                       cm_fileno(stderr));
+    .SetExternalStream(cmUVProcessChainBuilder::Stream_OUTPUT, stdout)
+    .SetExternalStream(cmUVProcessChainBuilder::Stream_ERROR, stderr);
   return [builder]() -> int {
     auto chain = builder.Start();
     chain.Wait();

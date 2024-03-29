@@ -94,8 +94,10 @@ find_package(PkgConfig QUIET)
 if(PKG_CONFIG_FOUND)
   pkg_check_modules(PC_CURL QUIET libcurl)
   if(PC_CURL_FOUND)
-    pkg_get_variable(CURL_SUPPORTED_PROTOCOLS libcurl supported_protocols)
-    pkg_get_variable(CURL_SUPPORTED_FEATURES libcurl supported_features)
+    pkg_get_variable(CURL_SUPPORTED_PROTOCOLS_STRING libcurl supported_protocols)
+    string(REPLACE " " ";" CURL_SUPPORTED_PROTOCOLS "${CURL_SUPPORTED_PROTOCOLS_STRING}")
+    pkg_get_variable(CURL_SUPPORTED_FEATURES_STRING libcurl supported_features)
+    string(REPLACE " " ";" CURL_SUPPORTED_FEATURES "${CURL_SUPPORTED_FEATURES_STRING}")
   endif()
 endif()
 
@@ -115,6 +117,8 @@ if(NOT CURL_LIBRARY)
       curllib_static
     # Windows older "Win32 - MSVC" prebuilts (libcurl.lib, e.g. libcurl-7.15.5-win32-msvc.zip):
       libcurl
+    # Some Windows prebuilt versions distribute `libcurl_a.lib` instead of `libcurl.lib`
+      libcurl_a
       NAMES_PER_DIR
       HINTS ${PC_CURL_LIBRARY_DIRS}
   )

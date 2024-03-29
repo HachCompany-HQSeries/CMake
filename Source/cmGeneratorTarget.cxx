@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cctype>
 #include <cerrno>
 #include <cstddef>
 #include <cstdio>
@@ -917,7 +918,7 @@ bool cmGeneratorTarget::IsIPOEnabled(std::string const& lang,
 {
   cmValue feature = this->GetFeature("INTERPROCEDURAL_OPTIMIZATION", config);
 
-  if (!cmIsOn(feature)) {
+  if (!feature.IsOn()) {
     // 'INTERPROCEDURAL_OPTIMIZATION' is off, no need to check policies
     return false;
   }
@@ -1083,8 +1084,8 @@ cmValue cmGeneratorTarget::GetLanguageExtensions(std::string const& lang) const
 bool cmGeneratorTarget::GetLanguageStandardRequired(
   std::string const& lang) const
 {
-  return cmIsOn(
-    this->GetPropertyWithPairedLanguageSupport(lang, "_STANDARD_REQUIRED"));
+  return this->GetPropertyWithPairedLanguageSupport(lang, "_STANDARD_REQUIRED")
+    .IsOn();
 }
 
 void cmGeneratorTarget::GetModuleDefinitionSources(
@@ -2421,7 +2422,7 @@ bool cmGeneratorTarget::MacOSXUseInstallNameDir() const
   cmValue build_with_install_name =
     this->GetProperty("BUILD_WITH_INSTALL_NAME_DIR");
   if (build_with_install_name) {
-    return cmIsOn(*build_with_install_name);
+    return build_with_install_name.IsOn();
   }
 
   cmPolicies::PolicyStatus cmp0068 = this->GetPolicyStatusCMP0068();
@@ -3578,7 +3579,7 @@ void cmGeneratorTarget::AddCUDAArchitectureFlagsImpl(cmBuildStep compileOrLink,
 
       flags += "]\"";
     }
-  } else if (compiler == "Clang") {
+  } else if (compiler == "Clang" && compileOrLink == cmBuildStep::Compile) {
     for (CudaArchitecture& architecture : architectures) {
       flags += " --cuda-gpu-arch=sm_" + architecture.name;
 
@@ -5585,15 +5586,40 @@ std::string cmGeneratorTarget::GetLinkerTool(const std::string& lang,
     linkerTool = this->Makefile->GetDefinition("CMAKE_LINKER");
 
     if (linkerType != "DEFAULT"_s) {
-      this->LocalGenerator->IssueMessage(
-        MessageType::FATAL_ERROR,
-        cmStrCat("LINKER_TYPE '", linkerType,
-                 "' is unknown. Did you forgot to define '", usingLinker,
-                 "' variable?"));
+      auto isCMakeLinkerType = [](const std::string& type) -> bool {
+        return std::all_of(type.cbegin(), type.cend(),
+                           [](char c) { return std::isupper(c); });
+      };
+      if (isCMakeLinkerType(linkerType)) {
+        this->LocalGenerator->IssueMessage(
+          MessageType::FATAL_ERROR,
+          cmStrCat("LINKER_TYPE '", linkerType,
+                   "' is unknown or not supported by this toolchain."));
+      } else {
+        this->LocalGenerator->IssueMessage(
+          MessageType::FATAL_ERROR,
+          cmStrCat("LINKER_TYPE '", linkerType,
+                   "' is unknown. Did you forget to define the '", usingLinker,
+                   "' variable?"));
+      }
     }
   }
 
   return linkerTool;
+}
+
+bool cmGeneratorTarget::LinkerEnforcesNoAllowShLibUndefined(
+  std::string const& config) const
+{
+  // FIXME(#25486): Account for the LINKER_TYPE target property.
+  // Also factor out the hard-coded list below into a platform
+  // information table based on the linker id.
+  std::string ll = this->GetLinkerLanguage(config);
+  std::string linkerIdVar = cmStrCat("CMAKE_", ll, "_COMPILER_LINKER_ID");
+  cmValue linkerId = this->Makefile->GetDefinition(linkerIdVar);
+  // The GNU bfd-based linker may enforce '--no-allow-shlib-undefined'
+  // recursively by default.  The Solaris linker has similar behavior.
+  return linkerId && (*linkerId == "GNU" || *linkerId == "Solaris");
 }
 
 std::string cmGeneratorTarget::GetPDBOutputName(
@@ -6742,7 +6768,7 @@ bool cmGeneratorTarget::IsFortranBuildingInstrinsicModules() const
 {
   if (cmValue prop =
         this->GetProperty("Fortran_BUILDING_INSTRINSIC_MODULES")) {
-    return cmIsOn(*prop);
+    return prop.IsOn();
   }
   return false;
 }
@@ -7855,9 +7881,9 @@ void cmGeneratorTarget::ComputeImportInfo(std::string const& desired_config,
   if (this->GetType() == cmStateEnums::SHARED_LIBRARY) {
     std::string soProp = cmStrCat("IMPORTED_NO_SONAME", suffix);
     if (cmValue config_no_soname = this->GetProperty(soProp)) {
-      info.NoSOName = cmIsOn(*config_no_soname);
+      info.NoSOName = config_no_soname.IsOn();
     } else if (cmValue no_soname = this->GetProperty("IMPORTED_NO_SONAME")) {
-      info.NoSOName = cmIsOn(*no_soname);
+      info.NoSOName = no_soname.IsOn();
     }
   }
 
@@ -8403,14 +8429,14 @@ bool cmGeneratorTarget::DiscoverSyntheticTargets(cmSyntheticTargetCache& cache,
     }
 
     if (gt->HaveCxx20ModuleSources()) {
-      auto hasher = cmCryptoHash::New("SHA3_512");
+      cmCryptoHash hasher(cmCryptoHash::AlgoSHA3_512);
       constexpr size_t HASH_TRUNCATION = 12;
-      auto dirhash = hasher->HashString(
+      auto dirhash = hasher.HashString(
         gt->GetLocalGenerator()->GetCurrentBinaryDirectory());
       std::string safeName = gt->GetName();
       cmSystemTools::ReplaceString(safeName, ":", "_");
       auto targetIdent =
-        hasher->HashString(cmStrCat("@d_", dirhash, "@u_", usage.GetHash()));
+        hasher.HashString(cmStrCat("@d_", dirhash, "@u_", usage.GetHash()));
       std::string targetName =
         cmStrCat(safeName, "@synth_", targetIdent.substr(0, HASH_TRUNCATION));
 
@@ -8463,6 +8489,8 @@ bool cmGeneratorTarget::DiscoverSyntheticTargets(cmSyntheticTargetCache& cache,
         // Create the generator target and attach it to the local generator.
         auto gtp = cm::make_unique<cmGeneratorTarget>(tgt, lg);
         synthDep = gtp.get();
+        cache.CxxModuleTargets[targetName] = synthDep;
+        gtp->DiscoverSyntheticTargets(cache, config);
         lg->AddGeneratorTarget(std::move(gtp));
       } else {
         synthDep = cached->second;
@@ -8860,11 +8888,23 @@ bool cmGeneratorTarget::IsFrameworkOnApple() const
 bool cmGeneratorTarget::IsImportedFrameworkFolderOnApple(
   const std::string& config) const
 {
-  return this->IsApple() && this->IsImported() &&
-    (this->GetType() == cmStateEnums::STATIC_LIBRARY ||
-     this->GetType() == cmStateEnums::SHARED_LIBRARY ||
-     this->GetType() == cmStateEnums::UNKNOWN_LIBRARY) &&
-    cmSystemTools::IsPathToFramework(this->GetLocation(config));
+  if (this->IsApple() && this->IsImported() &&
+      (this->GetType() == cmStateEnums::STATIC_LIBRARY ||
+       this->GetType() == cmStateEnums::SHARED_LIBRARY ||
+       this->GetType() == cmStateEnums::UNKNOWN_LIBRARY)) {
+    std::string cfg = config;
+    if (cfg.empty() && this->GetGlobalGenerator()->IsXcode()) {
+      // FIXME(#25515): Remove the need for this workaround.
+      // The Xcode generator queries include directories without any
+      // specific configuration.  Pick one in case this target does
+      // not set either IMPORTED_LOCATION or IMPORTED_CONFIGURATIONS.
+      cfg =
+        this->Makefile->GetGeneratorConfigs(cmMakefile::IncludeEmptyConfig)[0];
+    }
+    return cmSystemTools::IsPathToFramework(this->GetLocation(cfg));
+  }
+
+  return false;
 }
 
 bool cmGeneratorTarget::IsAppBundleOnApple() const
@@ -9519,7 +9559,8 @@ void cmGeneratorTarget::BuildFileSetInfoCache(std::string const& config) const
 
     for (auto const& it : files) {
       for (auto const& filename : it.second) {
-        per_config.FileSetCache[filename] = file_set;
+        auto collapsedFile = cmSystemTools::CollapseFullPath(filename);
+        per_config.FileSetCache[collapsedFile] = file_set;
       }
     }
   }

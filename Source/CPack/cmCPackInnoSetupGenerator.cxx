@@ -7,7 +7,6 @@ file Copyright.txt or https://cmake.org/licensing for details. */
 #include <cctype>
 #include <cstdlib>
 #include <ostream>
-#include <stack>
 #include <utility>
 
 #include "cmsys/RegularExpression.hxx"
@@ -35,7 +34,7 @@ bool cmCPackInnoSetupGenerator::CanGenerate()
 
 int cmCPackInnoSetupGenerator::InitializeInternal()
 {
-  if (cmIsOn(GetOption("CPACK_INCLUDE_TOPLEVEL_DIRECTORY"))) {
+  if (GetOption("CPACK_INCLUDE_TOPLEVEL_DIRECTORY").IsOn()) {
     cmCPackLogger(cmCPackLog::LOG_WARNING,
                   "Inno Setup Generator cannot work with "
                   "CPACK_INCLUDE_TOPLEVEL_DIRECTORY set. "
@@ -613,7 +612,6 @@ bool cmCPackInnoSetupGenerator::ProcessComponents()
 
   // Components
   std::vector<cmCPackComponent*> downloadedComponents;
-  std::stack<cmCPackComponentGroup*> groups;
   for (auto& i : Components) {
     cmCPackInnoSetupKeyValuePairs params;
     cmCPackComponent* component = &i.second;
@@ -940,7 +938,7 @@ bool cmCPackInnoSetupGenerator::BuildDownloadedComponentArchive(
   // Build the list of files to go into this archive
   const std::string& zipListFileName =
     cmStrCat(GetOption("CPACK_TEMPORARY_DIRECTORY"), "/winZip.filelist");
-  const bool needQuotesInFile = cmIsOn(GetOption("CPACK_ZIP_NEED_QUOTES"));
+  const bool needQuotesInFile = GetOption("CPACK_ZIP_NEED_QUOTES").IsOn();
   { // the scope is needed for cmGeneratedFileStream
     cmGeneratedFileStream out(zipListFileName);
     for (const std::string& i : component->Files) {

@@ -225,7 +225,7 @@ bool DebGenerator::generateDataTar() const
       // XXX/application/usr/bin/myprogram with GEN_WDIR=XXX/application
       // should not add XXX/application
       orderedFiles.insert(currentPath);
-      currentPath = cmSystemTools::CollapseFullPath("..", currentPath);
+      currentPath = cmSystemTools::GetFilenamePath(currentPath);
     }
   }
 
@@ -527,7 +527,7 @@ cmCPackDebGenerator::~cmCPackDebGenerator() = default;
 int cmCPackDebGenerator::InitializeInternal()
 {
   this->SetOptionIfNotSet("CPACK_PACKAGING_INSTALL_PREFIX", "/usr");
-  if (cmIsOff(this->GetOption("CPACK_SET_DESTDIR"))) {
+  if (this->GetOption("CPACK_SET_DESTDIR").IsOff()) {
     this->SetOption("CPACK_SET_DESTDIR", "I_ON");
   }
   return this->Superclass::InitializeInternal();

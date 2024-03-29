@@ -2,7 +2,6 @@
    file Copyright.txt or https://cmake.org/licensing for details.  */
 #include "cmExecuteProcessCommand.h"
 
-#include <cctype> /* isspace */
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -17,8 +16,6 @@
 #include <cmext/string_view>
 
 #include <cm3p/uv.h>
-
-#include "cm_fileno.hxx"
 
 #include "cmArgumentParser.h"
 #include "cmExecutionStatus.h"
@@ -35,7 +32,7 @@
 namespace {
 bool cmExecuteProcessCommandIsWhitespace(char c)
 {
-  return (isspace(static_cast<int>(c)) || c == '\n' || c == '\r');
+  return (cmIsSpace(c) || c == '\n' || c == '\r');
 }
 
 void cmExecuteProcessCommandFixText(std::vector<char>& output,
@@ -184,11 +181,10 @@ bool cmExecuteProcessCommand(std::vector<std::string> const& args,
     inputFile.reset(cmsys::SystemTools::Fopen(inputFilename, "rb"));
     if (inputFile) {
       builder.SetExternalStream(cmUVProcessChainBuilder::Stream_INPUT,
-                                cm_fileno(inputFile.get()));
+                                inputFile.get());
     }
   } else {
-    builder.SetExternalStream(cmUVProcessChainBuilder::Stream_INPUT,
-                              cm_fileno(stdin));
+    builder.SetExternalStream(cmUVProcessChainBuilder::Stream_INPUT, stdin);
   }
 
   std::unique_ptr<FILE, int (*)(FILE*)> outputFile(nullptr, fclose);
@@ -196,7 +192,7 @@ bool cmExecuteProcessCommand(std::vector<std::string> const& args,
     outputFile.reset(cmsys::SystemTools::Fopen(outputFilename, "wb"));
     if (outputFile) {
       builder.SetExternalStream(cmUVProcessChainBuilder::Stream_OUTPUT,
-                                cm_fileno(outputFile.get()));
+                                outputFile.get());
     }
   } else {
     if (arguments.OutputVariable == arguments.ErrorVariable &&
@@ -212,13 +208,13 @@ bool cmExecuteProcessCommand(std::vector<std::string> const& args,
     if (errorFilename == outputFilename) {
       if (outputFile) {
         builder.SetExternalStream(cmUVProcessChainBuilder::Stream_ERROR,
-                                  cm_fileno(outputFile.get()));
+                                  outputFile.get());
       }
     } else {
       errorFile.reset(cmsys::SystemTools::Fopen(errorFilename, "wb"));
       if (errorFile) {
         builder.SetExternalStream(cmUVProcessChainBuilder::Stream_ERROR,
-                                  cm_fileno(errorFile.get()));
+                                  errorFile.get());
       }
     }
   } else if (arguments.ErrorVariable.empty() ||

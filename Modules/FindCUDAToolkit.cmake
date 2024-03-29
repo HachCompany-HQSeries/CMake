@@ -123,6 +123,8 @@ of the following libraries that are part of the CUDAToolkit:
 - :ref:`nvidia-ML<cuda_toolkit_nvML>`
 - :ref:`nvPTX Compiler<cuda_toolkit_nvptx>`
 - :ref:`nvRTC<cuda_toolkit_nvRTC>`
+- :ref:`nvJitLink<cuda_toolkit_nvJitLink>`
+- :ref:`nvFatBin<cuda_toolkit_nvfatbin>`
 - :ref:`nvToolsExt<cuda_toolkit_nvToolsExt>`
 - :ref:`nvtx3<cuda_toolkit_nvtx3>`
 - :ref:`OpenCL<cuda_toolkit_opencl>`
@@ -417,6 +419,20 @@ Targets Created:
 
 - ``CUDA::nvJitLink`` starting in CUDA 12.0
 - ``CUDA::nvJitLink_static``  starting in CUDA 12.0
+
+.. _`cuda_toolkit_nvfatbin`:
+
+nvFatBin
+"""""""""
+
+.. versionadded:: 3.30
+
+The `nvFatBin <https://docs.nvidia.com/cuda/>`_ (Runtime fatbin creation) library.
+
+Targets Created:
+
+- ``CUDA::nvfatbin`` starting in CUDA 12.4
+- ``CUDA::nvfatbin_static``  starting in CUDA 12.4
 
 .. _`cuda_toolkit_nvml`:
 
@@ -1100,7 +1116,10 @@ if(CUDAToolkit_FOUND)
     if(CUDA_${lib_name}_LIBRARY MATCHES "/stubs/" AND NOT WIN32)
       # Use a SHARED library with IMPORTED_IMPLIB, but not IMPORTED_LOCATION,
       # to indicate that the stub is for linkers but not dynamic loaders.
-      # It will not contribute any RPATH entry.
+      # It will not contribute any RPATH entry.  When encountered as
+      # a private transitive dependency of another shared library,
+      # it will be passed explicitly to linkers so they can find it
+      # even when the runtime library file does not exist on disk.
       set(CUDA_IMPORT_PROPERTY IMPORTED_IMPLIB)
       set(CUDA_IMPORT_TYPE     SHARED)
     endif()
@@ -1134,20 +1153,11 @@ if(CUDAToolkit_FOUND)
     target_link_directories(CUDA::toolkit INTERFACE "${CUDAToolkit_LIBRARY_DIR}")
   endif()
 
-  _CUDAToolkit_find_and_add_import_lib(cuda_driver ALT cuda)
-
-  _CUDAToolkit_find_and_add_import_lib(cudart)
-  _CUDAToolkit_find_and_add_import_lib(cudart_static)
-
-  # setup dependencies that are required for cudart_static when building
+  # setup dependencies that are required for cudart/cudart_static when building
   # on linux. These are generally only required when using the CUDA toolkit
   # when CUDA language is disabled
-  if(NOT TARGET CUDA::cudart_static_deps
-     AND TARGET CUDA::cudart_static)
-
+  if(NOT TARGET CUDA::cudart_static_deps)
     add_library(CUDA::cudart_static_deps IMPORTED INTERFACE)
-    target_link_libraries(CUDA::cudart_static INTERFACE CUDA::cudart_static_deps)
-
     if(UNIX AND (CMAKE_C_COMPILER OR CMAKE_CXX_COMPILER))
       find_package(Threads REQUIRED)
       target_link_libraries(CUDA::cudart_static_deps INTERFACE Threads::Threads ${CMAKE_DL_LIBS})
@@ -1165,9 +1175,18 @@ if(CUDAToolkit_FOUND)
     endif()
   endif()
 
+  _CUDAToolkit_find_and_add_import_lib(cuda_driver ALT cuda DEPS cudart_static_deps)
+  _CUDAToolkit_find_and_add_import_lib(cudart DEPS cudart_static_deps)
+  _CUDAToolkit_find_and_add_import_lib(cudart_static DEPS cudart_static_deps)
+
   if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 12.0.0)
     _CUDAToolkit_find_and_add_import_lib(nvJitLink)
     _CUDAToolkit_find_and_add_import_lib(nvJitLink_static DEPS cudart_static_deps)
+  endif()
+
+  if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 12.4.0)
+    _CUDAToolkit_find_and_add_import_lib(nvfatbin DEPS cudart_static_deps)
+    _CUDAToolkit_find_and_add_import_lib(nvfatbin_static DEPS cudart_static_deps)
   endif()
 
   _CUDAToolkit_find_and_add_import_lib(culibos) # it's a static library
@@ -1283,17 +1302,17 @@ if(CUDAToolkit_FOUND)
 
   if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 11.1.0)
     if(NOT TARGET CUDA::nvptxcompiler_static)
-      _CUDAToolkit_find_and_add_import_lib(nvptxcompiler_static DEPS cuda_driver)
+      _CUDAToolkit_find_and_add_import_lib(nvptxcompiler_static)
       if(TARGET CUDA::nvptxcompiler_static)
         target_link_libraries(CUDA::nvptxcompiler_static INTERFACE CUDA::cudart_static_deps)
       endif()
     endif()
   endif()
 
-  _CUDAToolkit_find_and_add_import_lib(nvrtc_builtins ALT nvrtc-builtins DEPS cuda_driver)
+  _CUDAToolkit_find_and_add_import_lib(nvrtc_builtins ALT nvrtc-builtins)
   _CUDAToolkit_find_and_add_import_lib(nvrtc DEPS nvrtc_builtins nvJitLink)
   if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 11.5.0)
-    _CUDAToolkit_find_and_add_import_lib(nvrtc_builtins_static ALT nvrtc-builtins_static DEPS cuda_driver)
+    _CUDAToolkit_find_and_add_import_lib(nvrtc_builtins_static ALT nvrtc-builtins_static)
     if(NOT TARGET CUDA::nvrtc_static)
       _CUDAToolkit_find_and_add_import_lib(nvrtc_static DEPS nvrtc_builtins_static nvptxcompiler_static nvJitLink_static)
       if(TARGET CUDA::nvrtc_static AND WIN32 AND NOT (BORLAND OR MINGW OR CYGWIN))

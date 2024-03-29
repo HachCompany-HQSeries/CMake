@@ -260,7 +260,7 @@ cmComputeLinkInformation::cmComputeLinkInformation(
   , Config(config)
 {
   // Check whether to recognize OpenBSD-style library versioned names.
-  this->OpenBSD = this->Makefile->GetState()->GetGlobalPropertyAsBool(
+  this->IsOpenBSD = this->Makefile->GetState()->GetGlobalPropertyAsBool(
     "FIND_LIBRARY_USE_OPENBSD_VERSIONING");
 
   // Allocate internals.
@@ -553,7 +553,8 @@ bool cmComputeLinkInformation::Compute()
         this->Target->GetType() == cmStateEnums::MODULE_LIBRARY ||
         this->Target->GetType() == cmStateEnums::STATIC_LIBRARY ||
         (this->Target->CanCompileSources() &&
-         (this->Target->HaveCxx20ModuleSources() ||
+         (this->Target->HaveCxxModuleSupport(this->Config) ==
+            cmGeneratorTarget::Cxx20SupportLevel::Supported ||
           this->Target->HaveFortranSources())))) {
     return false;
   }
@@ -645,7 +646,7 @@ bool cmComputeLinkInformation::Compute()
   // Restore the target link type so the correct system runtime
   // libraries are found.
   cmValue lss = this->Target->GetProperty("LINK_SEARCH_END_STATIC");
-  if (cmIsOn(lss)) {
+  if (lss.IsOn()) {
     this->SetCurrentLinkType(LinkStatic);
   } else {
     this->SetCurrentLinkType(this->StartLinkType);
@@ -1331,7 +1332,17 @@ void cmComputeLinkInformation::AddSharedDepItem(LinkEntry const& entry)
   }
 
   // If in linking mode, just link to the shared library.
-  if (this->SharedDependencyMode == SharedDepModeLink) {
+  if (this->SharedDependencyMode == SharedDepModeLink ||
+      // For an imported shared library without a known runtime artifact,
+      // such as a CUDA stub, a library file named with the real soname
+      // may not be available at all, so '-rpath-link' cannot help linkers
+      // find it to satisfy '--no-allow-shlib-undefined' recursively.
+      // Pass this dependency to the linker explicitly just in case.
+      // If the linker also uses '--as-needed' behavior, this will not
+      // add an unnecessary direct dependency.
+      (tgt && tgt->IsImported() &&
+       !tgt->HasKnownRuntimeArtifactLocation(this->Config) &&
+       this->Target->LinkerEnforcesNoAllowShLibUndefined(this->Config))) {
     this->AddItem(entry);
     return;
   }
@@ -1440,7 +1451,7 @@ void cmComputeLinkInformation::ComputeLinkTypeInfo()
 
   // Lookup the starting link type from the target (linked statically?).
   cmValue lss = this->Target->GetProperty("LINK_SEARCH_START_STATIC");
-  this->StartLinkType = cmIsOn(lss) ? LinkStatic : LinkShared;
+  this->StartLinkType = lss.IsOn() ? LinkStatic : LinkShared;
   this->CurrentLinkType = this->StartLinkType;
 }
 
@@ -1574,7 +1585,7 @@ std::string cmComputeLinkInformation::CreateExtensionRegex(
   libext += ')';
 
   // Add an optional OpenBSD-style version or major.minor.version component.
-  if (this->OpenBSD || type == LinkShared) {
+  if (this->IsOpenBSD || type == LinkShared) {
     libext += "(\\.[0-9]+)*";
   }
 

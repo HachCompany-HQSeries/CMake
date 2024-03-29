@@ -337,12 +337,23 @@
         - msvc-19.36
         - concurrent
 
-.windows_x86_64_tags_concurrent_vs2019:
+.windows_x86_64_tags_concurrent_vs2022_android:
+    tags:
+        - cmake # Since this is a bare runner, pin to a project.
+        - windows-x86_64
+        - shell
+        - vs2022
+        - vs17-android
+        - msvc-19.36
+        - concurrent
+
+.windows_x86_64_tags_concurrent_vs2019_android:
     tags:
         - cmake # Since this is a bare runner, pin to a project.
         - windows-x86_64
         - shell
         - vs2019
+        - vs16-android
         - msvc-19.29-16.11
         - concurrent
 
@@ -376,13 +387,10 @@
 .before_script_windows: &before_script_windows
     - . .gitlab/ci/env.ps1
     - $pwdpath = $pwd.Path
-    - (& "$pwsh" -File ".gitlab/ci/wix.ps1")
-    - Set-Item -Force -Path "env:WIX" -Value "$pwdpath\.gitlab\wix"
     - (& "$pwsh" -File ".gitlab/ci/cmake.ps1")
     - Set-Item -Force -Path "env:PATH" -Value "$pwdpath\.gitlab\cmake\bin;$env:PATH"
     - $cmake = "cmake"
     - . .gitlab/ci/ninja-env.ps1
-    - (& "$env:WIX\bin\light.exe" -help) | Select -First 1
     - cmake --version
     - . .gitlab/ci/qt-env.ps1
     - . .gitlab/ci/python-env.ps1

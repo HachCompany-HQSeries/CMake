@@ -685,6 +685,17 @@ A number of cache variables can influence the behavior where details from a
   any content details, turning this option ``ON`` can significantly speed up
   the configure stage.  It is ``OFF`` by default.
 
+  .. note::
+
+    The ``FETCHCONTENT_FULLY_DISCONNECTED`` variable is not an appropriate way
+    to prevent any network access on the first run in a build directory.
+    Doing so can break projects, lead to misleading error messages, and hide
+    subtle population failures.  This variable is specifically intended to
+    only be turned on *after* the first time CMake has been run.
+    If you want to prevent network access even on the first run, use a
+    :ref:`dependency provider <dependency_providers>` and populate the
+    dependency from local content instead.
+
 .. variable:: FETCHCONTENT_UPDATES_DISCONNECTED
 
   This is a less severe download/update control compared to
@@ -1639,6 +1650,7 @@ ExternalProject_Add_Step(${contentName}-populate copyfile
   set(__FETCHCONTENT_CACHED_INFO "")
   set(__passthrough_vars
     CMAKE_EP_GIT_REMOTE_UPDATE_STRATEGY
+    CMAKE_TLS_VERSION
     CMAKE_TLS_VERIFY
     CMAKE_TLS_CAINFO
     CMAKE_NETRC
@@ -1955,7 +1967,12 @@ macro(FetchContent_MakeAvailable)
           "${__cmake_contentName}"
         )
 
-        list(APPEND __cmake_fcCurrentVarsStack "__fcprefix__${CMAKE_EXPORT_FIND_PACKAGE_NAME}")
+        if(DEFINED CMAKE_EXPORT_FIND_PACKAGE_NAME)
+          list(APPEND __cmake_fcCurrentVarsStack "${CMAKE_EXPORT_FIND_PACKAGE_NAME}")
+        else()
+          # This just needs to be something that can't be a real package name
+          list(APPEND __cmake_fcCurrentVarsStack "<<::VAR_NOT_SET::>>")
+        endif()
         set(CMAKE_EXPORT_FIND_PACKAGE_NAME "${__cmake_contentName}")
 
         # It's still valid if there are no saved details. The project may have
@@ -1975,12 +1992,12 @@ macro(FetchContent_MakeAvailable)
         # This property might be defined but empty. As long as it is defined,
         # find_package() can be called.
         get_property(__cmake_addfpargs GLOBAL PROPERTY
-          _FetchContent_${contentNameLower}_find_package_args
+          _FetchContent_${__cmake_contentNameLower}_find_package_args
           DEFINED
         )
         if(__cmake_addfpargs)
           get_property(__cmake_fpargs GLOBAL PROPERTY
-            _FetchContent_${contentNameLower}_find_package_args
+            _FetchContent_${__cmake_contentNameLower}_find_package_args
           )
           string(APPEND __cmake_providerArgs " FIND_PACKAGE_ARGS")
           foreach(__cmake_item IN LISTS __cmake_fpargs)
@@ -2003,7 +2020,11 @@ macro(FetchContent_MakeAvailable)
         list(POP_BACK __cmake_fcCurrentVarsStack
           __cmake_contentNameLower
           __cmake_contentName
+          CMAKE_EXPORT_FIND_PACKAGE_NAME
         )
+        if(CMAKE_EXPORT_FIND_PACKAGE_NAME STREQUAL "<<::VAR_NOT_SET::>>")
+          unset(CMAKE_EXPORT_FIND_PACKAGE_NAME)
+        endif()
 
         unset(__cmake_fcProvider_${__cmake_contentNameLower})
         unset(__cmake_providerArgs)
@@ -2011,12 +2032,6 @@ macro(FetchContent_MakeAvailable)
         unset(__cmake_fpargs)
         unset(__cmake_item)
         unset(__cmake_contentDetails)
-
-        list(POP_BACK __cmake_fcCurrentVarsStack __cmake_original_export_find_package_name)
-        string(SUBSTRING "${__cmake_original_export_find_package_name}"
-          12 -1 __cmake_original_export_find_package_name
-        )
-        set(CMAKE_EXPORT_FIND_PACKAGE_NAME ${__cmake_original_export_find_package_name})
 
         FetchContent_GetProperties(${__cmake_contentName})
         if(${__cmake_contentNameLower}_POPULATED)
@@ -2087,7 +2102,12 @@ macro(FetchContent_MakeAvailable)
       endif()
 
       if(EXISTS ${__cmake_srcdir}/CMakeLists.txt)
-        list(APPEND __cmake_fcCurrentVarsStack "__fcprefix__${CMAKE_EXPORT_FIND_PACKAGE_NAME}")
+        if(DEFINED CMAKE_EXPORT_FIND_PACKAGE_NAME)
+          list(APPEND __cmake_fcCurrentVarsStack "${CMAKE_EXPORT_FIND_PACKAGE_NAME}")
+        else()
+          # This just needs to be something that can't be a real package name
+          list(APPEND __cmake_fcCurrentVarsStack "<<::VAR_NOT_SET::>>")
+        endif()
         set(CMAKE_EXPORT_FIND_PACKAGE_NAME "${__cmake_contentName}")
 
         set(__cmake_add_subdirectory_args ${__cmake_srcdir} ${${__cmake_contentNameLower}_BINARY_DIR})
@@ -2099,11 +2119,10 @@ macro(FetchContent_MakeAvailable)
         endif()
         add_subdirectory(${__cmake_add_subdirectory_args})
 
-        list(POP_BACK __cmake_fcCurrentVarsStack __cmake_original_export_find_package_name)
-        string(SUBSTRING "${__cmake_original_export_find_package_name}"
-          12 -1 __cmake_original_export_find_package_name
-        )
-        set(CMAKE_EXPORT_FIND_PACKAGE_NAME ${__cmake_original_export_find_package_name})
+        list(POP_BACK __cmake_fcCurrentVarsStack CMAKE_EXPORT_FIND_PACKAGE_NAME)
+        if(CMAKE_EXPORT_FIND_PACKAGE_NAME STREQUAL "<<::VAR_NOT_SET::>>")
+          unset(CMAKE_EXPORT_FIND_PACKAGE_NAME)
+        endif()
       endif()
 
       unset(__cmake_srcdir)

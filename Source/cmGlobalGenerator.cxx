@@ -223,7 +223,7 @@ std::string cmGlobalGenerator::SelectMakeProgram(
   if (cmIsOff(makeProgram)) {
     cmValue makeProgramCSTR =
       this->CMakeInstance->GetCacheDefinition("CMAKE_MAKE_PROGRAM");
-    if (cmIsOff(makeProgramCSTR)) {
+    if (makeProgramCSTR.IsOff()) {
       makeProgram = makeDefault;
     } else {
       makeProgram = *makeProgramCSTR;
@@ -336,7 +336,7 @@ bool cmGlobalGenerator::CheckTargetsForMissingSources() const
   for (const auto& localGen : this->LocalGenerators) {
     for (const auto& target : localGen->GetGeneratorTargets()) {
       if (!target->CanCompileSources() ||
-          cmIsOn(target->GetProperty("ghs_integrity_app"))) {
+          target->GetProperty("ghs_integrity_app").IsOn()) {
         continue;
       }
 
@@ -408,7 +408,7 @@ bool cmGlobalGenerator::CheckTargetsForPchCompilePdb() const
   for (const auto& generator : this->LocalGenerators) {
     for (const auto& target : generator->GetGeneratorTargets()) {
       if (!target->CanCompileSources() ||
-          cmIsOn(target->GetProperty("ghs_integrity_app"))) {
+          target->GetProperty("ghs_integrity_app").IsOn()) {
         continue;
       }
 
@@ -452,13 +452,13 @@ bool cmGlobalGenerator::FindMakeProgram(cmMakefile* mf)
       "all generators must specify this->FindMakeProgramFile");
     return false;
   }
-  if (cmIsOff(mf->GetDefinition("CMAKE_MAKE_PROGRAM"))) {
+  if (mf->GetDefinition("CMAKE_MAKE_PROGRAM").IsOff()) {
     std::string setMakeProgram = mf->GetModulesFile(this->FindMakeProgramFile);
     if (!setMakeProgram.empty()) {
       mf->ReadListFile(setMakeProgram);
     }
   }
-  if (cmIsOff(mf->GetDefinition("CMAKE_MAKE_PROGRAM"))) {
+  if (mf->GetDefinition("CMAKE_MAKE_PROGRAM").IsOff()) {
     std::ostringstream err;
     err << "CMake was unable to find a build program corresponding to \""
         << this->GetName() << "\".  CMAKE_MAKE_PROGRAM is not set.  You "
@@ -1158,20 +1158,26 @@ std::string cmGlobalGenerator::GetLanguageOutputExtension(
 {
   const std::string& lang = source.GetLanguage();
   if (!lang.empty()) {
-    auto const it = this->LanguageToOutputExtension.find(lang);
-    if (it != this->LanguageToOutputExtension.end()) {
-      return it->second;
+    return this->GetLanguageOutputExtension(lang);
+  }
+  // if no language is found then check to see if it is already an
+  // output extension for some language.  In that case it should be ignored
+  // and in this map, so it will not be compiled but will just be used.
+  std::string const& ext = source.GetExtension();
+  if (!ext.empty()) {
+    if (this->OutputExtensions.count(ext)) {
+      return ext;
     }
-  } else {
-    // if no language is found then check to see if it is already an
-    // output extension for some language.  In that case it should be ignored
-    // and in this map, so it will not be compiled but will just be used.
-    std::string const& ext = source.GetExtension();
-    if (!ext.empty()) {
-      if (this->OutputExtensions.count(ext)) {
-        return ext;
-      }
-    }
+  }
+  return "";
+}
+
+std::string cmGlobalGenerator::GetLanguageOutputExtension(
+  std::string const& lang) const
+{
+  auto const it = this->LanguageToOutputExtension.find(lang);
+  if (it != this->LanguageToOutputExtension.end()) {
+    return it->second;
   }
   return "";
 }
@@ -1562,10 +1568,7 @@ bool cmGlobalGenerator::Compute()
   // so create the map from project name to vector of local generators
   this->FillProjectMap();
 
-  // Add automatically generated sources (e.g. unity build).
-  if (!this->AddAutomaticSources()) {
-    return false;
-  }
+  this->CreateFileGenerateOutputs();
 
   // Iterate through all targets and add verification targets for header sets
   if (!this->AddHeaderSetVerification()) {
@@ -1604,6 +1607,14 @@ bool cmGlobalGenerator::Compute()
     if (!localGen->ComputeTargetCompileFeatures()) {
       return false;
     }
+  }
+
+  // Add automatically generated sources (e.g. unity build).
+  // Add unity sources after computing compile features.  Unity sources do
+  // not change the set of languages or features, but we need to know them
+  // to filter out sources that are scanned for C++ module dependencies.
+  if (!this->AddAutomaticSources()) {
+    return false;
   }
 
   for (const auto& localGen : this->LocalGenerators) {
@@ -1872,11 +1883,15 @@ bool cmGlobalGenerator::AddHeaderSetVerification()
   return true;
 }
 
-bool cmGlobalGenerator::AddAutomaticSources()
+void cmGlobalGenerator::CreateFileGenerateOutputs()
 {
   for (const auto& lg : this->LocalGenerators) {
     lg->CreateEvaluationFileOutputs();
   }
+}
+
+bool cmGlobalGenerator::AddAutomaticSources()
+{
   for (const auto& lg : this->LocalGenerators) {
     for (const auto& gt : lg->GetGeneratorTargets()) {
       if (!gt->CanCompileSources()) {
@@ -1902,13 +1917,18 @@ bool cmGlobalGenerator::AddAutomaticSources()
       }
     }
   }
-  // The above transformations may have changed the classification of sources.
+  // The above transformations may have changed the classification of sources,
+  // e.g., sources that go into unity builds become SourceKindUnityBatched.
   // Clear the source list and classification cache (KindedSources) of all
   // targets so that it will be recomputed correctly by the generators later
   // now that the above transformations are done for all targets.
+  // Also clear the link interface cache to support $<TARGET_OBJECTS:objlib>
+  // in INTERFACE_LINK_LIBRARIES because the list of object files may have
+  // been changed by conversion to a unity build or addition of a PCH source.
   for (const auto& lg : this->LocalGenerators) {
     for (const auto& gt : lg->GetGeneratorTargets()) {
       gt->ClearSourcesCache();
+      gt->ClearLinkInterfaceCache();
     }
   }
   return true;
@@ -2803,7 +2823,7 @@ void cmGlobalGenerator::AddGlobalTarget_Package(
   } else {
     cmValue noPackageAll =
       mf->GetDefinition("CMAKE_SKIP_PACKAGE_ALL_DEPENDENCY");
-    if (cmIsOff(noPackageAll)) {
+    if (noPackageAll.IsOff()) {
       gti.Depends.emplace_back(this->GetAllTargetName());
     }
   }
@@ -2871,7 +2891,7 @@ void cmGlobalGenerator::AddGlobalTarget_Test(
   // by default.  Enable it only if CMAKE_SKIP_TEST_ALL_DEPENDENCY is
   // explicitly set to OFF.
   if (cmValue noall = mf->GetDefinition("CMAKE_SKIP_TEST_ALL_DEPENDENCY")) {
-    if (cmIsOff(noall)) {
+    if (noall.IsOff()) {
       gti.Depends.emplace_back(this->GetAllTargetName());
     }
   }
@@ -2995,7 +3015,7 @@ void cmGlobalGenerator::AddGlobalTarget_Install(
       gti.Depends.emplace_back(this->GetPreinstallTargetName());
     } else {
       cmValue noall = mf->GetDefinition("CMAKE_SKIP_INSTALL_ALL_DEPENDENCY");
-      if (cmIsOff(noall)) {
+      if (noall.IsOff()) {
         gti.Depends.emplace_back(this->GetAllTargetName());
       }
     }
@@ -3077,7 +3097,7 @@ bool cmGlobalGenerator::UseFolderProperty() const
 
   // If this property is defined, let the setter turn this on or off.
   if (prop) {
-    return cmIsOn(*prop);
+    return prop.IsOn();
   }
 
   // If CMP0143 is NEW `treat` "USE_FOLDERS" as ON. Otherwise `treat` it as OFF

@@ -1151,6 +1151,7 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
     vars.emplace("CMAKE_WATCOM_RUNTIME_LIBRARY"_s);
     vars.emplace("CMAKE_MSVC_DEBUG_INFORMATION_FORMAT"_s);
     vars.emplace("CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS"_s);
+    vars.emplace("CMAKE_VS_USE_DEBUG_LIBRARIES"_s);
 
     if (cmValue varListStr = this->Makefile->GetDefinition(
           kCMAKE_TRY_COMPILE_PLATFORM_VARIABLES)) {
@@ -1163,7 +1164,7 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
       vars.insert(kCMAKE_LINKER_TYPE);
       auto defs = this->Makefile->GetDefinitions();
       cmsys::RegularExpression linkerTypeDef{
-        "^CMAKE_[A-Za-z]+_USING_LINKER_"
+        "^CMAKE_[A-Za-z_-]+_USING_LINKER_"
       };
       for (auto const& def : defs) {
         if (linkerTypeDef.find(def)) {
