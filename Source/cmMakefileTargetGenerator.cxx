@@ -251,6 +251,8 @@ void cmMakefileTargetGenerator::WriteTargetBuildRules()
   std::vector<cmSourceFile const*> customCommands;
   this->GeneratorTarget->GetCustomCommands(customCommands,
                                            this->GetConfigName());
+  std::vector<std::string> codegen_depends;
+  codegen_depends.reserve(customCommands.size());
   for (cmSourceFile const* sf : customCommands) {
     if (this->CMP0113New &&
         !this->LocalGenerator->GetCommandsVisited(this->GeneratorTarget)
@@ -273,6 +275,33 @@ void cmMakefileTargetGenerator::WriteTargetBuildRules()
           this->LocalGenerator->MaybeRelativeToCurBinDir(byproduct));
       }
     }
+
+    if (ccg.GetCC().GetCodegen()) {
+      std::string const& output = ccg.GetOutputs().front();
+
+      // We always attach the actual commands to the first output.
+      codegen_depends.emplace_back(output);
+    }
+  }
+
+  // Some make tools need a special dependency for an empty rule.
+  if (codegen_depends.empty()) {
+    std::string hack = this->GlobalGenerator->GetEmptyRuleHackDepends();
+    if (!hack.empty()) {
+      codegen_depends.emplace_back(std::move(hack));
+    }
+  }
+
+  // Construct the codegen target.
+  {
+    std::string const codegenTarget = cmStrCat(
+      this->LocalGenerator->GetRelativeTargetDirectory(this->GeneratorTarget),
+      "/codegen");
+
+    // Write the rule.
+    this->LocalGenerator->WriteMakeRule(*this->BuildFileStream, nullptr,
+                                        codegenTarget, codegen_depends, {},
+                                        true);
   }
 
   // Add byproducts from build events to the clean rules
@@ -672,15 +701,12 @@ void cmMakefileTargetGenerator::WriteObjectRuleFiles(
   std::string const configUpper = cmSystemTools::UpperCase(config);
 
   // Add precompile headers dependencies
-  std::vector<std::string> architectures =
-    this->GeneratorTarget->GetAppleArchs(config, lang);
-  if (architectures.empty()) {
-    architectures.emplace_back();
-  }
+  std::vector<std::string> pchArchs =
+    this->GeneratorTarget->GetPchArchs(config, lang);
 
   std::string filterArch;
   std::unordered_map<std::string, std::string> pchSources;
-  for (const std::string& arch : architectures) {
+  for (const std::string& arch : pchArchs) {
     const std::string pchSource =
       this->GeneratorTarget->GetPchSource(config, lang, arch);
     if (pchSource == source.GetFullPath()) {
@@ -692,7 +718,7 @@ void cmMakefileTargetGenerator::WriteObjectRuleFiles(
   }
 
   if (!pchSources.empty() && !source.GetProperty("SKIP_PRECOMPILE_HEADERS")) {
-    for (const std::string& arch : architectures) {
+    for (const std::string& arch : pchArchs) {
       std::string const& pchHeader =
         this->GeneratorTarget->GetPchHeader(config, lang, arch);
       depends.push_back(pchHeader);

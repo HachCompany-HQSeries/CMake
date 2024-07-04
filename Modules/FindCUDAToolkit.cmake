@@ -22,7 +22,11 @@ The CUDA Toolkit search behavior uses the following order:
 1. If the ``CUDA`` language has been enabled we will use the directory
    containing the compiler as the first search location for ``nvcc``.
 
-2. If the ``CUDAToolkit_ROOT`` cmake configuration variable (e.g.,
+2. If the variable :variable:`CMAKE_CUDA_COMPILER <CMAKE_<LANG>_COMPILER>` or
+   the environment variable :envvar:`CUDACXX` is defined, it will be used
+   as the path to the ``nvcc`` executable.
+
+3. If the ``CUDAToolkit_ROOT`` cmake configuration variable (e.g.,
    ``-DCUDAToolkit_ROOT=/some/path``) *or* environment variable is defined, it
    will be searched.  If both an environment variable **and** a
    configuration variable are specified, the *configuration* variable takes
@@ -32,19 +36,19 @@ The CUDA Toolkit search behavior uses the following order:
    the appropriate ``version.txt`` or ``version.json`` file can be found
    underneath the specified directory.
 
-3. If the CUDA_PATH environment variable is defined, it will be searched
+4. If the CUDA_PATH environment variable is defined, it will be searched
    for ``nvcc``.
 
-4. The user's path is searched for ``nvcc`` using :command:`find_program`.  If
+5. The user's path is searched for ``nvcc`` using :command:`find_program`.  If
    this is found, no subsequent search attempts are performed.  Users are
    responsible for ensuring that the first ``nvcc`` to show up in the path is
    the desired path in the event that multiple CUDA Toolkits are installed.
 
-5. On Unix systems, if the symbolic link ``/usr/local/cuda`` exists, this is
+6. On Unix systems, if the symbolic link ``/usr/local/cuda`` exists, this is
    used.  No subsequent search attempts are performed.  No default symbolic link
    location exists for the Windows platform.
 
-6. The platform specific default install locations are searched.  If exactly one
+7. The platform specific default install locations are searched.  If exactly one
    candidate is found, this is used.  The default CUDA Toolkit install locations
    searched are:
 
@@ -160,7 +164,7 @@ Targets Created:
 cuBLAS
 """"""
 
-The `cuBLAS <https://docs.nvidia.com/cuda/cublas/index.html>`_ library.
+The `cuBLAS <https://docs.nvidia.com/cuda/cublas>`_ library.
 
 Targets Created:
 
@@ -176,7 +180,7 @@ cuDLA
 
 .. versionadded:: 3.27
 
-The NVIDIA Tegra Deep Learning Accelerator `cuDLA <https://docs.nvidia.com/cuda/cublas/index.html>`_ library.
+The NVIDIA Tegra Deep Learning Accelerator `cuDLA <https://docs.nvidia.com/cuda/cublas>`_ library.
 
 Targets Created:
 
@@ -189,7 +193,7 @@ cuFile
 
 .. versionadded:: 3.25
 
-The NVIDIA GPUDirect Storage `cuFile <https://docs.nvidia.com/gpudirect-storage/api-reference-guide/index.html>`_ library.
+The NVIDIA GPUDirect Storage `cuFile <https://docs.nvidia.com/gpudirect-storage/api-reference-guide>`_ library.
 
 Targets Created:
 
@@ -203,7 +207,7 @@ Targets Created:
 cuFFT
 """""
 
-The `cuFFT <https://docs.nvidia.com/cuda/cufft/index.html>`_ library.
+The `cuFFT <https://docs.nvidia.com/cuda/cufft>`_ library.
 
 Targets Created:
 
@@ -216,7 +220,7 @@ Targets Created:
 cuRAND
 """"""
 
-The `cuRAND <https://docs.nvidia.com/cuda/curand/index.html>`_ library.
+The `cuRAND <https://docs.nvidia.com/cuda/curand>`_ library.
 
 Targets Created:
 
@@ -228,7 +232,7 @@ Targets Created:
 cuSOLVER
 """"""""
 
-The `cuSOLVER <https://docs.nvidia.com/cuda/cusolver/index.html>`_ library.
+The `cuSOLVER <https://docs.nvidia.com/cuda/cusolver>`_ library.
 
 Targets Created:
 
@@ -240,7 +244,7 @@ Targets Created:
 cuSPARSE
 """"""""
 
-The `cuSPARSE <https://docs.nvidia.com/cuda/cusparse/index.html>`_ library.
+The `cuSPARSE <https://docs.nvidia.com/cuda/cusparse>`_ library.
 
 Targets Created:
 
@@ -271,7 +275,7 @@ Targets Created:
 NPP
 """
 
-The `NPP <https://docs.nvidia.com/cuda/npp/index.html>`_ libraries.
+The `NPP <https://docs.nvidia.com/cuda/npp>`_ libraries.
 
 Targets Created:
 
@@ -341,7 +345,7 @@ Targets Created:
 nvBLAS
 """"""
 
-The `nvBLAS <https://docs.nvidia.com/cuda/nvblas/index.html>`_ libraries.
+The `nvBLAS <https://docs.nvidia.com/cuda/nvblas>`_ libraries.
 This is a shared library only.
 
 Targets Created:
@@ -367,7 +371,7 @@ Targets Created:
 nvJPEG
 """"""
 
-The `nvJPEG <https://docs.nvidia.com/cuda/nvjpeg/index.html>`_ library.
+The `nvJPEG <https://docs.nvidia.com/cuda/nvjpeg>`_ library.
 Introduced in CUDA 10.
 
 Targets Created:
@@ -382,7 +386,7 @@ nvPTX Compiler
 
 .. versionadded:: 3.25
 
-The `nvPTX <https://docs.nvidia.com/cuda/ptx-compiler-api/index.html>`_ (PTX Compilation) library.
+The `nvPTX <https://docs.nvidia.com/cuda/ptx-compiler-api>`_ (PTX Compilation) library.
 The PTX Compiler APIs are a set of APIs which can be used to compile a PTX program into GPU assembly code.
 Introduced in CUDA 11.1
 This is a static library only.
@@ -396,7 +400,7 @@ Targets Created:
 nvRTC
 """""
 
-The `nvRTC <https://docs.nvidia.com/cuda/nvrtc/index.html>`_ (Runtime Compilation) library.
+The `nvRTC <https://docs.nvidia.com/cuda/nvrtc>`_ (Runtime Compilation) library.
 
 Targets Created:
 
@@ -439,7 +443,7 @@ Targets Created:
 nvidia-ML
 """""""""
 
-The `NVIDIA Management Library <https://developer.nvidia.com/nvidia-management-library-nvml>`_.
+The `NVIDIA Management Library <https://developer.nvidia.com/management-library-nvml>`_.
 This is a shared library only.
 
 Targets Created:
@@ -467,7 +471,7 @@ nvtx3
 
 .. versionadded:: 3.25
 
-The header-only `NVIDIA Tools Extension Library <https://nvidia.github.io/NVTX/doxygen/index.html>`_.
+The header-only `NVIDIA Tools Extension Library <https://nvidia.github.io/NVTX/doxygen>`_.
 Introduced in CUDA 10.0.
 
 Targets created:
@@ -628,9 +632,27 @@ if(CMAKE_CUDA_COMPILER_TOOLKIT_ROOT)
   endif()
 else()
   function(_CUDAToolkit_find_root_dir )
-    cmake_parse_arguments(arg "" "" "SEARCH_PATHS;FIND_FLAGS" ${ARGN})
+    cmake_parse_arguments(arg "COMPILER_PATHS" "" "SEARCH_PATHS;FIND_FLAGS" ${ARGN})
 
     if(NOT CUDAToolkit_BIN_DIR)
+      if(arg_COMPILER_PATHS)
+        # need to find parent dir, since this could clang and not nvcc
+        if(EXISTS "${CMAKE_CUDA_COMPILER}")
+          get_filename_component(possible_nvcc_path "${CMAKE_CUDA_COMPILER}" PROGRAM PROGRAM_ARGS CUDAToolkit_compiler_args)
+          get_filename_component(possible_nvcc_path "${possible_nvcc_path}" DIRECTORY)
+        elseif(EXISTS "$ENV{CUDACXX}")
+          get_filename_component(possible_nvcc_path "$ENV{CUDACXX}" PROGRAM PROGRAM_ARGS CUDAToolkit_compiler_args)
+          get_filename_component(possible_nvcc_path "${possible_nvcc_path}" DIRECTORY)
+        endif()
+        if(possible_nvcc_path)
+          find_program(CUDAToolkit_NVCC_EXECUTABLE
+            NAMES nvcc nvcc.exe
+            NO_DEFAULT_PATH
+            PATHS ${possible_nvcc_path}
+          )
+        endif()
+      endif()
+
       if(NOT CUDAToolkit_SENTINEL_FILE)
         find_program(CUDAToolkit_NVCC_EXECUTABLE
           NAMES nvcc nvcc.exe
@@ -775,6 +797,7 @@ else()
   endif()
 
   # Try user provided path
+  _CUDAToolkit_find_root_dir(COMPILER_PATHS)
   if(NOT CUDAToolkit_ROOT_DIR AND CUDAToolkit_ROOT)
     _CUDAToolkit_find_root_dir(SEARCH_PATHS "${CUDAToolkit_ROOT}" FIND_FLAGS PATH_SUFFIXES bin NO_DEFAULT_PATH)
   endif()
@@ -1204,7 +1227,7 @@ if(CUDAToolkit_FOUND)
 
   if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 11.0.0)
     # cublas depends on cublasLt
-    # https://docs.nvidia.com/cuda/archive/11.0/cublas/index.html#static-library
+    # https://docs.nvidia.com/cuda/archive/11.0/cublas#static-library
     _CUDAToolkit_find_and_add_import_lib(cublas DEPS cublasLt culibos)
     _CUDAToolkit_find_and_add_import_lib(cublas_static DEPS cublasLt_static culibos)
   else()
@@ -1237,14 +1260,14 @@ if(CUDAToolkit_FOUND)
   set(cusolver_static_deps cublas_static cusparse_static culibos)
   if(CUDAToolkit_VERSION VERSION_GREATER 11.2.1)
     # cusolver depends on libcusolver_metis and cublasLt
-    # https://docs.nvidia.com/cuda/archive/11.2.2/cusolver/index.html#link-dependency
+    # https://docs.nvidia.com/cuda/archive/11.2.2/cusolver#link-dependency
     list(APPEND cusolver_deps cublasLt)
     _CUDAToolkit_find_and_add_import_lib(cusolver_metis_static ALT metis_static) # implementation detail static lib
     list(APPEND cusolver_static_deps cusolver_metis_static cublasLt_static)
   endif()
   if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 10.1.2)
     # cusolver depends on liblapack_static.a starting with CUDA 10.1 update 2,
-    # https://docs.nvidia.com/cuda/archive/11.5.0/cusolver/index.html#static-link-lapack
+    # https://docs.nvidia.com/cuda/archive/11.5.0/cusolver#static-link-lapack
     _CUDAToolkit_find_and_add_import_lib(cusolver_lapack_static ALT lapack_static) # implementation detail static lib
     list(APPEND cusolver_static_deps cusolver_lapack_static)
   endif()

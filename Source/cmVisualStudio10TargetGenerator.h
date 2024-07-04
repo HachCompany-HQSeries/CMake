@@ -91,6 +91,7 @@ private:
   void WriteDotNetReference(Elem& e1, std::string const& ref,
                             std::string const& hint,
                             std::string const& config);
+  void WriteFrameworkReferences(Elem& e0);
   void WriteDotNetDocumentationFile(Elem& e0);
   void WriteImports(Elem& e0);
   void WriteDotNetReferenceCustomTags(Elem& e2, std::string const& ref);
@@ -240,6 +241,7 @@ private:
   bool NsightTegra;
   bool Android;
   bool HaveCustomCommandDepfile = false;
+  std::map<std::string, bool> ScanSourceForModuleDependencies;
   unsigned int NsightTegraVersion[4];
   bool TargetCompileAsWinRT;
   std::set<std::string> IPOEnabledConfigurations;

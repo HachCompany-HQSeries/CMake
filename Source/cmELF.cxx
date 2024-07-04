@@ -112,6 +112,9 @@ public:
   virtual bool IsMips() const = 0;
   virtual void PrintInfo(std::ostream& os) const = 0;
 
+  /** Returns true if the ELF file has a dynamic section **/
+  bool HasDynamicSection() const { return this->DynamicSectionIndex >= 0; }
+
   // Lookup the SONAME in the DYNAMIC section.
   StringEntry const* GetSOName()
   {
@@ -461,7 +464,7 @@ template <class Types>
 bool cmELFInternalImpl<Types>::LoadDynamicSection()
 {
   // If there is no dynamic section we are done.
-  if (this->DynamicSectionIndex < 0) {
+  if (!this->HasDynamicSection()) {
     return false;
   }
 
@@ -621,7 +624,19 @@ cmELF::StringEntry const* cmELFInternalImpl<Types>::GetDynamicSectionString(
 
       // Make sure the whole value was read.
       if (!(*this->Stream)) {
-        this->SetErrorMessage("Dynamic section specifies unreadable RPATH.");
+        if (tag == cmELF::TagRPath) {
+          this->SetErrorMessage(
+            "Dynamic section specifies unreadable DT_RPATH");
+        } else if (tag == cmELF::TagRunPath) {
+          this->SetErrorMessage(
+            "Dynamic section specifies unreadable DT_RUNPATH");
+        } else if (tag == cmELF::TagMipsRldMapRel) {
+          this->SetErrorMessage(
+            "Dynamic section specifies unreadable DT_MIPS_RLD_MAP_REL");
+        } else {
+          this->SetErrorMessage("Dynamic section specifies unreadable value"
+                                " for unexpected attribute");
+        }
         se.Value = "";
         return nullptr;
       }
@@ -758,6 +773,11 @@ std::vector<char> cmELF::EncodeDynamicEntries(
   }
 
   return std::vector<char>();
+}
+
+bool cmELF::HasDynamicSection() const
+{
+  return this->Valid() && this->Internal->HasDynamicSection();
 }
 
 bool cmELF::GetSOName(std::string& soname)

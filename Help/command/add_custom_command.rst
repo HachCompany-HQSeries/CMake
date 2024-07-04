@@ -26,6 +26,7 @@ The first signature is for adding a custom command to produce an output:
                      [JOB_POOL job_pool]
                      [JOB_SERVER_AWARE <bool>]
                      [VERBATIM] [APPEND] [USES_TERMINAL]
+                     [CODEGEN]
                      [COMMAND_EXPAND_LISTS]
                      [DEPENDS_EXPLICIT_ONLY])
 
@@ -84,8 +85,8 @@ The options are:
   .. versionadded:: 3.20
     Arguments to ``BYPRODUCTS`` may use a restricted set of
     :manual:`generator expressions <cmake-generator-expressions(7)>`.
-    :ref:`Target-dependent expressions <Target-Dependent Queries>` are not
-    permitted.
+    :ref:`Target-dependent expressions <Target-Dependent Expressions>`
+    are not permitted.
 
   .. versionchanged:: 3.28
     In targets using :ref:`file sets`, custom command byproducts are now
@@ -203,6 +204,18 @@ The options are:
   ``${CC} "-I$<JOIN:$<TARGET_PROPERTY:foo,INCLUDE_DIRECTORIES>,;-I>" foo.cc``
   to be properly expanded.
 
+``CODEGEN``
+  .. versionadded:: 3.31
+
+  Adds the custom command to a global ``codegen`` target that can be
+  used to execute the custom command while avoiding the majority of the
+  build graph.
+
+  This option is supported only by :ref:`Ninja Generators` and
+  :ref:`Makefile Generators`, and is ignored by other generators.
+  Furthermore, this option is allowed only if policy :policy:`CMP0171`
+  is set to ``NEW``.
+
 ``IMPLICIT_DEPENDS``
   Request scanning of implicit dependencies of an input file.
   The language given specifies the programming language whose
@@ -269,16 +282,22 @@ The options are:
   source tree is mentioned as an absolute source file path elsewhere
   in the current directory.
 
+  The output file path may not contain ``<`` or ``>`` characters.
+
   .. versionadded:: 3.20
     Arguments to ``OUTPUT`` may use a restricted set of
     :manual:`generator expressions <cmake-generator-expressions(7)>`.
-    :ref:`Target-dependent expressions <Target-Dependent Queries>` are not
-    permitted.
+    :ref:`Target-dependent expressions <Target-Dependent Expressions>`
+    are not permitted.
 
   .. versionchanged:: 3.28
     In targets using :ref:`file sets`, custom command outputs are now
     considered private unless they are listed in a non-private file set.
     See policy :policy:`CMP0154`.
+
+  .. versionchanged:: 3.30
+    The output file path may now use ``#`` characters, except
+    when using the :generator:`Borland Makefiles` generator.
 
 ``USES_TERMINAL``
   .. versionadded:: 3.2
@@ -447,6 +466,25 @@ will re-run whenever ``in.txt`` changes.
   adds a custom command to run ``someTool`` to generate ``out-<config>.c``,
   where ``<config>`` is the build configuration, and then compile the generated
   source as part of a library.
+
+.. versionadded:: 3.31
+  Use the ``CODEGEN`` option to add a custom command's outputs to the builtin
+  ``codegen`` target.  This is useful to make generated code available for
+   static analysis without building the entire project.  For example:
+
+  .. code-block:: cmake
+
+    add_executable(someTool someTool.c)
+
+    add_custom_command(
+      OUTPUT out.c
+      COMMAND someTool -o out.c
+      CODEGEN)
+
+    add_library(myLib out.c)
+
+  A user may build the ``codegen`` target to generate ``out.c``.
+  ``someTool`` is built as dependency, but ``myLib`` is not built at all.
 
 Example: Generating Files for Multiple Targets
 """"""""""""""""""""""""""""""""""""""""""""""

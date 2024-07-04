@@ -412,6 +412,7 @@ TargetProperty const StaticTargetProperties[] = {
   COMMON_LANGUAGE_PROPERTIES(C),
   // ---- C++
   COMMON_LANGUAGE_PROPERTIES(CXX),
+  { "CXX_MODULE_STD"_s, IC::CanCompileSources },
   // ---- CSharp
   { "DOTNET_SDK"_s, IC::NonImportedTarget },
   { "DOTNET_TARGET_FRAMEWORK"_s, IC::TargetWithCommands },
@@ -656,6 +657,7 @@ public:
   bool PerConfig;
   cmTarget::Visibility TargetVisibility;
   std::set<BT<std::pair<std::string, bool>>> Utilities;
+  std::set<std::string> CodegenDependencies;
   std::vector<cmCustomCommand> PreBuildCommands;
   std::vector<cmCustomCommand> PreLinkCommands;
   std::vector<cmCustomCommand> PostBuildCommands;
@@ -1235,6 +1237,16 @@ void cmTarget::AddUtility(std::string const& name, bool cross,
 void cmTarget::AddUtility(BT<std::pair<std::string, bool>> util)
 {
   this->impl->Utilities.emplace(std::move(util));
+}
+
+void cmTarget::AddCodegenDependency(std::string const& name)
+{
+  this->impl->CodegenDependencies.emplace(name);
+}
+
+std::set<std::string> const& cmTarget::GetCodegenDeps() const
+{
+  return this->impl->CodegenDependencies;
 }
 
 std::set<BT<std::pair<std::string, bool>>> const& cmTarget::GetUtilities()
@@ -1842,6 +1854,7 @@ void cmTarget::CopyImportedCxxModulesProperties(cmTarget const* tgt)
     "CXX_STANDARD_REQUIRED",
     "CXX_EXTENSIONS",
     "CXX_VISIBILITY_PRESET",
+    "CXX_MODULE_STD",
 
     // Static analysis
     "CXX_CLANG_TIDY",

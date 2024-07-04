@@ -39,6 +39,9 @@ The files are a JSON document with an object as the root:
 .. literalinclude:: presets/example.json
   :language: json
 
+Preset files specifying version ``10`` or above may include comments using the
+key ``$comment`` at any level within the JSON object to provide documentation.
+
 The root object recognizes the following fields:
 
 ``$schema``
@@ -80,6 +83,9 @@ The root object recognizes the following fields:
 
   ``9``
     .. versionadded:: 3.30
+
+  ``10``
+    .. versionadded:: 3.31
 
 ``cmakeMinimumRequired``
   An optional object representing the minimum version of CMake needed to
@@ -150,8 +156,9 @@ include files from anywhere.
 
 Starting from version ``7``, the ``include`` field supports
 `macro expansion`_, but only ``$penv{}`` macro expansion. Starting from version
-``9``, other macro expansions are also available, except for preset specific
-ones (e.g. ``presetName``), and ``$env{}``.
+``9``, other macro expansions are also available, except for ``$env{}`` and
+preset-specific macros, i.e., those derived from the fields inside a preset's
+definition like ``presetName``.
 
 Configure Preset
 ^^^^^^^^^^^^^^^^
@@ -1217,10 +1224,14 @@ Recognized macros include:
 ``${presetName}``
   Name specified in the preset's ``name`` field.
 
+  This is a preset-specific macro.
+
 ``${generator}``
   Generator specified in the preset's ``generator`` field. For build and
   test presets, this will evaluate to the generator specified by
   ``configurePreset``.
+
+  This is a preset-specific macro.
 
 ``${hostSystemName}``
   The name of the host operating system. Contains the same value as

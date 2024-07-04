@@ -491,6 +491,7 @@ run_ctest(check-configuration-type)
 function(run_FailDrop case)
   set(RunCMake_TEST_BINARY_DIR ${RunCMake_BINARY_DIR}/FailDrop-${case}-build)
   run_cmake_with_options(FailDrop-${case} ${ARGN})
+  unset(ENV{CMAKE_TLS_VERIFY}) # Test that env variable is saved in ctest config file.
   unset(ENV{CMAKE_TLS_VERSION}) # Test that env variable is saved in ctest config file.
   set(RunCMake_TEST_NO_CLEAN 1)
   run_cmake_command(FailDrop-${case}-ctest
@@ -503,7 +504,15 @@ set(ENV{CMAKE_TLS_VERSION} 1.1) # Test fallback to env variable.
 run_FailDrop(TLSVersion-1.1-env)
 unset(ENV{CMAKE_TLS_VERSION})
 run_FailDrop(TLSVerify-ON -DCTEST_TLS_VERIFY=ON)
-run_FailDrop(TLSVerify-OFF -DCMAKE_TLS_VERIFY=OFF) # Test fallback to CMake variable.
+run_FailDrop(TLSVerify-ON-cmake -DCMAKE_TLS_VERIFY=ON) # Test fallback to CMake variable.
+set(ENV{CMAKE_TLS_VERIFY} 1) # Test fallback to env variable.
+run_FailDrop(TLSVerify-ON-env)
+unset(ENV{CMAKE_TLS_VERIFY})
+run_FailDrop(TLSVerify-OFF -DCTEST_TLS_VERIFY=OFF)
+run_FailDrop(TLSVerify-OFF-cmake -DCMAKE_TLS_VERIFY=OFF) # Test fallback to CMake variable.
+set(ENV{CMAKE_TLS_VERIFY} 0) # Test fallback to env variable.
+run_FailDrop(TLSVerify-OFF-env)
+unset(ENV{CMAKE_TLS_VERIFY})
 
 run_cmake_command(EmptyDirCoverage-ctest
   ${CMAKE_CTEST_COMMAND} -C Debug -M Experimental -T Coverage
@@ -533,7 +542,7 @@ run_MemCheckSan(UndefinedBehavior "simulate_sanitizer=1")
 run_cmake_command(test-dir-invalid-arg ${CMAKE_CTEST_COMMAND} --test-dir)
 run_cmake_command(test-dir-non-existing-dir ${CMAKE_CTEST_COMMAND} --test-dir non-existing-dir)
 
-function(run_testDir)
+function(run_testDir testName testPreset)
   set(RunCMake_TEST_BINARY_DIR ${RunCMake_BINARY_DIR}/testDir)
   set(RunCMake_TEST_NO_CLEAN 1)
   file(REMOVE_RECURSE "${RunCMake_TEST_BINARY_DIR}")
@@ -543,9 +552,16 @@ function(run_testDir)
   add_test(Test1 \"${CMAKE_COMMAND}\" -E true)
   add_test(Test2 \"${CMAKE_COMMAND}\" -E true)
   ")
-  run_cmake_command(testDir ${CMAKE_CTEST_COMMAND} --test-dir "${RunCMake_TEST_BINARY_DIR}/sub")
+  if (testPreset)
+    set(presetCommandLine --preset=default)
+    configure_file(
+      ${RunCMake_SOURCE_DIR}/testDir-presets.json.in
+      ${RunCMake_TEST_BINARY_DIR}/CMakePresets.json)
+  endif()
+  run_cmake_command(${testName} ${CMAKE_CTEST_COMMAND} --test-dir "${RunCMake_TEST_BINARY_DIR}/sub" ${presetCommandLine})
 endfunction()
-run_testDir()
+run_testDir(testDir 0)
+run_testDir(testDir-preset 1)
 
 # Test --output-junit
 function(run_output_junit)
@@ -565,6 +581,8 @@ set_tests_properties(test5 PROPERTIES  SKIP_REGULAR_EXPRESSION \"please skip\")
   run_cmake_command(output-junit ${CMAKE_CTEST_COMMAND} --output-junit "${RunCMake_TEST_BINARY_DIR}/junit.xml")
 endfunction()
 run_output_junit()
+
+run_cmake_command(invalid-ctest-argument ${CMAKE_CTEST_COMMAND} --not-a-valid-ctest-argument)
 
 if(WIN32)
   block()

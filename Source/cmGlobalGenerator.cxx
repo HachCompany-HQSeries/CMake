@@ -4,13 +4,11 @@
 
 #include <algorithm>
 #include <cassert>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
-#include <iomanip>
 #include <iterator>
 #include <sstream>
 #include <type_traits>
@@ -28,6 +26,7 @@
 #include "cm_codecvt_Encoding.hxx"
 
 #include "cmAlgorithms.h"
+#include "cmCMakePath.h"
 #include "cmCPackPropertiesGenerator.h"
 #include "cmComputeTargetDepends.h"
 #include "cmCryptoHash.h"
@@ -270,17 +269,14 @@ void cmGlobalGenerator::ResolveLanguageCompiler(const std::string& lang,
 
   std::string changeVars;
   if (cname && !optional) {
-    std::string cnameString;
+    cmCMakePath cachedPath;
     if (!cmSystemTools::FileIsFullPath(*cname)) {
-      cnameString = cmSystemTools::FindProgram(*cname);
+      cachedPath = cmSystemTools::FindProgram(*cname);
     } else {
-      cnameString = *cname;
+      cachedPath = *cname;
     }
-    std::string pathString = path;
-    // get rid of potentially multiple slashes:
-    cmSystemTools::ConvertToUnixSlashes(cnameString);
-    cmSystemTools::ConvertToUnixSlashes(pathString);
-    if (cnameString != pathString) {
+    cmCMakePath foundPath = path;
+    if (foundPath.Normal() != cachedPath.Normal()) {
       cmValue cvars = this->GetCMakeInstance()->GetState()->GetGlobalProperty(
         "__CMAKE_DELETE_CACHE_CHANGE_VARS_");
       if (cvars) {
@@ -1353,8 +1349,6 @@ void cmGlobalGenerator::CreateLocalGenerators()
 
 void cmGlobalGenerator::Configure()
 {
-  auto startTime = std::chrono::steady_clock::now();
-
   this->FirstTimeProgress = 0.0f;
   this->ClearGeneratorMembers();
   this->NextDeferId = 0;
@@ -1404,26 +1398,13 @@ void cmGlobalGenerator::Configure()
     }
   }
 
+  this->ReserveGlobalTargetCodegen();
+
   // update the cache entry for the number of local generators, this is used
   // for progress
   this->GetCMakeInstance()->AddCacheEntry(
     "CMAKE_NUMBER_OF_MAKEFILES", std::to_string(this->Makefiles.size()),
     "number of local generators", cmStateEnums::INTERNAL);
-
-  auto endTime = std::chrono::steady_clock::now();
-
-  if (this->CMakeInstance->GetWorkingMode() == cmake::NORMAL_MODE) {
-    std::ostringstream msg;
-    if (cmSystemTools::GetErrorOccurredFlag()) {
-      msg << "Configuring incomplete, errors occurred!";
-    } else {
-      auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        endTime - startTime);
-      msg << "Configuring done (" << std::fixed << std::setprecision(1)
-          << ms.count() / 1000.0L << "s)";
-    }
-    this->CMakeInstance->UpdateProgress(msg.str(), -1);
-  }
 }
 
 void cmGlobalGenerator::CreateGenerationObjects(TargetTypes targetTypes)
@@ -1583,6 +1564,29 @@ bool cmGlobalGenerator::Compute()
   }
 #endif
 
+  // Perform up-front computation in order to handle errors (such as unknown
+  // features) at this point. While processing the compile features we also
+  // calculate and cache the language standard required by the compile
+  // features.
+  //
+  // Synthetic targets performed this inside of
+  // `cmLocalGenerator::DiscoverSyntheticTargets`
+  for (const auto& localGen : this->LocalGenerators) {
+    if (!localGen->ComputeTargetCompileFeatures()) {
+      return false;
+    }
+  }
+
+  // We now have all targets set up and std levels constructed. Add
+  // `__CMAKE::CXX*` targets as link dependencies to all targets which need
+  // them.
+  //
+  // Synthetic targets performed this inside of
+  // `cmLocalGenerator::DiscoverSyntheticTargets`
+  if (!this->ApplyCXXStdTargets()) {
+    return false;
+  }
+
   // Iterate through all targets and set up C++20 module targets.
   // Create target templates for each imported target with C++20 modules.
   // INTERFACE library with BMI-generating rules and a collation step?
@@ -1590,6 +1594,9 @@ bool cmGlobalGenerator::Compute()
   // Make `add_dependencies(imported_target
   // $<$<TARGET_NAME_IF_EXISTS:uses_imported>:synth1>
   // $<$<TARGET_NAME_IF_EXISTS:other_uses_imported>:synth2>)`
+  //
+  // Note that synthetic target creation performs the above marked
+  // steps on the created targets.
   if (!this->DiscoverSyntheticTargets()) {
     return false;
   }
@@ -1597,16 +1604,6 @@ bool cmGlobalGenerator::Compute()
   // Add generator specific helper commands
   for (const auto& localGen : this->LocalGenerators) {
     localGen->AddHelperCommands();
-  }
-
-  // Perform up-front computation in order to handle errors (such as unknown
-  // features) at this point. While processing the compile features we also
-  // calculate and cache the language standard required by the compile
-  // features.
-  for (const auto& localGen : this->LocalGenerators) {
-    if (!localGen->ComputeTargetCompileFeatures()) {
-      return false;
-    }
   }
 
   // Add automatically generated sources (e.g. unity build).
@@ -1669,8 +1666,6 @@ bool cmGlobalGenerator::Compute()
 
 void cmGlobalGenerator::Generate()
 {
-  auto startTime = std::chrono::steady_clock::now();
-
   // Create a map from local generator to the complete set of targets
   // it builds by default.
   this->InitializeProgressMarks();
@@ -1761,14 +1756,6 @@ void cmGlobalGenerator::Generate()
     this->GetCMakeInstance()->IssueMessage(MessageType::AUTHOR_WARNING,
                                            w.str());
   }
-
-  auto endTime = std::chrono::steady_clock::now();
-  auto ms =
-    std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-  std::ostringstream msg;
-  msg << "Generating done (" << std::fixed << std::setprecision(1)
-      << ms.count() / 1000.0L << "s)";
-  this->CMakeInstance->UpdateProgress(msg.str(), -1);
 }
 
 bool cmGlobalGenerator::ComputeTargetDepends()
@@ -1824,6 +1811,19 @@ void cmGlobalGenerator::ComputeTargetOrder(cmGeneratorTarget const* gt,
   }
 
   entry->second = index++;
+}
+
+bool cmGlobalGenerator::ApplyCXXStdTargets()
+{
+  for (auto const& gen : this->LocalGenerators) {
+    for (auto const& tgt : gen->GetGeneratorTargets()) {
+      if (!tgt->ApplyCXXStdTargets()) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 bool cmGlobalGenerator::DiscoverSyntheticTargets()
@@ -2732,6 +2732,7 @@ cmGlobalGenerator::SplitFrameworkPath(const std::string& path,
 }
 
 static bool RaiseCMP0037Message(cmake* cm, cmTarget* tgt,
+                                std::string const& targetNameAsWritten,
                                 std::string const& reason)
 {
   MessageType messageType = MessageType::AUTHOR_WARNING;
@@ -2752,8 +2753,8 @@ static bool RaiseCMP0037Message(cmake* cm, cmTarget* tgt,
       break;
   }
   if (issueMessage) {
-    e << "The target name \"" << tgt->GetName() << "\" is reserved " << reason
-      << ".";
+    e << "The target name \"" << targetNameAsWritten << "\" is reserved "
+      << reason << ".";
     if (messageType == MessageType::AUTHOR_WARNING) {
       e << "  It may result in undefined behavior.";
     }
@@ -2772,7 +2773,8 @@ bool cmGlobalGenerator::CheckCMP0037(std::string const& targetName,
   if (!tgt) {
     return true;
   }
-  return RaiseCMP0037Message(this->GetCMakeInstance(), tgt, reason);
+  return RaiseCMP0037Message(this->GetCMakeInstance(), tgt, targetName,
+                             reason);
 }
 
 void cmGlobalGenerator::CreateDefaultGlobalTargets(
@@ -2914,6 +2916,53 @@ void cmGlobalGenerator::AddGlobalTarget_Test(
   targets.push_back(std::move(gti));
 }
 
+void cmGlobalGenerator::ReserveGlobalTargetCodegen()
+{
+  // Read the policy value at the end of the top-level CMakeLists.txt file
+  // since it's a global policy that affects the whole project.
+  auto& mf = this->Makefiles[0];
+  const auto policyStatus = mf->GetPolicyStatus(cmPolicies::CMP0171);
+
+  this->AllowGlobalTargetCodegen = (policyStatus == cmPolicies::NEW);
+
+  cmTarget* tgt = this->FindTarget("codegen");
+  if (!tgt) {
+    return;
+  }
+
+  MessageType messageType = MessageType::AUTHOR_WARNING;
+  std::ostringstream e;
+  bool issueMessage = false;
+  switch (policyStatus) {
+    case cmPolicies::WARN:
+      e << cmPolicies::GetPolicyWarning(cmPolicies::CMP0171) << "\n";
+      issueMessage = true;
+      CM_FALLTHROUGH;
+    case cmPolicies::OLD:
+      break;
+    case cmPolicies::NEW:
+    case cmPolicies::REQUIRED_IF_USED:
+    case cmPolicies::REQUIRED_ALWAYS:
+      issueMessage = true;
+      messageType = MessageType::FATAL_ERROR;
+      break;
+  }
+  if (issueMessage) {
+    e << "The target name \"codegen\" is reserved.";
+    this->GetCMakeInstance()->IssueMessage(messageType, e.str(),
+                                           tgt->GetBacktrace());
+    if (messageType == MessageType::FATAL_ERROR) {
+      cmSystemTools::SetFatalErrorOccurred();
+      return;
+    }
+  }
+}
+
+bool cmGlobalGenerator::CheckCMP0171() const
+{
+  return this->AllowGlobalTargetCodegen;
+}
+
 void cmGlobalGenerator::AddGlobalTarget_EditCache(
   std::vector<GlobalTargetInfo>& targets) const
 {
@@ -3048,7 +3097,9 @@ void cmGlobalGenerator::AddGlobalTarget_Install(
     if (const char* install_local = this->GetInstallLocalTargetName()) {
       gti.Name = install_local;
       gti.Message = "Installing only the local directory...";
-      gti.UsesTerminal = true;
+      gti.UsesTerminal =
+        !this->GetCMakeInstance()->GetState()->GetGlobalPropertyAsBool(
+          "INSTALL_PARALLEL");
       gti.CommandLines.clear();
 
       cmCustomCommandLine localCmdLine = singleLine;

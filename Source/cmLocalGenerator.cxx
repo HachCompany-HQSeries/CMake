@@ -595,7 +595,7 @@ void cmLocalGenerator::GenerateInstallRules()
         "CMAKE_GET_RUNTIME_DEPENDENCIES_PLATFORM")) {
     /* clang-format off */
     fout <<
-      "# Set default install directory permissions.\n"
+      "# Set OS and executable format for runtime-dependencies.\n"
       "if(NOT DEFINED CMAKE_GET_RUNTIME_DEPENDENCIES_PLATFORM)\n"
       "  set(CMAKE_GET_RUNTIME_DEPENDENCIES_PLATFORM \""
          << *platform << "\")\n"
@@ -611,7 +611,7 @@ void cmLocalGenerator::GenerateInstallRules()
         this->Makefile->GetDefinition("CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL")) {
     /* clang-format off */
     fout <<
-      "# Set default install directory permissions.\n"
+      "# Set tool for dependency-resolution of runtime-dependencies.\n"
       "if(NOT DEFINED CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL)\n"
       "  set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL \""
          << *command << "\")\n"
@@ -627,7 +627,7 @@ void cmLocalGenerator::GenerateInstallRules()
         "CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND")) {
     /* clang-format off */
     fout <<
-      "# Set default install directory permissions.\n"
+      "# Set path to tool for dependency-resolution of runtime-dependencies.\n"
       "if(NOT DEFINED CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND)\n"
       "  set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND \""
          << *command << "\")\n"
@@ -644,7 +644,7 @@ void cmLocalGenerator::GenerateInstallRules()
   if (cmValue command = this->Makefile->GetDefinition("CMAKE_OBJDUMP")) {
     /* clang-format off */
     fout <<
-      "# Set default install directory permissions.\n"
+      "# Set path to fallback-tool for dependency-resolution.\n"
       "if(NOT DEFINED CMAKE_OBJDUMP)\n"
       "  set(CMAKE_OBJDUMP \""
          << *command << "\")\n"
@@ -717,16 +717,25 @@ void cmLocalGenerator::GenerateInstallRules()
     /* clang-format off */
     fout <<
       "if(CMAKE_INSTALL_COMPONENT)\n"
-      "  set(CMAKE_INSTALL_MANIFEST \"install_manifest_"
+      "  if(CMAKE_INSTALL_COMPONENT MATCHES \"^[a-zA-Z0-9_.+-]+$\")\n"
+      "    set(CMAKE_INSTALL_MANIFEST \"install_manifest_"
       "${CMAKE_INSTALL_COMPONENT}.txt\")\n"
+      "  else()\n"
+      "    string(MD5 CMAKE_INST_COMP_HASH \"${CMAKE_INSTALL_COMPONENT}\")\n"
+      "    set(CMAKE_INSTALL_MANIFEST \"install_manifest_"
+      "${CMAKE_INST_COMP_HASH}.txt\")\n"
+      "    unset(CMAKE_INST_COMP_HASH)\n"
+      "  endif()\n"
       "else()\n"
       "  set(CMAKE_INSTALL_MANIFEST \"install_manifest.txt\")\n"
       "endif()\n"
       "\n"
-      "string(REPLACE \";\" \"\\n\" CMAKE_INSTALL_MANIFEST_CONTENT\n"
+      "if(NOT CMAKE_INSTALL_LOCAL_ONLY)\n"
+      "  string(REPLACE \";\" \"\\n\" CMAKE_INSTALL_MANIFEST_CONTENT\n"
       "       \"${CMAKE_INSTALL_MANIFEST_FILES}\")\n"
-      "file(WRITE \"" << homedir << "/${CMAKE_INSTALL_MANIFEST}\"\n"
-      "     \"${CMAKE_INSTALL_MANIFEST_CONTENT}\")\n";
+      "  file(WRITE \"" << homedir << "/${CMAKE_INSTALL_MANIFEST}\"\n"
+      "     \"${CMAKE_INSTALL_MANIFEST_CONTENT}\")\n"
+      "endif()\n";
     /* clang-format on */
   }
 }
@@ -1478,7 +1487,7 @@ void cmLocalGenerator::GetTargetFlags(
       CM_FALLTHROUGH;
     case cmStateEnums::SHARED_LIBRARY: {
       std::string sharedLibFlags;
-      if (linkLanguage != "Swift") {
+      if (this->IsSplitSwiftBuild() || linkLanguage != "Swift") {
         sharedLibFlags = cmStrCat(
           this->Makefile->GetSafeDefinition(libraryLinkVariable), ' ');
         if (!configUpper.empty()) {
@@ -1521,6 +1530,13 @@ void cmLocalGenerator::GetTargetFlags(
     } break;
     case cmStateEnums::EXECUTABLE: {
       std::string exeFlags;
+      if (linkLanguage.empty()) {
+        cmSystemTools::Error(
+          "CMake can not determine linker language for target: " +
+          target->GetName());
+        return;
+      }
+
       if (linkLanguage != "Swift") {
         exeFlags = this->Makefile->GetSafeDefinition("CMAKE_EXE_LINKER_FLAGS");
         exeFlags += " ";
@@ -1529,28 +1545,22 @@ void cmLocalGenerator::GetTargetFlags(
             cmStrCat("CMAKE_EXE_LINKER_FLAGS_", configUpper));
           exeFlags += " ";
         }
-        if (linkLanguage.empty()) {
-          cmSystemTools::Error(
-            "CMake can not determine linker language for target: " +
-            target->GetName());
-          return;
-        }
+      }
 
-        if (target->IsWin32Executable(config)) {
-          exeFlags += this->Makefile->GetSafeDefinition(
-            cmStrCat("CMAKE_", linkLanguage, "_CREATE_WIN32_EXE"));
-          exeFlags += " ";
-        } else {
-          exeFlags += this->Makefile->GetSafeDefinition(
-            cmStrCat("CMAKE_", linkLanguage, "_CREATE_CONSOLE_EXE"));
-          exeFlags += " ";
-        }
+      if (target->IsWin32Executable(config)) {
+        exeFlags += this->Makefile->GetSafeDefinition(
+          cmStrCat("CMAKE_", linkLanguage, "_CREATE_WIN32_EXE"));
+        exeFlags += " ";
+      } else {
+        exeFlags += this->Makefile->GetSafeDefinition(
+          cmStrCat("CMAKE_", linkLanguage, "_CREATE_CONSOLE_EXE"));
+        exeFlags += " ";
+      }
 
-        if (target->IsExecutableWithExports()) {
-          exeFlags += this->Makefile->GetSafeDefinition(
-            cmStrCat("CMAKE_EXE_EXPORTS_", linkLanguage, "_FLAG"));
-          exeFlags += " ";
-        }
+      if (target->IsExecutableWithExports()) {
+        exeFlags += this->Makefile->GetSafeDefinition(
+          cmStrCat("CMAKE_EXE_EXPORTS_", linkLanguage, "_FLAG"));
+        exeFlags += " ";
       }
 
       this->AddLanguageFlagsForLinking(flags, target, linkLanguage, config);
@@ -2720,15 +2730,10 @@ void cmLocalGenerator::AddPchDependencies(cmGeneratorTarget* target)
         continue;
       }
 
-      std::vector<std::string> architectures;
-      if (!this->GetGlobalGenerator()->IsXcode()) {
-        architectures = target->GetAppleArchs(config, lang);
-      }
-      if (architectures.empty()) {
-        architectures.emplace_back();
-      } else {
+      std::vector<std::string> pchArchs = target->GetPchArchs(config, lang);
+      if (pchArchs.size() > 1) {
         std::string useMultiArchPch;
-        for (const std::string& arch : architectures) {
+        for (const std::string& arch : pchArchs) {
           const std::string pchHeader =
             target->GetPchHeader(config, lang, arch);
           if (!pchHeader.empty()) {
@@ -2745,7 +2750,7 @@ void cmLocalGenerator::AddPchDependencies(cmGeneratorTarget* target)
         }
       }
 
-      for (const std::string& arch : architectures) {
+      for (const std::string& arch : pchArchs) {
         const std::string pchSource = target->GetPchSource(config, lang, arch);
         const std::string pchHeader = target->GetPchHeader(config, lang, arch);
 
@@ -3134,7 +3139,10 @@ void cmLocalGenerator::WriteUnitySourceInclude(
     unity_file << *beforeInclude << "\n";
   }
 
-  unity_file << "/* NOLINTNEXTLINE(bugprone-suspicious-include) */\n";
+  // clang-tidy-17 has new include checks that needs NOLINT too.
+  unity_file
+    << "/* NOLINTNEXTLINE(bugprone-suspicious-include,misc-include-cleaner) "
+       "*/\n";
   unity_file << "#include \"" << sf_full_path << "\"\n";
 
   if (afterInclude) {
@@ -4361,6 +4369,7 @@ void cmLocalGenerator::GenerateFrameworkInfoPList(
   cmLGInfoProp(mf, target, "MACOSX_FRAMEWORK_ICON_FILE");
   cmLGInfoProp(mf, target, "MACOSX_FRAMEWORK_IDENTIFIER");
   cmLGInfoProp(mf, target, "MACOSX_FRAMEWORK_SHORT_VERSION_STRING");
+  cmLGInfoProp(mf, target, "MACOSX_FRAMEWORK_BUNDLE_NAME");
   cmLGInfoProp(mf, target, "MACOSX_FRAMEWORK_BUNDLE_VERSION");
   mf->ConfigureFile(inFile, fname, false, false, false);
 }
@@ -4397,7 +4406,12 @@ void CreateGeneratedSource(cmLocalGenerator& lg, const std::string& output,
   }
 
   // Make sure the output file name has no invalid characters.
-  std::string::size_type pos = output.find_first_of("#<>");
+  const bool hashNotAllowed = lg.GetState()->UseBorlandMake();
+  std::string::size_type pos = output.find_first_of("<>");
+  if (pos == std::string::npos && hashNotAllowed) {
+    pos = output.find_first_of('#');
+  }
+
   if (pos != std::string::npos) {
     lg.GetCMakeInstance()->IssueMessage(
       MessageType::FATAL_ERROR,
@@ -4612,6 +4626,12 @@ void AppendCustomCommandToOutput(cmLocalGenerator& lg,
     if (cmCustomCommand* cc = sf->GetCustomCommand()) {
       cc->AppendCommands(commandLines);
       cc->AppendDepends(depends);
+      if (cc->GetCodegen() && !implicit_depends.empty()) {
+        lg.GetCMakeInstance()->IssueMessage(
+          MessageType::FATAL_ERROR,
+          "Cannot append IMPLICIT_DEPENDS to existing CODEGEN custom "
+          "command.");
+      }
       cc->AppendImplicitDepends(implicit_depends);
       return;
     }

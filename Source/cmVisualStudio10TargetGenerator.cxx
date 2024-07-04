@@ -281,6 +281,16 @@ cmVisualStudio10TargetGenerator::cmVisualStudio10TargetGenerator(
     this->Makefile->GetGeneratorConfigs(cmMakefile::ExcludeEmptyConfig);
   this->NsightTegra = gg->IsNsightTegra();
   this->Android = gg->TargetsAndroid();
+  auto scanProp = target->GetProperty("CXX_SCAN_FOR_MODULES");
+  for (auto const& config : this->Configurations) {
+    if (scanProp.IsSet()) {
+      this->ScanSourceForModuleDependencies[config] = scanProp.IsOn();
+    } else {
+      this->ScanSourceForModuleDependencies[config] =
+        target->NeedCxxDyndep(config) ==
+        cmGeneratorTarget::CxxModuleSupport::Enabled;
+    }
+  }
   for (unsigned int& version : this->NsightTegraVersion) {
     version = 0;
   }
@@ -803,6 +813,7 @@ void cmVisualStudio10TargetGenerator::WriteClassicMsBuildProjectFile(
     this->WriteCustomCommands(e0);
     this->WriteAllSources(e0);
     this->WriteDotNetReferences(e0);
+    this->WriteFrameworkReferences(e0);
     this->WritePackageReferences(e0);
     this->WriteImports(e0);
     this->WriteEmbeddedResourceGroup(e0);
@@ -1175,6 +1186,21 @@ void cmVisualStudio10TargetGenerator::WriteDotNetReference(
     e2.Element("HintPath", hint);
   }
   this->WriteDotNetReferenceCustomTags(e2, ref);
+}
+
+void cmVisualStudio10TargetGenerator::WriteFrameworkReferences(Elem& e0)
+{
+  cmList references;
+  if (cmValue vsFrameworkReferences =
+        this->GeneratorTarget->GetProperty("VS_FRAMEWORK_REFERENCES")) {
+    references.assign(*vsFrameworkReferences);
+  }
+
+  Elem e1(e0, "ItemGroup");
+  for (auto const& ref : references) {
+    Elem e2(e1, "FrameworkReference");
+    e2.Attribute("Include", ref);
+  }
 }
 
 void cmVisualStudio10TargetGenerator::WriteImports(Elem& e0)
@@ -2074,6 +2100,18 @@ void cmVisualStudio10TargetGenerator::WriteGroups()
                    "gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms");
       }
     }
+    {
+      if (cmValue p = this->GeneratorTarget->GetProperty("VS_FILTER_PROPS")) {
+        auto props = *p;
+        if (!props.empty()) {
+          ConvertToWindowsSlash(props);
+          Elem(e0, "Import")
+            .Attribute("Project", props)
+            .Attribute("Condition", cmStrCat("exists('", props, "')"))
+            .Attribute("Label", "LocalAppDataPlatform");
+        }
+      }
+    }
   }
   fout << '\n';
 
@@ -2860,7 +2898,9 @@ void cmVisualStudio10TargetGenerator::OutputSourceSpecificFlags(
     // use them
     if (!flags.empty() || !options.empty() || !configDefines.empty() ||
         !includes.empty() || compileAsPerConfig || noWinRT ||
-        !options.empty() || needsPCHFlags || shouldScanForModules) {
+        !options.empty() || needsPCHFlags ||
+        (shouldScanForModules !=
+         this->ScanSourceForModuleDependencies[config])) {
       cmGlobalVisualStudio10Generator* gg = this->GlobalGenerator;
       cmIDEFlagTable const* flagtable = nullptr;
       const std::string& srclang = source->GetLanguage();
@@ -2888,8 +2928,10 @@ void cmVisualStudio10TargetGenerator::OutputSourceSpecificFlags(
       if (compileAsPerConfig) {
         clOptions.AddFlag("CompileAs", compileAsPerConfig);
       }
-      if (shouldScanForModules) {
-        clOptions.AddFlag("ScanSourceForModuleDependencies", "true");
+      if (shouldScanForModules !=
+          this->ScanSourceForModuleDependencies[config]) {
+        clOptions.AddFlag("ScanSourceForModuleDependencies",
+                          shouldScanForModules ? "true" : "false");
       }
       if (noWinRT) {
         clOptions.AddFlag("CompileAsWinRT", "false");
@@ -3629,8 +3671,9 @@ void cmVisualStudio10TargetGenerator::WriteClOptions(
     }
   }
 
-  // Disable C++ source scanning by default.
-  e2.Element("ScanSourceForModuleDependencies", "false");
+  e2.Element("ScanSourceForModuleDependencies",
+             this->ScanSourceForModuleDependencies[configName] ? "true"
+                                                               : "false");
 }
 
 bool cmVisualStudio10TargetGenerator::ComputeRcOptions()
