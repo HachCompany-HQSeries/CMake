@@ -409,8 +409,6 @@ bool HandleStringsCommand(std::vector<std::string> const& args,
       }
       have_regex = true;
       switch (status.GetMakefile().GetPolicyStatus(cmPolicies::CMP0159)) {
-        case cmPolicies::REQUIRED_IF_USED:
-        case cmPolicies::REQUIRED_ALWAYS:
         case cmPolicies::NEW:
           // store_regex = true
           break;
@@ -685,8 +683,6 @@ bool HandleGlobImpl(std::vector<std::string> const& args, bool recurse,
     status.GetMakefile().GetPolicyStatus(cmPolicies::CMP0009);
   if (recurse) {
     switch (policyStatus) {
-      case cmPolicies::REQUIRED_IF_USED:
-      case cmPolicies::REQUIRED_ALWAYS:
       case cmPolicies::NEW:
         g.RecurseThroughSymlinksOff();
         break;
@@ -839,8 +835,6 @@ bool HandleGlobImpl(std::vector<std::string> const& args, bool recurse,
   }
 
   switch (policyStatus) {
-    case cmPolicies::REQUIRED_IF_USED:
-    case cmPolicies::REQUIRED_ALWAYS:
     case cmPolicies::NEW:
       // Correct behavior, yay!
       break;
@@ -1110,7 +1104,7 @@ bool HandleRPathChangeCommand(std::vector<std::string> const& args,
   if (!cmSystemTools::ChangeRPath(file, *oldRPath, *newRPath,
                                   removeEnvironmentRPath, &emsg, &changed)) {
     status.SetError(cmStrCat("RPATH_CHANGE could not write new RPATH:\n  ",
-                             *newRPath, "\nto the file:\n  ", file, "\n",
+                             *newRPath, "\nto the file:\n  ", file, '\n',
                              emsg));
     success = false;
   }
@@ -1165,7 +1159,7 @@ bool HandleRPathSetCommand(std::vector<std::string> const& args,
 
   if (!cmSystemTools::SetRPath(file, *newRPath, &emsg, &changed)) {
     status.SetError(cmStrCat("RPATH_SET could not write new RPATH:\n  ",
-                             *newRPath, "\nto the file:\n  ", file, "\n",
+                             *newRPath, "\nto the file:\n  ", file, '\n',
                              emsg));
     success = false;
   }
@@ -1215,7 +1209,7 @@ bool HandleRPathRemoveCommand(std::vector<std::string> const& args,
   if (!cmSystemTools::RemoveRPath(file, &emsg, &removed)) {
     status.SetError(
       cmStrCat("RPATH_REMOVE could not remove RPATH from file: \n  ", file,
-               "\n", emsg));
+               '\n', emsg));
     success = false;
   }
   if (success) {
@@ -1389,8 +1383,6 @@ bool HandleRealPathCommand(std::vector<std::string> const& args,
   cmPolicies::PolicyStatus policyStatus =
     status.GetMakefile().GetPolicyStatus(cmPolicies::CMP0152);
   switch (policyStatus) {
-    case cmPolicies::REQUIRED_IF_USED:
-    case cmPolicies::REQUIRED_ALWAYS:
     case cmPolicies::NEW:
       break;
     case cmPolicies::WARN:
@@ -1409,8 +1401,7 @@ bool HandleRealPathCommand(std::vector<std::string> const& args,
       auto basePath = cmCMakePath{ *arguments.BaseDirectory };
       path = basePath.Append(path);
     }
-    result = cmSystemTools::GetActualCaseForPath(
-      cmSystemTools::GetRealPath(path.String()));
+    result = cmSystemTools::GetRealPath(path.String());
   };
 
   std::string realPath;
@@ -1437,6 +1428,13 @@ bool HandleRealPathCommand(std::vector<std::string> const& args,
       }
     }
     realPath = oldPolicyPath;
+  }
+
+  if (!cmSystemTools::FileExists(realPath)) {
+    status.GetMakefile().IssueMessage(
+      MessageType::AUTHOR_WARNING,
+      cmStrCat("Given path:\n  ", input,
+               "\ndoes not refer to an existing path on disk."));
   }
 
   status.GetMakefile().AddDefinition(args[2], realPath);
@@ -1540,7 +1538,7 @@ bool HandleRename(std::vector<std::string> const& args,
       break;
   }
   status.SetError(cmStrCat("RENAME failed to rename\n  ", oldname, "\nto\n  ",
-                           newname, "\nbecause: ", err, "\n"));
+                           newname, "\nbecause: ", err, '\n'));
   return false;
 }
 
@@ -1633,7 +1631,7 @@ bool HandleCopyFile(std::vector<std::string> const& args,
       status.GetMakefile().AddDefinition(arguments.Result, err);
     } else {
       status.SetError(cmStrCat("COPY_FILE failed to copy\n  ", oldname,
-                               "\nto\n  ", newname, "\nbecause: ", err, "\n"));
+                               "\nto\n  ", newname, "\nbecause: ", err, '\n'));
       result = false;
     }
   }
@@ -1733,6 +1731,9 @@ bool HandleNativePathCommand(std::vector<std::string> const& args,
 
 #if !defined(CMAKE_BOOTSTRAP)
 
+const bool TLS_VERIFY_DEFAULT = true;
+const std::string TLS_VERSION_DEFAULT = "1.2";
+
 // Stuff for curl download/upload
 using cmFileCommandVectorOfChar = std::vector<char>;
 
@@ -1821,7 +1822,7 @@ public:
 
     if (updated) {
       status =
-        cmStrCat("[", this->Text, " ", this->CurrentPercentage, "% complete]");
+        cmStrCat('[', this->Text, ' ', this->CurrentPercentage, "% complete]");
     }
 
     return updated;
@@ -1925,8 +1926,8 @@ bool HandleDownloadCommand(std::vector<std::string> const& args,
   long inactivity_timeout = 0;
   std::string logVar;
   std::string statusVar;
-  cm::optional<std::string> tls_version;
-  cm::optional<bool> tls_verify;
+  cm::optional<std::string> tlsVersionOpt;
+  cm::optional<bool> tlsVerifyOpt;
   cmValue cainfo = status.GetMakefile().GetDefinition("CMAKE_TLS_CAINFO");
   std::string netrc_level =
     status.GetMakefile().GetSafeDefinition("CMAKE_NETRC");
@@ -1975,7 +1976,7 @@ bool HandleDownloadCommand(std::vector<std::string> const& args,
     } else if (*i == "TLS_VERSION") {
       ++i;
       if (i != args.end()) {
-        tls_version = *i;
+        tlsVersionOpt = *i;
       } else {
         status.SetError("DOWNLOAD missing value for TLS_VERSION.");
         return false;
@@ -1983,7 +1984,7 @@ bool HandleDownloadCommand(std::vector<std::string> const& args,
     } else if (*i == "TLS_VERIFY") {
       ++i;
       if (i != args.end()) {
-        tls_verify = cmIsOn(*i);
+        tlsVerifyOpt = cmIsOn(*i);
       } else {
         status.SetError("DOWNLOAD missing bool value for TLS_VERIFY.");
         return false;
@@ -2091,28 +2092,38 @@ bool HandleDownloadCommand(std::vector<std::string> const& args,
     ++i;
   }
 
-  if (!tls_verify) {
+  if (!tlsVerifyOpt.has_value()) {
     if (cmValue v = status.GetMakefile().GetDefinition("CMAKE_TLS_VERIFY")) {
-      tls_verify = v.IsOn();
+      tlsVerifyOpt = v.IsOn();
     }
   }
-  if (!tls_verify) {
+  if (!tlsVerifyOpt.has_value()) {
     if (cm::optional<std::string> v =
           cmSystemTools::GetEnvVar("CMAKE_TLS_VERIFY")) {
-      tls_verify = cmIsOn(*v);
+      tlsVerifyOpt = cmIsOn(*v);
     }
+  }
+  bool tlsVerifyDefaulted = false;
+  if (!tlsVerifyOpt.has_value()) {
+    tlsVerifyOpt = TLS_VERIFY_DEFAULT;
+    tlsVerifyDefaulted = true;
   }
 
-  if (!tls_version) {
+  if (!tlsVersionOpt.has_value()) {
     if (cmValue v = status.GetMakefile().GetDefinition("CMAKE_TLS_VERSION")) {
-      tls_version = *v;
+      tlsVersionOpt = *v;
     }
   }
-  if (!tls_version) {
+  if (!tlsVersionOpt.has_value()) {
     if (cm::optional<std::string> v =
           cmSystemTools::GetEnvVar("CMAKE_TLS_VERSION")) {
-      tls_version = std::move(v);
+      tlsVersionOpt = std::move(v);
     }
+  }
+  bool tlsVersionDefaulted = false;
+  if (!tlsVersionOpt.has_value()) {
+    tlsVersionOpt = TLS_VERSION_DEFAULT;
+    tlsVersionDefaulted = true;
   }
 
   // Can't calculate hash if we don't save the file.
@@ -2166,8 +2177,9 @@ bool HandleDownloadCommand(std::vector<std::string> const& args,
   url = cmCurlFixFileURL(url);
 
   ::CURL* curl;
+  cmCurlInitOnce();
   ::curl_global_init(CURL_GLOBAL_DEFAULT);
-  curl = ::curl_easy_init();
+  curl = cm_curl_easy_init();
   if (!curl) {
     status.SetError("DOWNLOAD error initializing curl.");
     return false;
@@ -2181,7 +2193,10 @@ bool HandleDownloadCommand(std::vector<std::string> const& args,
   res = ::curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1);
   check_curl_result(res, "DOWNLOAD cannot set http failure option: ");
 
-  res = ::curl_easy_setopt(curl, CURLOPT_USERAGENT, "curl/" LIBCURL_VERSION);
+  curl_version_info_data* cv = curl_version_info(CURLVERSION_FIRST);
+  res = ::curl_easy_setopt(
+    curl, CURLOPT_USERAGENT,
+    cmStrCat("curl/", cv ? cv->version : LIBCURL_VERSION).c_str());
   check_curl_result(res, "DOWNLOAD cannot set user agent option: ");
 
   res = ::curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, cmWriteToFileCallback);
@@ -2191,21 +2206,24 @@ bool HandleDownloadCommand(std::vector<std::string> const& args,
                            cmFileCommandCurlDebugCallback);
   check_curl_result(res, "DOWNLOAD cannot set debug function: ");
 
-  if (tls_version) {
-    if (cm::optional<int> v = cmCurlParseTLSVersion(*tls_version)) {
+  if (tlsVersionOpt.has_value()) {
+    if (cm::optional<int> v = cmCurlParseTLSVersion(*tlsVersionOpt)) {
       res = ::curl_easy_setopt(curl, CURLOPT_SSLVERSION, *v);
-      check_curl_result(
-        res,
-        cmStrCat("DOWNLOAD cannot set TLS/SSL version ", *tls_version, ": "));
+      if (tlsVersionDefaulted && res == CURLE_NOT_BUILT_IN) {
+        res = CURLE_OK;
+      }
+      check_curl_result(res,
+                        cmStrCat("DOWNLOAD cannot set TLS/SSL version ",
+                                 *tlsVersionOpt, ": "));
     } else {
       status.SetError(
-        cmStrCat("DOWNLOAD given unknown TLS/SSL version ", *tls_version));
+        cmStrCat("DOWNLOAD given unknown TLS/SSL version ", *tlsVersionOpt));
       return false;
     }
   }
 
   // check to see if TLS verification is requested
-  if (tls_verify && *tls_verify) {
+  if (tlsVerifyOpt.has_value() && tlsVerifyOpt.value()) {
     res = ::curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1);
     check_curl_result(res, "DOWNLOAD cannot set TLS/SSL Verify on: ");
   } else {
@@ -2306,9 +2324,17 @@ bool HandleDownloadCommand(std::vector<std::string> const& args,
   ::curl_easy_cleanup(curl);
 
   if (!statusVar.empty()) {
+    std::string m = curl_easy_strerror(res);
+    if ((res == CURLE_SSL_CONNECT_ERROR ||
+         res == CURLE_PEER_FAILED_VERIFICATION) &&
+        tlsVerifyDefaulted) {
+      m = cmStrCat(
+        std::move(m),
+        ".  If this is due to https certificate verification failure, one may "
+        "set environment variable CMAKE_TLS_VERIFY=0 to suppress it.");
+    }
     status.GetMakefile().AddDefinition(
-      statusVar,
-      cmStrCat(static_cast<int>(res), ";\"", ::curl_easy_strerror(res), "\""));
+      statusVar, cmStrCat(static_cast<int>(res), ";\"", std::move(m), '"'));
   }
 
   ::curl_global_cleanup();
@@ -2393,8 +2419,8 @@ bool HandleUploadCommand(std::vector<std::string> const& args,
   std::string logVar;
   std::string statusVar;
   bool showProgress = false;
-  cm::optional<std::string> tls_version;
-  cm::optional<bool> tls_verify;
+  cm::optional<std::string> tlsVersionOpt;
+  cm::optional<bool> tlsVerifyOpt;
   cmValue cainfo = status.GetMakefile().GetDefinition("CMAKE_TLS_CAINFO");
   std::string userpwd;
   std::string netrc_level =
@@ -2440,7 +2466,7 @@ bool HandleUploadCommand(std::vector<std::string> const& args,
     } else if (*i == "TLS_VERSION") {
       ++i;
       if (i != args.end()) {
-        tls_version = *i;
+        tlsVersionOpt = *i;
       } else {
         status.SetError("UPLOAD missing value for TLS_VERSION.");
         return false;
@@ -2448,7 +2474,7 @@ bool HandleUploadCommand(std::vector<std::string> const& args,
     } else if (*i == "TLS_VERIFY") {
       ++i;
       if (i != args.end()) {
-        tls_verify = cmIsOn(*i);
+        tlsVerifyOpt = cmIsOn(*i);
       } else {
         status.SetError("UPLOAD missing bool value for TLS_VERIFY.");
         return false;
@@ -2500,28 +2526,38 @@ bool HandleUploadCommand(std::vector<std::string> const& args,
     ++i;
   }
 
-  if (!tls_verify) {
+  if (!tlsVerifyOpt.has_value()) {
     if (cmValue v = status.GetMakefile().GetDefinition("CMAKE_TLS_VERIFY")) {
-      tls_verify = v.IsOn();
+      tlsVerifyOpt = v.IsOn();
     }
   }
-  if (!tls_verify) {
+  if (!tlsVerifyOpt.has_value()) {
     if (cm::optional<std::string> v =
           cmSystemTools::GetEnvVar("CMAKE_TLS_VERIFY")) {
-      tls_verify = cmIsOn(*v);
+      tlsVerifyOpt = cmIsOn(*v);
     }
+  }
+  bool tlsVerifyDefaulted = false;
+  if (!tlsVerifyOpt.has_value()) {
+    tlsVerifyOpt = TLS_VERIFY_DEFAULT;
+    tlsVerifyDefaulted = true;
   }
 
-  if (!tls_version) {
+  if (!tlsVersionOpt.has_value()) {
     if (cmValue v = status.GetMakefile().GetDefinition("CMAKE_TLS_VERSION")) {
-      tls_version = *v;
+      tlsVersionOpt = *v;
     }
   }
-  if (!tls_version) {
+  if (!tlsVersionOpt.has_value()) {
     if (cm::optional<std::string> v =
           cmSystemTools::GetEnvVar("CMAKE_TLS_VERSION")) {
-      tls_version = std::move(v);
+      tlsVersionOpt = std::move(v);
     }
+  }
+  bool tlsVersionDefaulted = false;
+  if (!tlsVersionOpt.has_value()) {
+    tlsVersionOpt = TLS_VERSION_DEFAULT;
+    tlsVersionDefaulted = true;
   }
 
   // Open file for reading:
@@ -2539,8 +2575,9 @@ bool HandleUploadCommand(std::vector<std::string> const& args,
   url = cmCurlFixFileURL(url);
 
   ::CURL* curl;
+  cmCurlInitOnce();
   ::curl_global_init(CURL_GLOBAL_DEFAULT);
-  curl = ::curl_easy_init();
+  curl = cm_curl_easy_init();
   if (!curl) {
     status.SetError("UPLOAD error initializing curl.");
     fclose(fin);
@@ -2568,21 +2605,24 @@ bool HandleUploadCommand(std::vector<std::string> const& args,
                            cmFileCommandCurlDebugCallback);
   check_curl_result(res, "UPLOAD cannot set debug function: ");
 
-  if (tls_version) {
-    if (cm::optional<int> v = cmCurlParseTLSVersion(*tls_version)) {
+  if (tlsVersionOpt.has_value()) {
+    if (cm::optional<int> v = cmCurlParseTLSVersion(*tlsVersionOpt)) {
       res = ::curl_easy_setopt(curl, CURLOPT_SSLVERSION, *v);
+      if (tlsVersionDefaulted && res == CURLE_NOT_BUILT_IN) {
+        res = CURLE_OK;
+      }
       check_curl_result(
         res,
-        cmStrCat("UPLOAD cannot set TLS/SSL version ", *tls_version, ": "));
+        cmStrCat("UPLOAD cannot set TLS/SSL version ", *tlsVersionOpt, ": "));
     } else {
       status.SetError(
-        cmStrCat("UPLOAD given unknown TLS/SSL version ", *tls_version));
+        cmStrCat("UPLOAD given unknown TLS/SSL version ", *tlsVersionOpt));
       return false;
     }
   }
 
   // check to see if TLS verification is requested
-  if (tls_verify && *tls_verify) {
+  if (tlsVerifyOpt.has_value() && tlsVerifyOpt.value()) {
     res = ::curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1);
     check_curl_result(res, "UPLOAD cannot set TLS/SSL Verify on: ");
   } else {
@@ -2685,9 +2725,17 @@ bool HandleUploadCommand(std::vector<std::string> const& args,
   ::curl_easy_cleanup(curl);
 
   if (!statusVar.empty()) {
+    std::string m = curl_easy_strerror(res);
+    if ((res == CURLE_SSL_CONNECT_ERROR ||
+         res == CURLE_PEER_FAILED_VERIFICATION) &&
+        tlsVerifyDefaulted) {
+      m = cmStrCat(
+        std::move(m),
+        ".  If this is due to https certificate verification failure, one may "
+        "set environment variable CMAKE_TLS_VERIFY=0 to suppress it.");
+    }
     status.GetMakefile().AddDefinition(
-      statusVar,
-      cmStrCat(static_cast<int>(res), ";\"", ::curl_easy_strerror(res), "\""));
+      statusVar, cmStrCat(static_cast<int>(res), ";\"", std::move(m), '"'));
   }
 
   ::curl_global_cleanup();
@@ -3042,7 +3090,7 @@ bool HandleLockCommand(std::vector<std::string> const& args,
   if (resultVariable.empty() && !fileLockResult.IsOk()) {
     status.GetMakefile().IssueMessage(
       MessageType::FATAL_ERROR,
-      cmStrCat("error locking file\n  \"", path, "\"\n", result, "."));
+      cmStrCat("error locking file\n  \"", path, "\"\n", result, '.'));
     cmSystemTools::SetFatalErrorOccurred();
     return false;
   }
@@ -3291,7 +3339,7 @@ bool HandleGetRuntimeDependenciesCommand(std::vector<std::string> const& args,
         platform)) {
     status.SetError(
       cmStrCat("GET_RUNTIME_DEPENDENCIES is not supported on system \"",
-               platform, "\""));
+               platform, '"'));
     cmSystemTools::SetFatalErrorOccurred();
     return false;
   }
@@ -3358,7 +3406,7 @@ bool HandleGetRuntimeDependenciesCommand(std::vector<std::string> const& args,
     parser.Parse(cmMakeRange(args).advance(1), &unrecognizedArguments);
   auto argIt = unrecognizedArguments.begin();
   if (argIt != unrecognizedArguments.end()) {
-    status.SetError(cmStrCat("Unrecognized argument: \"", *argIt, "\""));
+    status.SetError(cmStrCat("Unrecognized argument: \"", *argIt, '"'));
     cmSystemTools::SetFatalErrorOccurred();
     return false;
   }
@@ -3490,7 +3538,7 @@ bool HandleConfigureCommand(std::vector<std::string> const& args,
   auto argIt = unrecognizedArguments.begin();
   if (argIt != unrecognizedArguments.end()) {
     status.SetError(
-      cmStrCat("CONFIGURE Unrecognized argument: \"", *argIt, "\""));
+      cmStrCat("CONFIGURE Unrecognized argument: \"", *argIt, '"'));
     cmSystemTools::SetFatalErrorOccurred();
     return false;
   }
@@ -3602,6 +3650,7 @@ bool HandleArchiveCreateCommand(std::vector<std::string> const& args,
     // accepted without one and treated as if an empty value were given.
     // Fixing this would require a policy.
     ArgumentParser::Maybe<std::string> MTime;
+    std::string WorkingDirectory;
     bool Verbose = false;
     // "PATHS" requires at least one value, but use a custom check below.
     ArgumentParser::MaybeEmpty<std::vector<std::string>> Paths;
@@ -3614,6 +3663,7 @@ bool HandleArchiveCreateCommand(std::vector<std::string> const& args,
       .Bind("COMPRESSION"_s, &Arguments::Compression)
       .Bind("COMPRESSION_LEVEL"_s, &Arguments::CompressionLevel)
       .Bind("MTIME"_s, &Arguments::MTime)
+      .Bind("WORKING_DIRECTORY"_s, &Arguments::WorkingDirectory)
       .Bind("VERBOSE"_s, &Arguments::Verbose)
       .Bind("PATHS"_s, &Arguments::Paths);
 
@@ -3622,7 +3672,7 @@ bool HandleArchiveCreateCommand(std::vector<std::string> const& args,
     parser.Parse(cmMakeRange(args).advance(1), &unrecognizedArguments);
   auto argIt = unrecognizedArguments.begin();
   if (argIt != unrecognizedArguments.end()) {
-    status.SetError(cmStrCat("Unrecognized argument: \"", *argIt, "\""));
+    status.SetError(cmStrCat("Unrecognized argument: \"", *argIt, '"'));
     cmSystemTools::SetFatalErrorOccurred();
     return false;
   }
@@ -3713,7 +3763,8 @@ bool HandleArchiveCreateCommand(std::vector<std::string> const& args,
     return false;
   }
 
-  if (!cmSystemTools::CreateTar(parsedArgs.Output, parsedArgs.Paths, compress,
+  if (!cmSystemTools::CreateTar(parsedArgs.Output, parsedArgs.Paths,
+                                parsedArgs.WorkingDirectory, compress,
                                 parsedArgs.Verbose, parsedArgs.MTime,
                                 parsedArgs.Format, compressionLevel)) {
     status.SetError(cmStrCat("failed to compress: ", parsedArgs.Output));
@@ -3750,7 +3801,7 @@ bool HandleArchiveExtractCommand(std::vector<std::string> const& args,
     parser.Parse(cmMakeRange(args).advance(1), &unrecognizedArguments);
   auto argIt = unrecognizedArguments.begin();
   if (argIt != unrecognizedArguments.end()) {
-    status.SetError(cmStrCat("Unrecognized argument: \"", *argIt, "\""));
+    status.SetError(cmStrCat("Unrecognized argument: \"", *argIt, '"'));
     cmSystemTools::SetFatalErrorOccurred();
     return false;
   }
@@ -3775,7 +3826,7 @@ bool HandleArchiveExtractCommand(std::vector<std::string> const& args,
       if (cmSystemTools::FileIsFullPath(parsedArgs.Destination)) {
         destDir = parsedArgs.Destination;
       } else {
-        destDir = cmStrCat(destDir, "/", parsedArgs.Destination);
+        destDir = cmStrCat(destDir, '/', parsedArgs.Destination);
       }
 
       if (!cmSystemTools::MakeDirectory(destDir)) {
@@ -3786,14 +3837,13 @@ bool HandleArchiveExtractCommand(std::vector<std::string> const& args,
 
       if (!cmSystemTools::FileIsFullPath(inFile)) {
         inFile =
-          cmStrCat(cmSystemTools::GetCurrentWorkingDirectory(), "/", inFile);
+          cmStrCat(cmSystemTools::GetLogicalWorkingDirectory(), '/', inFile);
       }
     }
 
     cmWorkingDirectory workdir(destDir);
     if (workdir.Failed()) {
-      status.SetError(
-        cmStrCat("failed to change working directory to: ", destDir));
+      status.SetError(workdir.GetError());
       cmSystemTools::SetFatalErrorOccurred();
       return false;
     }

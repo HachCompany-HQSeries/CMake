@@ -78,6 +78,7 @@ public:
 
   //! Set/Get the name of the target
   const std::string& GetName() const;
+  const std::string& GetTemplateName() const;
 
   //! Get the policy map
   cmPolicies::PolicyMap const& GetPolicyMap() const;
@@ -234,6 +235,9 @@ public:
   //! Return whether this target is a shared library Framework on Apple.
   bool IsFrameworkOnApple() const;
 
+  //! Return whether to archive shared library or not on AIX.
+  bool IsArchivedAIXSharedLibrary() const;
+
   //! Return whether this target is an executable Bundle on Apple.
   bool IsAppBundleOnApple() const;
 
@@ -333,9 +337,6 @@ public:
   bool HasFileSets() const;
 
 private:
-  template <typename ValueType>
-  void StoreProperty(const std::string& prop, ValueType value);
-
   // Internal representation details.
   friend class cmGeneratorTarget;
 

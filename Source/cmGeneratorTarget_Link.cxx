@@ -54,6 +54,20 @@ const std::string kINTERFACE_LINK_LIBRARIES_DIRECT =
   "INTERFACE_LINK_LIBRARIES_DIRECT";
 const std::string kINTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE =
   "INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE";
+
+unsigned int CheckLinkLibrariesSuppressionRAIICount;
+void MaybeEnableCheckLinkLibraries(cmOptionalLinkImplementation& impl)
+{
+  if (CheckLinkLibrariesSuppressionRAIICount == 0) {
+    impl.CheckLinkLibraries = true;
+  }
+}
+void MaybeEnableCheckLinkLibraries(cmOptionalLinkInterface& iface)
+{
+  if (CheckLinkLibrariesSuppressionRAIICount == 0) {
+    iface.CheckLinkLibraries = true;
+  }
+}
 }
 
 class cmTargetCollectLinkLanguages
@@ -372,7 +386,8 @@ void cmGeneratorTarget::CheckLinkLibraries() const
     // There could be several entries used when computing the pre-CMP0022
     // default link interface.  Check only the entry for our own link impl.
     auto const hmi = hm.find(this);
-    if (hmi == hm.end() || !hmi->second.LibrariesDone) {
+    if (hmi == hm.end() || !hmi->second.LibrariesDone ||
+        !hmi->second.CheckLinkLibraries) {
       continue;
     }
     for (cmLinkImplItem const& item : hmi->second.Libraries) {
@@ -392,7 +407,7 @@ void cmGeneratorTarget::CheckLinkLibraries() const
   // should be a subset of LinkInterfaceMap (with LINK_ONLY left out).
   for (auto const& hmp : this->LinkInterfaceMap) {
     for (auto const& hmi : hmp.second) {
-      if (!hmi.second.LibrariesDone) {
+      if (!hmi.second.LibrariesDone || !hmi.second.CheckLinkLibraries) {
         continue;
       }
       for (cmLinkItem const& item : hmi.second.Libraries) {
@@ -406,6 +421,18 @@ void cmGeneratorTarget::CheckLinkLibraries() const
       }
     }
   }
+}
+
+cmGeneratorTarget::CheckLinkLibrariesSuppressionRAII::
+  CheckLinkLibrariesSuppressionRAII()
+{
+  ++CheckLinkLibrariesSuppressionRAIICount;
+}
+
+cmGeneratorTarget::CheckLinkLibrariesSuppressionRAII::
+  ~CheckLinkLibrariesSuppressionRAII()
+{
+  --CheckLinkLibrariesSuppressionRAIICount;
 }
 
 namespace {
@@ -432,8 +459,6 @@ bool cmGeneratorTarget::VerifyLinkItemColons(LinkItemRole role,
     } break;
     case cmPolicies::OLD:
       return true;
-    case cmPolicies::REQUIRED_IF_USED:
-    case cmPolicies::REQUIRED_ALWAYS:
     case cmPolicies::NEW:
       // Issue the fatal message.
       break;
@@ -642,6 +667,7 @@ cmLinkInterface const* cmGeneratorTarget::GetLinkInterface(
   if (secondPass) {
     iface = cmOptionalLinkInterface();
   }
+  MaybeEnableCheckLinkLibraries(iface);
   if (!iface.LibrariesDone) {
     iface.LibrariesDone = true;
     this->ComputeLinkInterfaceLibraries(config, iface, head, UseTo::Link);
@@ -655,13 +681,6 @@ cmLinkInterface const* cmGeneratorTarget::GetLinkInterface(
   }
 
   return iface.Exists ? &iface : nullptr;
-}
-
-void cmGeneratorTarget::ComputeLinkInterface(
-  const std::string& config, cmOptionalLinkInterface& iface,
-  cmGeneratorTarget const* headTarget) const
-{
-  this->ComputeLinkInterface(config, iface, headTarget, false);
 }
 
 void cmGeneratorTarget::ComputeLinkInterface(
@@ -765,6 +784,7 @@ const cmLinkInterfaceLibraries* cmGeneratorTarget::GetLinkInterfaceLibraries(
   }
 
   cmOptionalLinkInterface& iface = hm[head];
+  MaybeEnableCheckLinkLibraries(iface);
   if (!iface.LibrariesDone) {
     iface.LibrariesDone = true;
     this->ComputeLinkInterfaceLibraries(config, iface, head, usage);
@@ -1034,6 +1054,7 @@ const cmLinkInterface* cmGeneratorTarget::GetImportLinkInterface(
   if (secondPass) {
     iface = cmOptionalLinkInterface();
   }
+  MaybeEnableCheckLinkLibraries(iface);
   if (!iface.AllDone) {
     iface.AllDone = true;
     iface.LibrariesDone = true;
@@ -1106,6 +1127,7 @@ const cmLinkImplementation* cmGeneratorTarget::GetLinkImplementation(
   if (secondPass) {
     impl = cmOptionalLinkImplementation();
   }
+  MaybeEnableCheckLinkLibraries(impl);
   if (!impl.LibrariesDone) {
     impl.LibrariesDone = true;
     this->ComputeLinkImplementationLibraries(config, impl, this, usage);
@@ -1162,6 +1184,7 @@ cmGeneratorTarget::GetLinkImplementationLibrariesInternal(
   }
 
   cmOptionalLinkImplementation& impl = hm[head];
+  MaybeEnableCheckLinkLibraries(impl);
   if (!impl.LibrariesDone) {
     impl.LibrariesDone = true;
     this->ComputeLinkImplementationLibraries(config, impl, head, usage);
@@ -1298,8 +1321,6 @@ void cmGeneratorTarget::ComputeLinkImplementationLibraries(
         case cmPolicies::WARN:
         case cmPolicies::OLD:
           break;
-        case cmPolicies::REQUIRED_IF_USED:
-        case cmPolicies::REQUIRED_ALWAYS:
         case cmPolicies::NEW:
           dagChecker.SetTransitivePropertiesOnlyCMP0131();
           break;
@@ -1358,8 +1379,6 @@ void cmGeneratorTarget::ComputeLinkImplementationLibraries(
             case cmPolicies::OLD:
               noMessage = true;
               break;
-            case cmPolicies::REQUIRED_IF_USED:
-            case cmPolicies::REQUIRED_ALWAYS:
             case cmPolicies::NEW:
               // Issue the fatal message.
               break;
@@ -1423,8 +1442,7 @@ void cmGeneratorTarget::ComputeLinkImplementationLibraries(
   std::vector<std::string> debugConfigs =
     this->Makefile->GetCMakeInstance()->GetDebugConfigs();
 
-  cmTargetLinkLibraryType linkType =
-    CMP0003_ComputeLinkType(config, debugConfigs);
+  cmTargetLinkLibraryType linkType = ComputeLinkType(config, debugConfigs);
   cmTarget::LinkLibraryVectorType const& oldllibs =
     this->Target->GetOriginalLinkLibraries();
 

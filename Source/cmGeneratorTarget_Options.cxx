@@ -7,6 +7,7 @@
 #include "cmConfigure.h"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <string>
@@ -91,10 +92,16 @@ void processOptions(cmGeneratorTarget const* tgt,
   }
 }
 
+enum class NestedLinkerFlags
+{
+  PreserveAsSpelled,
+  Normalize
+};
+
 std::vector<BT<std::string>> wrapOptions(
   std::vector<std::string>& options, const cmListFileBacktrace& bt,
   const std::vector<std::string>& wrapperFlag, const std::string& wrapperSep,
-  bool concatFlagAndArgs)
+  bool concatFlagAndArgs, NestedLinkerFlags nestedLinkerFlags)
 {
   std::vector<BT<std::string>> result;
 
@@ -108,6 +115,48 @@ std::vector<BT<std::string>> wrapOptions(
     for (std::string& o : options) {
       result.emplace_back(std::move(o), bt);
     }
+    return result;
+  }
+
+  auto insertWrapped = [&](std::vector<std::string>& opts) {
+    if (!wrapperSep.empty()) {
+      if (concatFlagAndArgs) {
+        // insert flag elements except last one
+        for (auto i = wrapperFlag.begin(); i != wrapperFlag.end() - 1; ++i) {
+          result.emplace_back(*i, bt);
+        }
+        // concatenate last flag element and all list values
+        // in one option
+        result.emplace_back(wrapperFlag.back() + cmJoin(opts, wrapperSep), bt);
+      } else {
+        for (std::string const& i : wrapperFlag) {
+          result.emplace_back(i, bt);
+        }
+        // concatenate all list values in one option
+        result.emplace_back(cmJoin(opts, wrapperSep), bt);
+      }
+    } else {
+      // prefix each element of list with wrapper
+      if (concatFlagAndArgs) {
+        std::transform(opts.begin(), opts.end(), opts.begin(),
+                       [&wrapperFlag](std::string const& o) -> std::string {
+                         return wrapperFlag.back() + o;
+                       });
+      }
+      for (std::string& o : opts) {
+        for (auto i = wrapperFlag.begin(),
+                  e = concatFlagAndArgs ? wrapperFlag.end() - 1
+                                        : wrapperFlag.end();
+             i != e; ++i) {
+          result.emplace_back(*i, bt);
+        }
+        result.emplace_back(std::move(o), bt);
+      }
+    }
+  };
+
+  if (nestedLinkerFlags == NestedLinkerFlags::PreserveAsSpelled) {
+    insertWrapped(options);
     return result;
   }
 
@@ -154,40 +203,7 @@ std::vector<BT<std::string>> wrapOptions(
       continue;
     }
 
-    if (!wrapperSep.empty()) {
-      if (concatFlagAndArgs) {
-        // insert flag elements except last one
-        for (auto i = wrapperFlag.begin(); i != wrapperFlag.end() - 1; ++i) {
-          result.emplace_back(*i, bt);
-        }
-        // concatenate last flag element and all list values
-        // in one option
-        result.emplace_back(wrapperFlag.back() + cmJoin(opts, wrapperSep), bt);
-      } else {
-        for (std::string const& i : wrapperFlag) {
-          result.emplace_back(i, bt);
-        }
-        // concatenate all list values in one option
-        result.emplace_back(cmJoin(opts, wrapperSep), bt);
-      }
-    } else {
-      // prefix each element of list with wrapper
-      if (concatFlagAndArgs) {
-        std::transform(opts.begin(), opts.end(), opts.begin(),
-                       [&wrapperFlag](std::string const& o) -> std::string {
-                         return wrapperFlag.back() + o;
-                       });
-      }
-      for (std::string& o : opts) {
-        for (auto i = wrapperFlag.begin(),
-                  e = concatFlagAndArgs ? wrapperFlag.end() - 1
-                                        : wrapperFlag.end();
-             i != e; ++i) {
-          result.emplace_back(*i, bt);
-        }
-        result.emplace_back(std::move(o), bt);
-      }
-    }
+    insertWrapped(opts);
   }
   return result;
 }
@@ -347,8 +363,6 @@ std::vector<BT<std::string>> cmGeneratorTarget::GetCompileDefinitions(
             this, config, language, &dagChecker, *entry));
         } break;
         case cmPolicies::NEW:
-        case cmPolicies::REQUIRED_ALWAYS:
-        case cmPolicies::REQUIRED_IF_USED:
           break;
       }
     }
@@ -484,8 +498,9 @@ std::vector<BT<std::string>> cmGeneratorTarget::GetLinkOptions(
         // host link options must be wrapped
         std::vector<std::string> options;
         cmSystemTools::ParseUnixCommandLine(it->Value.c_str(), options);
-        auto hostOptions = wrapOptions(options, it->Backtrace, wrapperFlag,
-                                       wrapperSep, concatFlagAndArgs);
+        auto hostOptions =
+          wrapOptions(options, it->Backtrace, wrapperFlag, wrapperSep,
+                      concatFlagAndArgs, NestedLinkerFlags::Normalize);
         it = result.erase(it);
         // some compilers (like gcc 4.8 or Intel 19.0 or XLC 16) do not respect
         // C++11 standard: 'std::vector::insert()' do not returns an iterator,
@@ -510,77 +525,90 @@ std::vector<BT<std::string>> cmGeneratorTarget::GetLinkOptions(
   return result;
 }
 
-std::vector<BT<std::string>>& cmGeneratorTarget::ResolveLinkerWrapper(
-  std::vector<BT<std::string>>& result, const std::string& language,
-  bool joinItems) const
+std::vector<BT<std::string>>& cmGeneratorTarget::ResolvePrefixWrapper(
+  std::vector<BT<std::string>>& result, cm::string_view prefix,
+  const std::string& language, bool joinItems) const
 {
-  // replace "LINKER:" prefixed elements by actual linker wrapper
+  // replace "LINKER:" or "ARCHIVER:" prefixed elements by actual linker or
+  // archiver wrapper
   const std::string wrapper(this->Makefile->GetSafeDefinition(
-    "CMAKE_" + language +
-    (this->IsDeviceLink() ? "_DEVICE_LINKER_WRAPPER_FLAG"
-                          : "_LINKER_WRAPPER_FLAG")));
+    cmStrCat("CMAKE_", language, (this->IsDeviceLink() ? "_DEVICE_" : "_"),
+             prefix, "_WRAPPER_FLAG")));
   cmList wrapperFlag{ wrapper };
   const std::string wrapperSep(this->Makefile->GetSafeDefinition(
-    "CMAKE_" + language +
-    (this->IsDeviceLink() ? "_DEVICE_LINKER_WRAPPER_FLAG_SEP"
-                          : "_LINKER_WRAPPER_FLAG_SEP")));
+    cmStrCat("CMAKE_", language, (this->IsDeviceLink() ? "_DEVICE_" : "_"),
+             prefix, "_WRAPPER_FLAG_SEP")));
   bool concatFlagAndArgs = true;
   if (!wrapperFlag.empty() && wrapperFlag.back() == " ") {
     concatFlagAndArgs = false;
     wrapperFlag.pop_back();
   }
 
-  const std::string LINKER{ "LINKER:" };
+  const std::string PREFIX{ cmStrCat(prefix, ':') };
   const std::string SHELL{ "SHELL:" };
-  const std::string LINKER_SHELL = LINKER + SHELL;
+  const std::string PREFIX_SHELL = cmStrCat(PREFIX, SHELL);
 
-  std::vector<BT<std::string>>::iterator entry;
-  while ((entry = std::find_if(result.begin(), result.end(),
-                               [&LINKER](BT<std::string> const& item) -> bool {
-                                 return item.Value.compare(0, LINKER.length(),
-                                                           LINKER) == 0;
-                               })) != result.end()) {
+  for (auto entry = result.begin(); entry != result.end();) {
+    if (entry->Value.compare(0, PREFIX.length(), PREFIX) != 0) {
+      ++entry;
+      continue;
+    }
+
     std::string value = std::move(entry->Value);
     cmListFileBacktrace bt = std::move(entry->Backtrace);
     entry = result.erase(entry);
 
-    std::vector<std::string> linkerOptions;
-    if (value.compare(0, LINKER_SHELL.length(), LINKER_SHELL) == 0) {
+    std::vector<std::string> options;
+    if (value.compare(0, PREFIX_SHELL.length(), PREFIX_SHELL) == 0) {
       cmSystemTools::ParseUnixCommandLine(
-        value.c_str() + LINKER_SHELL.length(), linkerOptions);
+        value.c_str() + PREFIX_SHELL.length(), options);
     } else {
-      linkerOptions = cmTokenize(value.substr(LINKER.length()), ",");
+      options =
+        cmTokenize(value.substr(PREFIX.length()), ',', cmTokenizerMode::New);
     }
 
-    if (linkerOptions.empty() ||
-        (linkerOptions.size() == 1 && linkerOptions.front().empty())) {
+    if (options.empty()) {
       continue;
     }
 
     // for now, raise an error if prefix SHELL: is part of arguments
-    if (std::find_if(linkerOptions.begin(), linkerOptions.end(),
+    if (std::find_if(options.begin(), options.end(),
                      [&SHELL](const std::string& item) -> bool {
                        return item.find(SHELL) != std::string::npos;
-                     }) != linkerOptions.end()) {
+                     }) != options.end()) {
       this->LocalGenerator->GetCMakeInstance()->IssueMessage(
         MessageType::FATAL_ERROR,
-        "'SHELL:' prefix is not supported as part of 'LINKER:' arguments.",
+        cmStrCat("'SHELL:' prefix is not supported as part of '", prefix,
+                 ":' arguments."),
         this->GetBacktrace());
       return result;
     }
 
-    std::vector<BT<std::string>> options = wrapOptions(
-      linkerOptions, bt, wrapperFlag, wrapperSep, concatFlagAndArgs);
+    // Very old versions of the C++ standard library return void for insert, so
+    // can't use it to get the new iterator
+    const auto index = entry - result.begin();
+    std::vector<BT<std::string>> processedOptions =
+      wrapOptions(options, bt, wrapperFlag, wrapperSep, concatFlagAndArgs,
+                  NestedLinkerFlags::PreserveAsSpelled);
     if (joinItems) {
-      result.insert(entry,
-                    cmJoin(cmRange<decltype(options.cbegin())>(
-                             options.cbegin(), options.cend()),
-                           " "_s));
+      result.insert(
+        entry,
+        cmJoin(cmMakeRange(processedOptions.begin(), processedOptions.end()),
+               " "_s));
+      entry = std::next(result.begin(), index + 1);
     } else {
-      result.insert(entry, options.begin(), options.end());
+      result.insert(entry, processedOptions.begin(), processedOptions.end());
+      entry = std::next(result.begin(), index + processedOptions.size());
     }
   }
   return result;
+}
+
+std::vector<BT<std::string>>& cmGeneratorTarget::ResolveLinkerWrapper(
+  std::vector<BT<std::string>>& result, const std::string& language,
+  bool joinItems) const
+{
+  return this->ResolvePrefixWrapper(result, "LINKER"_s, language, joinItems);
 }
 
 void cmGeneratorTarget::GetStaticLibraryLinkOptions(
@@ -615,7 +643,18 @@ std::vector<BT<std::string>> cmGeneratorTarget::GetStaticLibraryLinkOptions(
   processOptions(this, entries, result, uniqueOptions, false,
                  "static library link options", OptionsParse::Shell);
 
+  // Last step: replace "ARCHIVER:" prefixed elements by
+  // actual archiver wrapper
+  this->ResolveArchiverWrapper(result, language);
+
   return result;
+}
+
+std::vector<BT<std::string>>& cmGeneratorTarget::ResolveArchiverWrapper(
+  std::vector<BT<std::string>>& result, const std::string& language,
+  bool joinItems) const
+{
+  return this->ResolvePrefixWrapper(result, "ARCHIVER"_s, language, joinItems);
 }
 
 void cmGeneratorTarget::GetLinkDepends(std::vector<std::string>& result,

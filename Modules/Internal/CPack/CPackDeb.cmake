@@ -238,7 +238,7 @@ function(cpack_deb_prepare_package_vars)
     endforeach()
 
     # Only dynamically linked ELF files are included
-    # Extract only file name infront of ":"
+    # Extract only file name in front of ":"
     foreach(_FILE IN LISTS CPACK_DEB_INSTALL_FILES)
       if(_FILE MATCHES "ELF.*dynamically linked")
         string(REGEX MATCH "(^.*):" _FILE_NAME "${_FILE}")
@@ -589,7 +589,6 @@ function(cpack_deb_prepare_package_vars)
       list(JOIN COMPONENT_DEPENDS ", " COMPONENT_DEPENDS)
       if(COMPONENT_DEPENDS)
         list(PREPEND CPACK_DEBIAN_PACKAGE_DEPENDS ${COMPONENT_DEPENDS})
-        list(JOIN CPACK_DEBIAN_PACKAGE_DEPENDS ", " CPACK_DEBIAN_PACKAGE_DEPENDS)
       endif()
     endif()
   endif()
@@ -599,9 +598,9 @@ function(cpack_deb_prepare_package_vars)
   # Append automatically discovered dependencies .
   if(CPACK_DEBIAN_PACKAGE_AUTO_DEPENDS)
     list(APPEND CPACK_DEBIAN_PACKAGE_DEPENDS ${CPACK_DEBIAN_PACKAGE_AUTO_DEPENDS})
-    list(JOIN CPACK_DEBIAN_PACKAGE_DEPENDS ", " CPACK_DEBIAN_PACKAGE_DEPENDS)
   endif()
 
+  list(JOIN CPACK_DEBIAN_PACKAGE_DEPENDS ", " CPACK_DEBIAN_PACKAGE_DEPENDS)
   if(NOT CPACK_DEBIAN_PACKAGE_DEPENDS)
     message(STATUS "CPACK_DEBIAN_PACKAGE_DEPENDS not set, the package will have no dependencies.")
   endif()

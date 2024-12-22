@@ -795,6 +795,16 @@ in cmake-style format.
   When the ``NORMALIZE`` option is specified, the path is :ref:`normalized
   <Normalization>` after the conversion.
 
+.. genex:: $<PATH:NATIVE_PATH[,NORMALIZE],path...>
+
+  .. versionadded:: 3.32
+
+  Returns ``path`` converted into a native format with platform-specific
+  slashes (``\`` on Windows hosts and ``/`` elsewhere).
+
+  When the ``NORMALIZE`` option is specified, the path is :ref:`normalized
+  <Normalization>` before the conversion.
+
 .. genex:: $<PATH:APPEND,path...,input,...>
 
   .. versionadded:: 3.24
@@ -1876,6 +1886,14 @@ These expressions look up the values of
     name occurs in the directory of the target specifying the requirement,
     rather than the directory of the consuming target for which the
     expression is being evaluated.
+
+  .. versionchanged:: 3.31
+    Generator expressions for transitive interface properties, such as
+    ``$<TARGET_PROPERTY:target,INTERFACE_*>``, now correctly handle
+    repeated evaluations within nested generator expressions.
+    Previously, these repeated evaluations returned empty values due
+    to an optimization for transitive closures.
+    This change ensures consistent evaluation for non-union operations.
 
 .. genex:: $<TARGET_PROPERTY:prop>
   :target: TARGET_PROPERTY:prop

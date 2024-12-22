@@ -1,9 +1,6 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
    file Copyright.txt or https://cmake.org/licensing for details.  */
 
-#include <functional>
-#include <initializer_list>
-#include <iostream>
 #include <map>
 #include <string>
 #include <utility>
@@ -15,6 +12,8 @@
 
 #include "cmArgumentParser.h"
 #include "cmArgumentParserTypes.h"
+
+#include "testCommon.h"
 
 namespace {
 
@@ -181,14 +180,6 @@ bool verifyResult(Result const& result,
   };
   static std::vector<std::string> const unparsed = { "pos2", "bar", "ign1",
                                                      "ign2", "ign4" };
-
-#define ASSERT_TRUE(x)                                                        \
-  do {                                                                        \
-    if (!(x)) {                                                               \
-      std::cout << "ASSERT_TRUE(" #x ") failed on line " << __LINE__ << "\n"; \
-      return false;                                                           \
-    }                                                                         \
-  } while (false)
 
   ASSERT_TRUE(!result);
 

@@ -93,6 +93,16 @@ bool cmGlobalVisualStudioGenerator::InitializePlatform(cmMakefile*)
   return true;
 }
 
+cmValue cmGlobalVisualStudioGenerator::GetDebuggerWorkingDirectory(
+  cmGeneratorTarget* gt) const
+{
+  if (cmValue ret = gt->GetProperty("VS_DEBUGGER_WORKING_DIRECTORY")) {
+    return ret;
+  } else {
+    return cmGlobalGenerator::GetDebuggerWorkingDirectory(gt);
+  }
+}
+
 std::string const& cmGlobalVisualStudioGenerator::GetPlatformName() const
 {
   if (!this->GeneratorPlatform.empty()) {
@@ -104,8 +114,6 @@ std::string const& cmGlobalVisualStudioGenerator::GetPlatformName() const
 const char* cmGlobalVisualStudioGenerator::GetIDEVersion() const
 {
   switch (this->Version) {
-    case cmGlobalVisualStudioGenerator::VSVersion::VS12:
-      return "12.0";
     case cmGlobalVisualStudioGenerator::VSVersion::VS14:
       return "14.0";
     case cmGlobalVisualStudioGenerator::VSVersion::VS15:
@@ -125,14 +133,6 @@ void cmGlobalVisualStudioGenerator::WriteSLNHeader(std::ostream& fout)
   fout << '\n';
 
   switch (this->Version) {
-    case cmGlobalVisualStudioGenerator::VSVersion::VS12:
-      fout << "Microsoft Visual Studio Solution File, Format Version 12.00\n";
-      if (this->ExpressEdition) {
-        fout << "# Visual Studio Express 2013 for Windows Desktop\n";
-      } else {
-        fout << "# Visual Studio 2013\n";
-      }
-      break;
     case cmGlobalVisualStudioGenerator::VSVersion::VS14:
       // Visual Studio 14 writes .sln format 12.00
       fout << "Microsoft Visual Studio Solution File, Format Version 12.00\n";

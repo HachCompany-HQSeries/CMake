@@ -14,14 +14,20 @@
 #include "cmSystemTools.h"
 #include "cmValue.h"
 
+namespace {
+const bool TLS_VERIFY_DEFAULT = true;
+const int TLS_VERSION_DEFAULT = CURL_SSLVERSION_TLSv1_2;
+}
+
 cmCTestCurl::cmCTestCurl(cmCTest* ctest)
   : CTest(ctest)
   , CurlOpts(ctest)
 {
   this->SetProxyType();
+  cmCurlInitOnce();
   // In windows, this will init the winsock stuff
   ::curl_global_init(CURL_GLOBAL_ALL);
-  this->Curl = curl_easy_init();
+  this->Curl = cm_curl_easy_init();
 }
 
 cmCTestCurl::~cmCTestCurl()
@@ -60,6 +66,9 @@ cmCTestCurlOpts::cmCTestCurlOpts(cmCTest* ctest)
 {
   this->TLSVersionOpt =
     cmCurlParseTLSVersion(ctest->GetCTestConfiguration("TLSVersion"));
+  if (!this->TLSVersionOpt.has_value()) {
+    this->TLSVersionOpt = TLS_VERSION_DEFAULT;
+  }
 
   std::string tlsVerify = ctest->GetCTestConfiguration("TLSVerify");
   if (!tlsVerify.empty()) {
@@ -75,6 +84,9 @@ cmCTestCurlOpts::cmCTestCurlOpts(cmCTest* ctest)
       }
     }
   }
+  if (!this->TLSVerifyOpt.has_value()) {
+    this->TLSVerifyOpt = TLS_VERIFY_DEFAULT;
+  }
 }
 
 bool cmCTestCurl::InitCurl()
@@ -83,11 +95,11 @@ bool cmCTestCurl::InitCurl()
     return false;
   }
   cmCurlSetCAInfo(this->Curl);
-  if (this->CurlOpts.TLSVersionOpt) {
+  if (this->CurlOpts.TLSVersionOpt.has_value()) {
     curl_easy_setopt(this->Curl, CURLOPT_SSLVERSION,
                      *this->CurlOpts.TLSVersionOpt);
   }
-  if (this->CurlOpts.TLSVerifyOpt) {
+  if (this->CurlOpts.TLSVerifyOpt.has_value()) {
     curl_easy_setopt(this->Curl, CURLOPT_SSL_VERIFYPEER,
                      *this->CurlOpts.TLSVerifyOpt ? 1 : 0);
   }

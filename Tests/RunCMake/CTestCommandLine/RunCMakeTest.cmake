@@ -7,6 +7,36 @@ set(ENV{no_proxy} "$ENV{no_proxy},badhostname.invalid")
 
 set(RunCMake_TEST_TIMEOUT 60)
 
+block()
+  set(RunCMake_TEST_BINARY_DIR ${RunCMake_BINARY_DIR}/FailureLabels)
+  set(RunCMake_TEST_NO_CLEAN 1)
+  file(REMOVE_RECURSE "${RunCMake_TEST_BINARY_DIR}")
+  file(MAKE_DIRECTORY "${RunCMake_TEST_BINARY_DIR}")
+  file(WRITE "${RunCMake_TEST_BINARY_DIR}/CTestTestfile.cmake" "
+add_test(ShortName \"${CMAKE_COMMAND}\" -E false)
+set_tests_properties(ShortName PROPERTIES LABELS \"Label1;Label2\")
+add_test(LongerName \"${CMAKE_COMMAND}\" -E false)
+set_tests_properties(LongerName PROPERTIES LABELS \"Label3\")
+add_test(Long_Test_Name_That_Is_Over_Fifty_Characters_In_Length \"${CMAKE_COMMAND}\" -E false)
+set_tests_properties(Long_Test_Name_That_Is_Over_Fifty_Characters_In_Length PROPERTIES LABELS \"Label4\")
+")
+  run_cmake_command(FailureLabels ${CMAKE_CTEST_COMMAND})
+endblock()
+
+block()
+  set(RunCMake_TEST_BINARY_DIR ${RunCMake_BINARY_DIR}/PrintLabels)
+  set(RunCMake_TEST_NO_CLEAN 1)
+  file(REMOVE_RECURSE "${RunCMake_TEST_BINARY_DIR}")
+  file(MAKE_DIRECTORY "${RunCMake_TEST_BINARY_DIR}")
+  file(WRITE "${RunCMake_TEST_BINARY_DIR}/CTestTestfile.cmake" "
+add_test(A \"${CMAKE_COMMAND}\" -E true)
+set_tests_properties(A PROPERTIES LABELS \"Label1;Label2\")
+add_test(B \"${CMAKE_COMMAND}\" -E true)
+set_tests_properties(B PROPERTIES LABELS \"Label3\")
+")
+  run_cmake_command(PrintLabels ${CMAKE_CTEST_COMMAND} --print-labels)
+endblock()
+
 run_cmake_command(repeat-opt-bad1
   ${CMAKE_CTEST_COMMAND} --repeat until-pass
   )
@@ -325,6 +355,9 @@ function(run_TestOutputSize)
   set(RunCMake_TEST_NO_CLEAN 1)
   file(REMOVE_RECURSE "${RunCMake_TEST_BINARY_DIR}")
   file(MAKE_DIRECTORY "${RunCMake_TEST_BINARY_DIR}")
+  file(WRITE "${RunCMake_TEST_BINARY_DIR}/DartConfiguration.tcl" "
+BuildDirectory: ${RunCMake_TEST_BINARY_DIR}
+")
   file(WRITE "${RunCMake_TEST_BINARY_DIR}/CTestTestfile.cmake" "
   add_test(PassingTest \"${CMAKE_COMMAND}\" -E echo PassingTestOutput)
   add_test(FailingTest \"${CMAKE_COMMAND}\" -E no_such_command)
@@ -345,6 +378,9 @@ function(run_TestOutputTruncation mode expected)
   set(TRUNCATED_OUTPUT ${expected})  # used in TestOutputTruncation-check.cmake
   file(REMOVE_RECURSE "${RunCMake_TEST_BINARY_DIR}")
   file(MAKE_DIRECTORY "${RunCMake_TEST_BINARY_DIR}")
+  file(WRITE "${RunCMake_TEST_BINARY_DIR}/DartConfiguration.tcl" "
+BuildDirectory: ${RunCMake_TEST_BINARY_DIR}
+")
   file(WRITE "${RunCMake_TEST_BINARY_DIR}/CTestTestfile.cmake" "
   add_test(Truncation_${mode} \"${CMAKE_COMMAND}\" -E echo 123456789)
 ")
@@ -433,10 +469,14 @@ function(run_ShowOnly)
   file(WRITE "${RunCMake_TEST_BINARY_DIR}/CTestTestfile.cmake" "
     add_test(ShowOnly \"${CMAKE_COMMAND}\" -E echo)
     set_tests_properties(ShowOnly PROPERTIES
-      WILL_FAIL true
+      GENERATED_RESOURCE_SPEC_FILE \"/Path/Does/Not/Exist\"
       RESOURCE_GROUPS \"2,threads:2,gpus:4;gpus:2,threads:4\"
       REQUIRED_FILES RequiredFileDoesNotExist
       _BACKTRACE_TRIPLES \"file1;1;add_test;file0;;\"
+      TIMEOUT 1234.5
+      TIMEOUT_SIGNAL_NAME SIGINT
+      TIMEOUT_SIGNAL_GRACE_PERIOD 2.1
+      WILL_FAIL true
       USER_DEFINED_A \"User defined property A value\"
       USER_DEFINED_B \"User defined property B value\"
       )

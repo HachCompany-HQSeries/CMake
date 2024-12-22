@@ -50,6 +50,10 @@ It has the following subdirectories:
   Clients may optionally create the ``reply/`` directory at any time
   and monitor it for the appearance of a new reply index file.
 
+.. versionadded:: 3.31
+  Users can add query files to ``api/v1/query`` inside the
+  :envvar:`CMAKE_CONFIG_DIR` to create user-wide queries for all CMake projects.
+
 v1 Shared Stateless Query Files
 -------------------------------
 
@@ -431,7 +435,7 @@ Version 1 does not exist to avoid confusion with that from
 
   {
     "kind": "codemodel",
-    "version": { "major": 2, "minor": 7 },
+    "version": { "major": 2, "minor": 8 },
     "paths": {
       "source": "/path/to/top-level-source-dir",
       "build": "/path/to/top-level-build-dir"
@@ -1090,6 +1094,22 @@ with members:
     Optional member that is present with boolean value ``true``
     when link-time optimization (a.k.a. interprocedural optimization
     or link-time code generation) is enabled.
+
+``debugger``
+  Optional member that is present when the target has one of the
+  following fields set.
+  The value is a JSON object of entries corresponding to
+  debugger specific values set.
+
+  This field was added in codemodel version 2.8.
+
+  ``workingDirectory``
+    Optional member that is present when the DEBUGGER_WORKING_DIRECTORY
+    target property is set.
+    The member will also be present in Visual Studio Generator
+    scenarios when VS_DEBUGGER_WORKING_DIRECTORY is set.
+
+    This field was added in codemodel version 2.8.
 
 ``dependencies``
   Optional member that is present when the target depends on other targets.

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 if(POLICY CMP0126)
   cmake_policy(SET CMP0126 NEW)
 endif()
@@ -32,7 +32,10 @@ add_subdirectory(SubC)
 add_subdirectory(SubD)
 add_subdirectory(SubE)
 
-set(CMAKE_Swift_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/swift)
+add_subdirectory("Sub Space")
+
+set(CMAKE_Swift_MODULE_DIRECTORY
+  "${CMAKE_BINARY_DIR}/modules/$<IF:$<CONFIG:Debug>,debug/,release/>swift")
 
 add_executable(SwiftOnly main.swift)
 target_compile_definitions(SwiftOnly PRIVATE SWIFTONLY)

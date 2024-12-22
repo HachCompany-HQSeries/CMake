@@ -164,8 +164,6 @@ void processIncludeDirectories(cmGeneratorTarget const* tgt,
             case cmPolicies::OLD:
               messageType = MessageType::AUTHOR_WARNING;
               break;
-            case cmPolicies::REQUIRED_ALWAYS:
-            case cmPolicies::REQUIRED_IF_USED:
             case cmPolicies::NEW:
               break;
           }
@@ -204,8 +202,6 @@ void processIncludeDirectories(cmGeneratorTarget const* tgt,
             case cmPolicies::OLD:
               noMessage = true;
               break;
-            case cmPolicies::REQUIRED_IF_USED:
-            case cmPolicies::REQUIRED_ALWAYS:
             case cmPolicies::NEW:
               // Issue the fatal message.
               break;
@@ -309,7 +305,7 @@ std::vector<BT<std::string>> cmGeneratorTarget::GetIncludeDirectories(
           this->GetLinkImplementationLibraries(config, UseTo::Compile)) {
       for (cmLinkImplItem const& lib : impl->Libraries) {
         std::string libDir;
-        if (lib.Target == nullptr) {
+        if (!lib.Target) {
           libDir = cmSystemTools::CollapseFullPath(
             lib.AsStr(), this->Makefile->GetHomeOutputDirectory());
         } else if (lib.Target->Target->IsFrameworkOnApple() ||

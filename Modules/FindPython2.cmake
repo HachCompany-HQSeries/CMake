@@ -321,9 +321,9 @@ Hints
 
   .. note::
 
-    If the component ``Development`` is requested, it is **strongly**
-    recommended to also include the component ``Interpreter`` to get expected
-    result.
+    If the component ``Development`` is requested (or one of its
+    sub-components) and is not found or the wrong artifacts are returned,
+    including also the component ``Interpreter`` may be helpful.
 
 ``Python2_FIND_IMPLEMENTATIONS``
   .. versionadded:: 3.18
@@ -339,7 +339,7 @@ Hints
     See `IronPython <https://ironpython.net>`_.
   * ``PyPy``: This implementation use ``RPython`` language and
     ``RPython translation toolchain`` to produce the python interpreter.
-    See `PyPy <https://www.pypy.org>`_.
+    See `PyPy <https://pypy.org>`_.
 
   The default value is:
 

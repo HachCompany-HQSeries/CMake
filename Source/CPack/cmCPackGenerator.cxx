@@ -3,7 +3,6 @@
 #include "cmCPackGenerator.h"
 
 #include <algorithm>
-#include <cstring>
 #include <memory>
 #include <utility>
 
@@ -52,10 +51,9 @@ cmCPackGenerator::~cmCPackGenerator()
 }
 
 void cmCPackGenerator::DisplayVerboseOutput(const std::string& msg,
-                                            float progress)
+                                            float /*unused*/)
 {
-  (void)progress;
-  cmCPackLogger(cmCPackLog::LOG_VERBOSE, "" << msg << std::endl);
+  cmCPackLogger(cmCPackLog::LOG_VERBOSE, msg << std::endl);
 }
 
 int cmCPackGenerator::PrepareNames()
@@ -434,10 +432,7 @@ int cmCPackGenerator::InstallProjectViaInstalledDirectories(
         cmWorkingDirectory workdir(goToDir);
         if (workdir.Failed()) {
           cmCPackLogger(cmCPackLog::LOG_ERROR,
-                        "Failed to change working directory to "
-                          << goToDir << " : "
-                          << std::strerror(workdir.GetLastResult())
-                          << std::endl);
+                        workdir.GetError() << std::endl);
           return 0;
         }
         for (auto const& symlinked : symlinkedFiles) {
@@ -967,7 +962,7 @@ int cmCPackGenerator::InstallCMakeProject(
       std::string absoluteDestFileComponent =
         std::string("CPACK_ABSOLUTE_DESTINATION_FILES") + "_" +
         this->GetComponentInstallSuffix(component);
-      if (nullptr != this->GetOption(absoluteDestFileComponent)) {
+      if (this->GetOption(absoluteDestFileComponent)) {
         std::string absoluteDestFilesListComponent =
           cmStrCat(this->GetOption(absoluteDestFileComponent), ';', *d);
         this->SetOption(absoluteDestFileComponent,
@@ -1266,7 +1261,7 @@ int cmCPackGenerator::Initialize(const std::string& name, cmMakefile* mf)
   if (val1 != val2) {
     // One variable is set but not the other?
     // Then set the other variable to the same value (even if it is invalid).
-    if (val1.Get() != nullptr && val2.Get() == nullptr) {
+    if (val1.Get() && !val2.Get()) {
       cmCPackLogger(cmCPackLog::LOG_WARNING,
                     "Variable CPACK_TEMPORARY_INSTALL_DIRECTORY is set, which "
                     "is not recommended. For backwards-compatibility we will "
@@ -1274,7 +1269,7 @@ int cmCPackGenerator::Initialize(const std::string& name, cmMakefile* mf)
                     "proceed. However, better set neither of them!"
                       << std::endl);
       this->MakefileMap->AddDefinition("CPACK_TEMPORARY_DIRECTORY", val1);
-    } else if (val1.Get() == nullptr && val2.Get() != nullptr) {
+    } else if (!val1.Get() && val2.Get()) {
       cmCPackLogger(
         cmCPackLog::LOG_WARNING,
         "Variable CPACK_TEMPORARY_DIRECTORY is set, which is not recommended."
@@ -1301,7 +1296,7 @@ int cmCPackGenerator::Initialize(const std::string& name, cmMakefile* mf)
                       << std::endl);
       return 0;
     }
-  } else if (val1.Get() != nullptr && val2.Get() != nullptr) {
+  } else if (val1.Get() && val2.Get()) {
     cmCPackLogger(cmCPackLog::LOG_WARNING,
                   "Variables CPACK_TEMPORARY_DIRECTORY and "
                   "CPACK_TEMPORARY_INSTALL_DIRECTORY are both set. Because "
@@ -1321,6 +1316,15 @@ int cmCPackGenerator::InitializeInternal()
 bool cmCPackGenerator::IsSet(const std::string& name) const
 {
   return this->MakefileMap->IsSet(name);
+}
+
+cmValue cmCPackGenerator::GetOptionIfSet(const std::string& name) const
+{
+  cmValue ret = this->MakefileMap->GetDefinition(name);
+  if (!ret || ret->empty() || cmIsNOTFOUND(*ret)) {
+    return {};
+  }
+  return ret;
 }
 
 bool cmCPackGenerator::IsOn(const std::string& name) const
@@ -1552,6 +1556,7 @@ std::string cmCPackGenerator::GetSanitizedDirOrFileName(
 #ifdef _WIN32
     // Given name matches a reserved name (on Windows)?
     // Then return it prepended with an underscore.
+    // See https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file
     cmsys::RegularExpression reserved_pattern("^("
                                               "[Cc][Oo][Nn]|"
                                               "[Pp][Rr][Nn]|"
@@ -1559,7 +1564,7 @@ std::string cmCPackGenerator::GetSanitizedDirOrFileName(
                                               "[Nn][Uu][Ll]|"
                                               "[Cc][Oo][Mm][1-9]|"
                                               "[Ll][Pp][Tt][1-9]"
-                                              ")([.].+)?");
+                                              ")[.]?$");
     if (reserved_pattern.find(name)) {
       return "_" + name;
     }

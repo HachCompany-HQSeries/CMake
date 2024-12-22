@@ -1,9 +1,11 @@
 set(CMAKE_EXPERIMENTAL_EXPORT_PACKAGE_DEPENDENCIES "1942b4fa-b2c5-4546-9385-83f254070067")
-cmake_minimum_required (VERSION 2.7.20090711)
+cmake_minimum_required(VERSION 2.8.11) # old enough to not set CMP0022
 if(POLICY CMP0129)
   cmake_policy(SET CMP0129 NEW)
 endif()
 project(Export C CXX)
+
+set(CMAKE_AIX_SHARED_LIBRARY_ARCHIVE 1)
 
 find_package(Foo REQUIRED CONFIG NO_DEFAULT_PATH)
 
@@ -28,6 +30,9 @@ set_property(TARGET testExe2 PROPERTY LINK_INTERFACE_LIBRARIES testExe2lib)
 add_library(compileOnly INTERFACE)
 target_compile_definitions(compileOnly INTERFACE FROM_compileOnly)
 target_link_options(compileOnly INTERFACE -fthis-flag-does-not-exist)
+
+add_library(noUses INTERFACE)
+target_link_libraries(noUses INTERFACE this::target_does_not_exist)
 
 add_library(testLib1 STATIC testLib1.c)
 add_library(testLib2 STATIC testLib2.c)
@@ -479,6 +484,9 @@ add_library(testMod1 MODULE empty.cpp)
 add_library(testMod2 MODULE empty.cpp)
 set_property(TARGET testMod2 PROPERTY BUNDLE 1)
 
+add_library(testSharedObjectAIX SHARED testSharedObjectAIX.c)
+set_property(TARGET testSharedObjectAIX PROPERTY AIX_SHARED_LIBRARY_ARCHIVE 0)
+
 install(TARGETS testLibRequired
         EXPORT RequiredExp DESTINATION lib
         INCLUDES DESTINATION
@@ -601,6 +609,7 @@ install(FILES
 install(
   TARGETS
   compileOnly
+  noUses
   testExe1 testLib1 testLib2 testExe2 testLib3 testLib4 testExe3 testExe4
   testExe2lib testLib4lib testLib4libdbg testLib4libopt
   testLib6 testLib7 testLib8
@@ -618,6 +627,7 @@ install(
   systemlib
   testInterfaceIncludeUser
   testInterfaceIncludeUser2
+  testSharedObjectAIX
   EXPORT exp
   RUNTIME DESTINATION $<1:bin>$<0:/wrong>
   LIBRARY DESTINATION $<1:lib>$<0:/wrong> NAMELINK_SKIP
@@ -676,7 +686,7 @@ export(TARGETS testExe1 testLib1 testLib2 testLib3
   testSharedLibDepends renamed_on_export
   cmp0022NEW cmp0022OLD
   TopDirLib SubDirLinkA
-  systemlib
+  systemlib noUses
   testInterfaceIncludeUser
   testInterfaceIncludeUser2
   NAMESPACE bld_
@@ -695,6 +705,7 @@ export(TARGETS testExe2 testLib4 testLib5 testLib6 testLib7 testExe3 testExe4 te
   testExeWithPluginHelper testExePluginHelperObj
   testMod1 testMod2
   testLibPerConfigDest
+  testSharedObjectAIX
   NAMESPACE bld_
   APPEND FILE ExportBuildTree.cmake
   )

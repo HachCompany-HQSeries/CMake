@@ -99,8 +99,6 @@ protected:
 private:
   using Options = cmVS7GeneratorOptions;
   using FCInfo = cmLocalVisualStudio7GeneratorFCInfo;
-  std::string GetBuildTypeLinkerFlags(std::string const& rootLinkerFlags,
-                                      const std::string& configName);
   void FixGlobalTargets();
   void WriteVCProjHeader(std::ostream& fout, const std::string& libName,
                          cmGeneratorTarget* tgt,
@@ -119,12 +117,14 @@ private:
   void OutputTargetRules(std::ostream& fout, const std::string& configName,
                          cmGeneratorTarget* target,
                          const std::string& libName);
-  void OutputBuildTool(std::ostream& fout, const std::string& configName,
-                       cmGeneratorTarget* t, const Options& targetOptions);
+  void OutputBuildTool(std::ostream& fout, const std::string& linkLanguage,
+                       const std::string& configName, cmGeneratorTarget* t,
+                       const Options& targetOptions);
   void OutputDeploymentDebuggerTool(std::ostream& fout,
                                     std::string const& config,
                                     cmGeneratorTarget* target);
   void OutputLibraryDirectories(std::ostream& fout,
+                                std::vector<std::string> const& stdlink,
                                 std::vector<std::string> const& dirs);
   void WriteProjectSCC(std::ostream& fout, cmGeneratorTarget* target);
   void WriteProjectStart(std::ostream& fout, const std::string& libName,

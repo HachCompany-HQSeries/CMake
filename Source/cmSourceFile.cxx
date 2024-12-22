@@ -226,8 +226,6 @@ bool cmSourceFile::FindFullPath(std::string* error,
         err = cmStrCat(err, " .", ext);
       }
       break;
-    case cmPolicies::REQUIRED_IF_USED:
-    case cmPolicies::REQUIRED_ALWAYS:
     case cmPolicies::NEW:
       break;
   }
@@ -236,7 +234,7 @@ bool cmSourceFile::FindFullPath(std::string* error,
            "specifier or another FILE_SET within the target_sources() "
            "command.";
   }
-  if (error != nullptr) {
+  if (error) {
     *error = std::move(err);
   } else {
     makefile->IssueMessage(MessageType::FATAL_ERROR, err);
