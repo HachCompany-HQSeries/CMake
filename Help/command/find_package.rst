@@ -26,7 +26,7 @@ Typical Usage
 
 Most calls to ``find_package()`` typically have the following form:
 
-.. parsed-literal::
+.. code-block:: cmake
 
   find_package(<PackageName> [<version>] [REQUIRED] [COMPONENTS <components>...])
 
@@ -88,9 +88,9 @@ The command has a few modes by which it searches for packages:
     mode", "package configuration files", and so forth refer equally to both
     CPS and CMake-script files.  However, some features of ``find_package``
     are not supported at this time when a CPS file is found.  In particular,
-    no attempt to validate whether a candidate ``.cps`` file matches
-    ``VERSION`` or ``COMPONENTS`` requirements is performed at this time.
-    (We expect to implement these features in the near future.)
+    if a ``VERSION`` requirement is specified, only ``.cps`` files which do not
+    provide version information will be rejected.  (We expect to implement
+    proper version validation in the near future.)
 
     Search is implemented in a manner that will tend to prefer |CPS| files
     over CMake-script config files in most cases.  Specifying ``CONFIGS``
@@ -133,7 +133,7 @@ forced to use only Module mode with a ``MODULE`` keyword.  If the
 Basic Signature
 ^^^^^^^^^^^^^^^
 
-.. parsed-literal::
+.. code-block:: cmake
 
   find_package(<PackageName> [version] [EXACT] [QUIET] [MODULE]
                [REQUIRED] [[COMPONENTS] [components...]]
@@ -208,18 +208,18 @@ The ``[version]`` argument requests a version with which the package found
 should be compatible. There are two possible forms in which it may be
 specified:
 
-  * A single version with the format ``major[.minor[.patch[.tweak]]]``, where
-    each component is a numeric value.
-  * A version range with the format ``versionMin...[<]versionMax`` where
-    ``versionMin`` and ``versionMax`` have the same format and constraints
-    on components being integers as the single version.  By default, both end
-    points are included.  By specifying ``<``, the upper end point will be
-    excluded. Version ranges are only supported with CMake 3.19 or later.
-    Note that it is not possible to extend the compatibility range specified
-    by the package's version file.  For example, if the package version file
-    specifies compatibility within a minor version, it is not possible to
-    extend the compatibility to several minor versions by specifying a
-    version range.
+* A single version with the format ``major[.minor[.patch[.tweak]]]``, where
+  each component is a numeric value.
+* A version range with the format ``versionMin...[<]versionMax`` where
+  ``versionMin`` and ``versionMax`` have the same format and constraints
+  on components being integers as the single version.  By default, both end
+  points are included.  By specifying ``<``, the upper end point will be
+  excluded. Version ranges are only supported with CMake 3.19 or later.
+  Note that it is not possible to extend the compatibility range specified
+  by the package's version file.  For example, if the package version file
+  specifies compatibility within a minor version, it is not possible to
+  extend the compatibility to several minor versions by specifying a
+  version range.
 
 The ``EXACT`` option requests that the version be matched exactly. This option
 is incompatible with the specification of a version range.
@@ -249,7 +249,7 @@ of the ``NO_POLICY_SCOPE`` option.
 Full Signature
 ^^^^^^^^^^^^^^
 
-.. parsed-literal::
+.. code-block:: cmake
 
   find_package(<PackageName> [version] [EXACT] [QUIET]
                [REQUIRED] [[COMPONENTS] [components...]]
@@ -260,8 +260,8 @@ Full Signature
                [BYPASS_PROVIDER]
                [NAMES name1 [name2 ...]]
                [CONFIGS config1 [config2 ...]]
-               [HINTS path1 [path2 ... ]]
-               [PATHS path1 [path2 ... ]]
+               [HINTS path1 [path2 ...]]
+               [PATHS path1 [path2 ...]]
                [REGISTRY_VIEW  (64|32|64_32|32_64|HOST|TARGET|BOTH)]
                [PATH_SUFFIXES suffix1 [suffix2 ...]]
                [NO_DEFAULT_PATH]
@@ -373,7 +373,7 @@ Each entry is meant for installation trees following Windows (``W``), UNIX
 
 .. [#p1] .. versionadded:: 3.25
 
-.. [#p2] .. versionadded:: 3.32
+.. [#p2] .. versionadded:: 4.0
 
 On systems supporting macOS :prop_tgt:`FRAMEWORK` and :prop_tgt:`BUNDLE`, the
 following directories are searched for Frameworks or Application Bundles
@@ -393,7 +393,7 @@ containing a configuration file:
  ``<prefix>/<name>.app/Contents/Resources/CMake/``                 A
 =============================================================== ==========
 
-.. [#p3] .. versionadded:: 3.32
+.. [#p3] .. versionadded:: 4.0
 
 When searching the above paths, ``find_package`` will only look for ``.cps``
 files in search paths which contain ``/cps/``, and will only look for
@@ -602,8 +602,8 @@ one can set
 
 .. code-block:: cmake
 
-  SET(CMAKE_FIND_PACKAGE_SORT_ORDER NATURAL)
-  SET(CMAKE_FIND_PACKAGE_SORT_DIRECTION DEC)
+  set(CMAKE_FIND_PACKAGE_SORT_ORDER NATURAL)
+  set(CMAKE_FIND_PACKAGE_SORT_DIRECTION DEC)
 
 before calling ``find_package``.
 
@@ -611,7 +611,7 @@ before calling ``find_package``.
    Added the ``CMAKE_FIND_USE_<CATEGORY>`` variables to globally disable
    various search locations.
 
-.. versionchanged:: 3.32
+.. versionchanged:: 4.0
    The variables :variable:`CMAKE_FIND_PACKAGE_SORT_ORDER` and
    :variable:`CMAKE_FIND_PACKAGE_SORT_DIRECTION` now also control the order
    in which ``find_package`` searches directories matching the glob expression

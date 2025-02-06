@@ -24,7 +24,7 @@ Execute one or more child processes.
                   [ENCODING <name>]
                   [ECHO_OUTPUT_VARIABLE]
                   [ECHO_ERROR_VARIABLE]
-                  [COMMAND_ERROR_IS_FATAL <ANY|LAST>])
+                  [COMMAND_ERROR_IS_FATAL <ANY|LAST|NONE>])
 
 Runs the given sequence of one or more commands.
 
@@ -48,8 +48,14 @@ Options:
    child process in an ``argv[]`` style array.
 
  * On Windows platforms, the command line is encoded as a string such
-   that child processes using ``CommandLineToArgvW`` will decode the
-   original arguments.
+   that child processes using `CommandLineToArgvW`_ will decode the
+   original arguments.  If the command runs a ``.bat`` or ``.cmd``
+   script, it may receive arguments with extra quoting.
+
+ * .. versionchanged:: 4.0
+     On Windows platforms, if the command runs a ``.bat`` or ``.cmd`` script,
+     it is automatically executed through the command interpreter, ``cmd /c``.
+     However, paths with spaces may fail if a "short path" is not available.
 
  No intermediate shell is used, so shell operators such as ``>``
  are treated as normal arguments.
@@ -168,17 +174,34 @@ Options:
    `UTF-8 RFC <https://datatracker.ietf.org/doc/html/rfc3629>`_
    naming convention.
 
-``COMMAND_ERROR_IS_FATAL <ANY|LAST>``
+``COMMAND_ERROR_IS_FATAL <ANY|LAST|NONE>``
   .. versionadded:: 3.19
 
   The option following ``COMMAND_ERROR_IS_FATAL`` determines the behavior when
   an error is encountered:
 
-    ``ANY``
+  ``ANY``
     If any of the commands in the list of commands fail, the
     ``execute_process()`` command halts with an error.
 
-    ``LAST``
+  ``LAST``
     If the last command in the list of commands fails, the
-    ``execute_process()`` command halts with an error.  Commands earlier in the
-    list will not cause a fatal error.
+    ``execute_process()`` command halts with an error.
+    Commands earlier in the list will not cause a fatal error.
+
+
+  ``NONE``
+    .. versionadded:: 4.0
+
+    Regardless of any of the commands failing, the ``execute_process()``
+    command will not halt with an error.
+
+  .. versionadded:: 4.0
+
+    If not provided, the
+    :variable:`CMAKE_EXECUTE_PROCESS_COMMAND_ERROR_IS_FATAL` variable
+    is checked.  If the variable is not set, the default is ``NONE``.
+    If ``RESULT_VARIABLE`` or ``RESULTS_VARIABLE`` is supplied,
+    :variable:`CMAKE_EXECUTE_PROCESS_COMMAND_ERROR_IS_FATAL` is ignored.
+
+.. _`CommandLineToArgvW`: https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-commandlinetoargvw

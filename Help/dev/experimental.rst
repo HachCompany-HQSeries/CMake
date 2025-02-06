@@ -81,7 +81,7 @@ In order to activate support for ``import std`` in C++23 and newer targets,
 set
 
 * variable ``CMAKE_EXPERIMENTAL_CXX_IMPORT_STD`` to
-* value ``0e5b6991-d74f-4b3d-a41c-cf096e0b2508``.
+* value ``a9e1cf81-9932-4810-974b-6eccaf14e457``.
 
 This UUID may change in future versions of CMake.  Be sure to use the value
 documented here by the source tree of the version of CMake with which you are
@@ -119,3 +119,17 @@ When activated, this experimental feature provides the following:
 
 * Targets with the property set to a true value will have their C++ build
   information exported to the build database.
+
+Instrumentation
+===============
+
+In order to activate support for the :command:`cmake_instrumentation` command,
+set
+
+* variable ``CMAKE_EXPERIMENTAL_INSTRUMENTATION`` to
+* value ``a37d1069-1972-4901-b9c9-f194aaf2b6e0``.
+
+To enable instrumentation at the user-level, files should be blaced under
+either
+``<CMAKE_CONFIG_DIR>/instrumentation-a37d1069-1972-4901-b9c9-f194aaf2b6e0`` or
+``<CMAKE_BINARY_DIR>/.cmake/instrumentation-a37d1069-1972-4901-b9c9-f194aaf2b6e0``.
