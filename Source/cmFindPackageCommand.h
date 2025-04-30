@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #pragma once
 
 #include "cmConfigure.h" // IWYU pragma: keep
@@ -33,6 +33,7 @@ namespace std {
 #endif
 
 class cmExecutionStatus;
+class cmPackageState;
 class cmSearchPath;
 
 /** \class cmFindPackageCommand
@@ -151,11 +152,20 @@ private:
   using AppendixMap = std::map<std::string, Appendix>;
   AppendixMap FindAppendices(std::string const& base,
                              cmPackageInfoReader const& baseReader) const;
-  bool FindPackageDependencies(std::string const& fileName,
+  enum RequiredStatus
+  {
+    Optional,
+    OptionalExplicit,
+    RequiredExplicit,
+    RequiredFromPackageVar,
+    RequiredFromFindVar
+  };
+  bool FindPackageDependencies(std::string const& filePath,
                                cmPackageInfoReader const& reader,
-                               bool required);
+                               RequiredStatus required);
 
-  bool ImportPackageTargets(std::string const& fileName,
+  bool ImportPackageTargets(cmPackageState& packageState,
+                            std::string const& filePath,
                             cmPackageInfoReader& reader);
   void StoreVersionFound();
   void SetConfigDirCacheVariable(std::string const& value);
@@ -193,6 +203,8 @@ private:
   bool SearchFrameworkPrefix(std::string const& prefix);
   bool SearchAppBundlePrefix(std::string const& prefix);
   bool SearchEnvironmentPrefix(std::string const& prefix);
+
+  bool IsRequired() const;
 
   struct OriginalDef
   {
@@ -234,7 +246,7 @@ private:
   unsigned int VersionFoundCount = 0;
   KWIML_INT_uint64_t RequiredCMakeVersion = 0;
   bool Quiet = false;
-  bool Required = false;
+  RequiredStatus Required = RequiredStatus::Optional;
   bool UseCpsFiles = false;
   bool UseConfigFiles = true;
   bool UseFindModules = true;
@@ -254,6 +266,7 @@ private:
   std::string Components;
   std::set<std::string> RequiredComponents;
   std::set<std::string> OptionalComponents;
+  std::set<std::string> RequiredTargets;
   std::string DebugBuffer;
 
   struct ConfigName

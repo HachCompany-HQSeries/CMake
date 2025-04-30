@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmCTestLaunch.h"
 
 #include <cstdio>
@@ -70,7 +70,8 @@ bool cmCTestLaunch::ParseArguments(int argc, char const* const* argv)
     DoingBuildDir,
     DoingCurrentBuildDir,
     DoingCount,
-    DoingFilterPrefix
+    DoingFilterPrefix,
+    DoingConfig
   };
   Doing doing = DoingNone;
   int arg0 = 0;
@@ -100,6 +101,8 @@ bool cmCTestLaunch::ParseArguments(int argc, char const* const* argv)
       doing = DoingCurrentBuildDir;
     } else if (strcmp(arg, "--filter-prefix") == 0) {
       doing = DoingFilterPrefix;
+    } else if (strcmp(arg, "--config") == 0) {
+      doing = DoingConfig;
     } else if (doing == DoingOutput) {
       this->Reporter.OptionOutput = arg;
       doing = DoingNone;
@@ -135,6 +138,9 @@ bool cmCTestLaunch::ParseArguments(int argc, char const* const* argv)
       doing = DoingNone;
     } else if (doing == DoingRole) {
       this->Reporter.OptionRole = arg;
+      doing = DoingNone;
+    } else if (doing == DoingConfig) {
+      this->Reporter.OptionConfig = arg;
       doing = DoingNone;
     }
   }
@@ -262,11 +268,14 @@ int cmCTestLaunch::Run()
 {
   auto instrumentation = cmInstrumentation(this->Reporter.OptionBuildDir);
   std::map<std::string, std::string> options;
-  options["target"] = this->Reporter.OptionTargetName;
+  if (this->Reporter.OptionTargetName != "TARGET_NAME") {
+    options["target"] = this->Reporter.OptionTargetName;
+  }
   options["source"] = this->Reporter.OptionSource;
   options["language"] = this->Reporter.OptionLanguage;
   options["targetType"] = this->Reporter.OptionTargetType;
   options["role"] = this->Reporter.OptionRole;
+  options["config"] = this->Reporter.OptionConfig;
   std::map<std::string, std::string> arrayOptions;
   arrayOptions["outputs"] = this->Reporter.OptionOutput;
   arrayOptions["targetLabels"] = this->Reporter.OptionTargetLabels;

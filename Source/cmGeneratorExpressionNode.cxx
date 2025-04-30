@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmGeneratorExpressionNode.h"
 
 #include <algorithm>
@@ -52,7 +52,7 @@
 #include "cmake.h"
 
 std::string cmGeneratorExpressionNode::EvaluateDependentExpression(
-  std::string const& prop, cmLocalGenerator* lg,
+  std::string const& prop, cmLocalGenerator const* lg,
   cmGeneratorExpressionContext* context, cmGeneratorTarget const* headTarget,
   cmGeneratorExpressionDAGChecker* dagChecker,
   cmGeneratorTarget const* currentTarget)
@@ -483,10 +483,15 @@ protected:
     cmGeneratorExpressionDAGChecker* dagCheckerParent) const
   {
     if (context->HeadTarget) {
-      cmGeneratorExpressionDAGChecker dagChecker(
-        context->Backtrace, context->HeadTarget,
-        genexOperator + ":" + expression, content, dagCheckerParent,
-        context->LG, context->Config);
+      cmGeneratorExpressionDAGChecker dagChecker{
+        context->HeadTarget,
+        genexOperator + ":" + expression,
+        content,
+        dagCheckerParent,
+        context->LG,
+        context->Config,
+        context->Backtrace,
+      };
       switch (dagChecker.Check()) {
         case cmGeneratorExpressionDAGChecker::SELF_REFERENCE:
         case cmGeneratorExpressionDAGChecker::CYCLIC_REFERENCE: {
@@ -1706,6 +1711,11 @@ static const struct ListNode : public cmGeneratorExpressionNode
                     return std::string{};
                   }
 
+                  if (!selector) {
+                    selector = cmList::TransformSelector::New();
+                  }
+                  selector->Makefile = ctx->LG->GetMakefile();
+
                   return list
                     .transform(descriptor->Action, arguments,
                                std::move(selector))
@@ -2327,7 +2337,7 @@ static const struct CompileLanguageNode : public cmGeneratorExpressionNode
       return std::string();
     }
 
-    cmGlobalGenerator* gg = context->LG->GetGlobalGenerator();
+    cmGlobalGenerator const* gg = context->LG->GetGlobalGenerator();
     std::string genName = gg->GetName();
     if (genName.find("Makefiles") == std::string::npos &&
         genName.find("Ninja") == std::string::npos &&
@@ -2377,7 +2387,7 @@ static const struct CompileLanguageAndIdNode : public cmGeneratorExpressionNode
         "add_custom_target, or file(GENERATE) commands.");
       return std::string();
     }
-    cmGlobalGenerator* gg = context->LG->GetGlobalGenerator();
+    cmGlobalGenerator const* gg = context->LG->GetGlobalGenerator();
     std::string genName = gg->GetName();
     if (genName.find("Makefiles") == std::string::npos &&
         genName.find("Ninja") == std::string::npos &&
@@ -2431,7 +2441,7 @@ static const struct LinkLanguageNode : public cmGeneratorExpressionNode
       return std::string();
     }
 
-    cmGlobalGenerator* gg = context->LG->GetGlobalGenerator();
+    cmGlobalGenerator const* gg = context->LG->GetGlobalGenerator();
     std::string genName = gg->GetName();
     if (genName.find("Makefiles") == std::string::npos &&
         genName.find("Ninja") == std::string::npos &&
@@ -2522,7 +2532,7 @@ static const struct LinkLanguageAndIdNode : public cmGeneratorExpressionNode
       return std::string();
     }
 
-    cmGlobalGenerator* gg = context->LG->GetGlobalGenerator();
+    cmGlobalGenerator const* gg = context->LG->GetGlobalGenerator();
     std::string genName = gg->GetName();
     if (genName.find("Makefiles") == std::string::npos &&
         genName.find("Ninja") == std::string::npos &&
@@ -2952,8 +2962,7 @@ static const struct TargetPropertyNode : public cmGeneratorExpressionNode
 
     if (cm::optional<cmGeneratorTarget::TransitiveProperty> transitiveProp =
           target->IsTransitiveProperty(propertyName, context->LG,
-                                       context->Config,
-                                       evaluatingLinkLibraries)) {
+                                       context->Config, dagCheckerParent)) {
       interfacePropertyName = std::string(transitiveProp->InterfaceName);
       isInterfaceProperty = transitiveProp->InterfaceName == propertyName;
       usage = transitiveProp->Usage;
@@ -2987,9 +2996,15 @@ static const struct TargetPropertyNode : public cmGeneratorExpressionNode
                                           dagCheckerParent, usage));
     }
 
-    cmGeneratorExpressionDAGChecker dagChecker(
-      context->Backtrace, target, propertyName, content, dagCheckerParent,
-      context->LG, context->Config);
+    cmGeneratorExpressionDAGChecker dagChecker{
+      target,
+      propertyName,
+      content,
+      dagCheckerParent,
+      context->LG,
+      context->Config,
+      context->Backtrace,
+    };
 
     switch (dagChecker.Check()) {
       case cmGeneratorExpressionDAGChecker::SELF_REFERENCE:
@@ -3134,7 +3149,7 @@ static const struct TargetObjectsNode : public cmGeneratorExpressionNode
       reportError(context, content->GetOriginalExpression(), e.str());
       return std::string();
     }
-    cmGlobalGenerator* gg = context->LG->GetGlobalGenerator();
+    cmGlobalGenerator const* gg = context->LG->GetGlobalGenerator();
     {
       std::string reason;
       if (!context->EvaluateForBuildsystem &&
@@ -3508,7 +3523,7 @@ struct TargetFilesystemArtifactDependencyCMP0112
                             cmGeneratorExpressionContext* context)
   {
     context->AllTargets.insert(target);
-    cmLocalGenerator* lg = context->LG;
+    cmLocalGenerator const* lg = context->LG;
     switch (target->GetPolicyStatusCMP0112()) {
       case cmPolicies::WARN:
         if (lg->GetMakefile()->PolicyOptionalWarningEnabled(
@@ -4167,8 +4182,7 @@ struct TargetOutputNameArtifactResultGetter<ArtifactPdbTag>
       return std::string();
     }
 
-    return target->GetPDBOutputName(context->Config) +
-      target->GetFilePostfix(context->Config);
+    return target->GetPDBOutputName(context->Config);
   }
 };
 

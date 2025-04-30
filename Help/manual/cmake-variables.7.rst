@@ -14,7 +14,7 @@ For general information on variables, see the
 :ref:`Variables <CMake Language Variables>`
 section in the cmake-language manual.
 
-.. include:: ID_RESERVE.txt
+.. include:: include/ID_RESERVE.rst
 
 Variables that Provide Information
 ==================================
@@ -31,7 +31,6 @@ Variables that Provide Information
    /variable/CMAKE_CACHE_MINOR_VERSION
    /variable/CMAKE_CACHE_PATCH_VERSION
    /variable/CMAKE_CACHEFILE_DIR
-   /variable/CMAKE_CFG_INTDIR
    /variable/CMAKE_COMMAND
    /variable/CMAKE_CPACK_COMMAND
    /variable/CMAKE_CROSSCOMPILING
@@ -61,6 +60,7 @@ Variables that Provide Information
    /variable/CMAKE_FIND_PACKAGE_REDIRECTS_DIR
    /variable/CMAKE_FIND_PACKAGE_SORT_DIRECTION
    /variable/CMAKE_FIND_PACKAGE_SORT_ORDER
+   /variable/CMAKE_FIND_REQUIRED
    /variable/CMAKE_GENERATOR
    /variable/CMAKE_GENERATOR_INSTANCE
    /variable/CMAKE_GENERATOR_PLATFORM
@@ -72,6 +72,7 @@ Variables that Provide Information
    /variable/CMAKE_JOB_POOL_PRECOMPILE_HEADER
    /variable/CMAKE_JOB_POOLS
    /variable/CMAKE_LANG_COMPILER_AR
+   /variable/CMAKE_LANG_COMPILER_ARCHITECTURE_ID
    /variable/CMAKE_LANG_COMPILER_FRONTEND_VARIANT
    /variable/CMAKE_LANG_COMPILER_LINKER
    /variable/CMAKE_LANG_COMPILER_LINKER_FRONTEND_VARIANT
@@ -104,6 +105,7 @@ Variables that Provide Information
    /variable/CMAKE_PROJECT_VERSION_MINOR
    /variable/CMAKE_PROJECT_VERSION_PATCH
    /variable/CMAKE_PROJECT_VERSION_TWEAK
+   /variable/CMAKE_PROJECT_COMPAT_VERSION
    /variable/CMAKE_RANLIB
    /variable/CMAKE_ROOT
    /variable/CMAKE_RULE_MESSAGES
@@ -160,6 +162,7 @@ Variables that Provide Information
    /variable/PROJECT-NAME_VERSION_MINOR
    /variable/PROJECT-NAME_VERSION_PATCH
    /variable/PROJECT-NAME_VERSION_TWEAK
+   /variable/PROJECT-NAME_COMPAT_VERSION
    /variable/PROJECT_BINARY_DIR
    /variable/PROJECT_DESCRIPTION
    /variable/PROJECT_HOMEPAGE_URL
@@ -171,6 +174,7 @@ Variables that Provide Information
    /variable/PROJECT_VERSION_MINOR
    /variable/PROJECT_VERSION_PATCH
    /variable/PROJECT_VERSION_TWEAK
+   /variable/PROJECT_COMPAT_VERSION
 
 Variables that Change Behavior
 ==============================
@@ -253,7 +257,13 @@ Variables that Change Behavior
    /variable/CMAKE_MESSAGE_LOG_LEVEL
    /variable/CMAKE_MFC_FLAG
    /variable/CMAKE_MODULE_PATH
+   /variable/CMAKE_PKG_CONFIG_DISABLE_UNINSTALLED
+   /variable/CMAKE_PKG_CONFIG_PC_LIB_DIRS
+   /variable/CMAKE_PKG_CONFIG_PC_PATH
+   /variable/CMAKE_PKG_CONFIG_SYSROOT_DIR
+   /variable/CMAKE_PKG_CONFIG_TOP_BUILD_DIR
    /variable/CMAKE_POLICY_DEFAULT_CMPNNNN
+   /variable/CMAKE_POLICY_VERSION_MINIMUM
    /variable/CMAKE_POLICY_WARNING_CMPNNNN
    /variable/CMAKE_PREFIX_PATH
    /variable/CMAKE_PROGRAM_PATH
@@ -323,6 +333,7 @@ Variables that Describe the System
 .. toctree::
    :maxdepth: 1
 
+   /variable/AIX
    /variable/ANDROID
    /variable/APPLE
    /variable/BORLAND
@@ -331,6 +342,7 @@ Variables that Describe the System
    /variable/CMAKE_CL_64
    /variable/CMAKE_COMPILER_2005
    /variable/CMAKE_HOST_APPLE
+   /variable/CMAKE_HOST_AIX
    /variable/CMAKE_HOST_BSD
    /variable/CMAKE_HOST_EXECUTABLE_SUFFIX
    /variable/CMAKE_HOST_LINUX
@@ -480,6 +492,7 @@ Variables that Control the Build
    /variable/CMAKE_LANG_COMPILER_LAUNCHER
    /variable/CMAKE_LANG_CPPCHECK
    /variable/CMAKE_LANG_CPPLINT
+   /variable/CMAKE_LANG_ICSTAT
    /variable/CMAKE_LANG_INCLUDE_WHAT_YOU_USE
    /variable/CMAKE_LANG_LINK_GROUP_USING_FEATURE
    /variable/CMAKE_LANG_LINK_GROUP_USING_FEATURE_SUPPORTED
@@ -555,6 +568,7 @@ Variables that Control the Build
    /variable/CMAKE_TRY_COMPILE_TARGET_TYPE
    /variable/CMAKE_UNITY_BUILD
    /variable/CMAKE_UNITY_BUILD_BATCH_SIZE
+   /variable/CMAKE_UNITY_BUILD_RELOCATABLE
    /variable/CMAKE_UNITY_BUILD_UNIQUE_ID
    /variable/CMAKE_VERIFY_INTERFACE_HEADER_SETS
    /variable/CMAKE_VISIBILITY_INLINES_HIDDEN
@@ -806,7 +820,6 @@ are subject to change, and not recommended for use in project code.
    /variable/CMAKE_HOME_DIRECTORY
    /variable/CMAKE_INTERNAL_PLATFORM_ABI
    /variable/CMAKE_LANG_COMPILER_ABI
-   /variable/CMAKE_LANG_COMPILER_ARCHITECTURE_ID
    /variable/CMAKE_LANG_COMPILER_VERSION_INTERNAL
    /variable/CMAKE_LANG_LINKER_PREFERENCE
    /variable/CMAKE_LANG_LINKER_PREFERENCE_PROPAGATES
@@ -820,6 +833,7 @@ Deprecated Variables that Provide Information
 .. toctree::
    :maxdepth: 1
 
+   /variable/CMAKE_CFG_INTDIR
    /variable/CMAKE_EXTRA_GENERATOR
 
 Deprecated Variables that Change Behavior

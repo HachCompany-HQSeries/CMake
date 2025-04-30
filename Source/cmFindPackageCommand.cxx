@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmFindPackageCommand.h"
 
 #include <algorithm>
@@ -9,6 +9,7 @@
 #include <functional>
 #include <iterator>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 
 #include <cm/optional>
@@ -29,10 +30,12 @@
 #include "cmListFileCache.h"
 #include "cmMakefile.h"
 #include "cmMessageType.h"
+#include "cmPackageState.h"
 #include "cmPolicies.h"
 #include "cmRange.h"
 #include "cmSearchPath.h"
 #include "cmState.h"
+#include "cmStateSnapshot.h"
 #include "cmStateTypes.h"
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
@@ -59,6 +62,7 @@
 namespace {
 
 using pdt = cmFindPackageCommand::PackageDescriptionType;
+using ParsedVersion = cmPackageInfoReader::Pep440Version;
 
 template <template <typename> class Op>
 struct StrverscmpOp
@@ -529,8 +533,10 @@ cmFindPackageCommand::cmFindPackageCommand(cmExecutionStatus& status)
   this->AppendSearchPathGroups();
 
   this->DeprecatedFindModules["Boost"] = cmPolicies::CMP0167;
+  this->DeprecatedFindModules["CABLE"] = cmPolicies::CMP0191;
   this->DeprecatedFindModules["CUDA"] = cmPolicies::CMP0146;
   this->DeprecatedFindModules["Dart"] = cmPolicies::CMP0145;
+  this->DeprecatedFindModules["GCCXML"] = cmPolicies::CMP0188;
   this->DeprecatedFindModules["PythonInterp"] = cmPolicies::CMP0148;
   this->DeprecatedFindModules["PythonLibs"] = cmPolicies::CMP0148;
   this->DeprecatedFindModules["Qt"] = cmPolicies::CMP0084;
@@ -676,7 +682,7 @@ bool cmFindPackageCommand::InitialPass(std::vector<std::string> const& args)
   }
   if (cmValue const sd =
         this->Makefile->GetDefinition("CMAKE_FIND_PACKAGE_SORT_DIRECTION")) {
-    this->SortDirection = (*sd == "ASC") ? Asc : Dec;
+    this->SortDirection = (*sd == "DEC") ? Dec : Asc;
   }
 
   // Find what search path locations have been enabled/disable.
@@ -745,7 +751,18 @@ bool cmFindPackageCommand::InitialPass(std::vector<std::string> const& args)
       configArgs.push_back(i);
       doing = DoingNone;
     } else if (args[i] == "REQUIRED") {
-      this->Required = true;
+      if (this->Required == RequiredStatus::OptionalExplicit) {
+        this->SetError("cannot be both REQUIRED and OPTIONAL");
+        return false;
+      }
+      this->Required = RequiredStatus::RequiredExplicit;
+      doing = DoingComponents;
+    } else if (args[i] == "OPTIONAL") {
+      if (this->Required == RequiredStatus::RequiredExplicit) {
+        this->SetError("cannot be both REQUIRED and OPTIONAL");
+        return false;
+      }
+      this->Required = RequiredStatus::OptionalExplicit;
       doing = DoingComponents;
     } else if (args[i] == "COMPONENTS") {
       doing = DoingComponents;
@@ -842,6 +859,11 @@ bool cmFindPackageCommand::InitialPass(std::vector<std::string> const& args)
     }
   }
 
+  if (this->Required == RequiredStatus::Optional &&
+      this->Makefile->IsOn("CMAKE_FIND_REQUIRED")) {
+    this->Required = RequiredStatus::RequiredFromFindVar;
+  }
+
   if (!this->GlobalScope) {
     cmValue value(
       this->Makefile->GetDefinition("CMAKE_FIND_PACKAGE_TARGETS_GLOBAL"));
@@ -910,10 +932,16 @@ bool cmFindPackageCommand::InitialPass(std::vector<std::string> const& args)
         this->VersionExact = this->Makefile->IsOn(exact);
       }
       if (this->Components.empty()) {
-        std::string const components_var = this->Name + "_FIND_COMPONENTS";
-        this->Components = this->Makefile->GetSafeDefinition(components_var);
+        std::string const componentsVar = this->Name + "_FIND_COMPONENTS";
+        this->Components = this->Makefile->GetSafeDefinition(componentsVar);
         for (auto const& component : cmList{ this->Components }) {
-          this->RequiredComponents.insert(component);
+          std::string const crVar =
+            cmStrCat(this->Name, "_FIND_REQUIRED_"_s, component);
+          if (this->Makefile->GetDefinition(crVar).IsOn()) {
+            this->RequiredComponents.insert(component);
+          } else {
+            this->OptionalComponents.insert(component);
+          }
         }
       }
     }
@@ -976,21 +1004,21 @@ bool cmFindPackageCommand::FindPackage(
   bool const makePackageRequiredSet =
     this->Makefile->IsOn(makePackageRequiredVar);
   if (makePackageRequiredSet) {
-    if (this->Required) {
+    if (this->IsRequired()) {
       this->Makefile->IssueMessage(
         MessageType::WARNING,
         cmStrCat("for module ", this->Name,
                  " already called with REQUIRED, thus ",
                  makePackageRequiredVar, " has no effect."));
     } else {
-      this->Required = true;
+      this->Required = RequiredStatus::RequiredFromPackageVar;
     }
   }
 
   std::string const disableFindPackageVar =
     cmStrCat("CMAKE_DISABLE_FIND_PACKAGE_", this->Name);
   if (this->Makefile->IsOn(disableFindPackageVar)) {
-    if (this->Required) {
+    if (this->IsRequired()) {
       this->SetError(
         cmStrCat("for module ", this->Name,
                  (makePackageRequiredSet
@@ -1308,6 +1336,9 @@ void cmFindPackageCommand::SetModuleVariables()
 {
   this->AddFindDefinition("CMAKE_FIND_PACKAGE_NAME", this->Name);
 
+  // Nested find calls are not automatically required.
+  this->AddFindDefinition("CMAKE_FIND_REQUIRED", ""_s);
+
   // Store the list of components and associated variable definitions.
   std::string components_var = this->Name + "_FIND_COMPONENTS";
   this->AddFindDefinition(components_var, this->Components);
@@ -1327,7 +1358,7 @@ void cmFindPackageCommand::SetModuleVariables()
     this->AddFindDefinition(quietly, "1"_s);
   }
 
-  if (this->Required) {
+  if (this->IsRequired()) {
     // Tell the module that is about to be read that it should report
     // a fatal error if the package is not found.
     std::string req = cmStrCat(this->Name, "_FIND_REQUIRED");
@@ -1524,6 +1555,7 @@ bool cmFindPackageCommand::HandlePackageMode(
   bool result = true;
   bool found = false;
   bool configFileSetFOUNDFalse = false;
+  std::vector<std::string> missingTargets;
 
   if (fileFound) {
     if (this->Makefile->IsDefinitionSet(foundVar) &&
@@ -1558,6 +1590,17 @@ bool cmFindPackageCommand::HandlePackageMode(
         notFoundMessage =
           this->Makefile->GetSafeDefinition(notFoundMessageVar);
       }
+
+      // Check whether the required targets are defined.
+      if (found && !this->RequiredTargets.empty()) {
+        for (std::string const& t : this->RequiredTargets) {
+          std::string qualifiedTarget = cmStrCat(this->Name, "::"_s, t);
+          if (!this->Makefile->FindImportedTarget(qualifiedTarget)) {
+            missingTargets.emplace_back(std::move(qualifiedTarget));
+            found = false;
+          }
+        }
+      }
     } else {
       // The configuration file is invalid.
       result = false;
@@ -1573,11 +1616,13 @@ bool cmFindPackageCommand::HandlePackageMode(
 
   // package not found
   if (result && !found) {
-    // warn if package required or neither quiet nor in config mode
-    if (this->Required ||
-        !(this->Quiet ||
-          (this->UseConfigFiles && !this->UseFindModules &&
-           this->ConsideredConfigs.empty()))) {
+    // warn if package required or
+    // (neither quiet nor in config mode and not explicitly optional)
+    if (this->IsRequired() ||
+        (!(this->Quiet ||
+           (this->UseConfigFiles && !this->UseFindModules &&
+            this->ConsideredConfigs.empty())) &&
+         this->Required != RequiredStatus::OptionalExplicit)) {
       // The variable is not set.
       std::ostringstream e;
       std::ostringstream aw;
@@ -1592,10 +1637,18 @@ bool cmFindPackageCommand::HandlePackageMode(
         if (!notFoundMessage.empty()) {
           e << " Reason given by package: \n" << notFoundMessage << "\n";
         }
-      }
-      // If there are files in ConsideredConfigs, it means that FooConfig.cmake
-      // have been found, but they didn't have appropriate versions.
-      else if (!this->ConsideredConfigs.empty()) {
+      } else if (!missingTargets.empty()) {
+        e << "Found package configuration file:\n"
+             "  "
+          << this->FileFound
+          << "\n"
+             "but the following required targets were not found:\n"
+             "  "
+          << cmJoin(cmMakeRange(missingTargets), ", "_s);
+      } else if (!this->ConsideredConfigs.empty()) {
+        // If there are files in ConsideredConfigs, it means that
+        // FooConfig.cmake have been found, but they didn't have appropriate
+        // versions.
         auto duplicate_end = cmRemoveDuplicates(this->ConsideredConfigs);
         e << "Could not find a configuration file for package \"" << this->Name
           << "\" that "
@@ -1673,11 +1726,19 @@ bool cmFindPackageCommand::HandlePackageMode(
                "without ensuring that it is actually available.\n";
         }
       }
+      if (this->Required == RequiredStatus::RequiredFromFindVar) {
+        e << "\nThis package is considered required because the "
+             "CMAKE_FIND_REQUIRED variable has been enabled.\n";
+      } else if (this->Required == RequiredStatus::RequiredFromPackageVar) {
+        e << "\nThis package is considered required because the "
+          << cmStrCat("CMAKE_REQUIRE_FIND_PACKAGE_", this->Name)
+          << " variable has been enabled.\n";
+      }
 
-      this->Makefile->IssueMessage(this->Required ? MessageType::FATAL_ERROR
-                                                  : MessageType::WARNING,
-                                   e.str());
-      if (this->Required) {
+      this->Makefile->IssueMessage(
+        this->IsRequired() ? MessageType::FATAL_ERROR : MessageType::WARNING,
+        e.str());
+      if (this->IsRequired()) {
         cmSystemTools::SetFatalErrorOccurred();
       }
 
@@ -1902,7 +1963,7 @@ bool cmFindPackageCommand::ReadPackage()
     return false;
   }
 
-  auto const hasComponentsRequested =
+  bool const hasComponentsRequested =
     !this->RequiredComponents.empty() || !this->OptionalComponents.empty();
 
   cmMakefile::CallRAII scope{ this->Makefile, this->FileFound, this->Status };
@@ -1910,7 +1971,7 @@ bool cmFindPackageCommand::ReadPackage()
   // Loop over appendices.
   auto iter = this->CpsAppendices.begin();
   while (iter != this->CpsAppendices.end()) {
-    bool required = false;
+    RequiredStatus required = RequiredStatus::Optional;
     bool important = false;
 
     // Check if this appendix provides any requested components.
@@ -1950,8 +2011,15 @@ bool cmFindPackageCommand::ReadPackage()
     }
   }
 
+  // If we made it here, we want to actually import something, but we also
+  // need to ensure we don't try to import the same file more than once (which
+  // will fail due to the targets already existing). Retrieve the package state
+  // so we can record what we're doing.
+  cmPackageState& state =
+    this->Makefile->GetStateSnapshot().GetPackageState(this->FileFound);
+
   // Import targets from root file.
-  if (!this->ImportPackageTargets(this->FileFound, *this->CpsReader)) {
+  if (!this->ImportPackageTargets(state, this->FileFound, *this->CpsReader)) {
     return false;
   }
 
@@ -1960,7 +2028,7 @@ bool cmFindPackageCommand::ReadPackage()
   for (auto const& appendix : this->CpsAppendices) {
     cmMakefile::CallRAII appendixScope{ this->Makefile, appendix.first,
                                         this->Status };
-    if (!this->ImportPackageTargets(appendix.first, appendix.second)) {
+    if (!this->ImportPackageTargets(state, appendix.first, appendix.second)) {
       return false;
     }
   }
@@ -1969,13 +2037,13 @@ bool cmFindPackageCommand::ReadPackage()
 }
 
 bool cmFindPackageCommand::FindPackageDependencies(
-  std::string const& fileName, cmPackageInfoReader const& reader,
-  bool required)
+  std::string const& filePath, cmPackageInfoReader const& reader,
+  RequiredStatus required)
 {
   // Get package requirements.
   for (cmPackageRequirement const& dep : reader.GetRequirements()) {
     cmExecutionStatus status{ *this->Makefile };
-    cmMakefile::CallRAII scope{ this->Makefile, fileName, status };
+    cmMakefile::CallRAII scope{ this->Makefile, filePath, status };
 
     // For each requirement, set up a nested instance to find it.
     cmFindPackageCommand fp{ status };
@@ -1993,8 +2061,9 @@ bool cmFindPackageCommand::FindPackageDependencies(
                    fp.VersionPatch, fp.VersionTweak);
 
     fp.Components = cmJoin(cmMakeRange(dep.Components), ";"_s);
-    fp.RequiredComponents =
+    fp.OptionalComponents =
       std::set<std::string>{ dep.Components.begin(), dep.Components.end() };
+    fp.RequiredTargets = fp.OptionalComponents;
 
     // TODO set hints
 
@@ -2010,9 +2079,16 @@ bool cmFindPackageCommand::FindPackageDependencies(
   return true;
 }
 
-bool cmFindPackageCommand::ImportPackageTargets(std::string const& fileName,
+bool cmFindPackageCommand::ImportPackageTargets(cmPackageState& packageState,
+                                                std::string const& filePath,
                                                 cmPackageInfoReader& reader)
 {
+  // Check if we've already imported this file.
+  std::string fileName = cmSystemTools::GetFilenameName(filePath);
+  if (cm::contains(packageState.ImportedFiles, fileName)) {
+    return true;
+  }
+
   // Import base file.
   if (!reader.ImportTargets(this->Makefile, this->Status)) {
     return false;
@@ -2022,8 +2098,8 @@ bool cmFindPackageCommand::ImportPackageTargets(std::string const& fileName,
   cmsys::Glob glob;
   glob.RecurseOff();
   if (glob.FindFiles(
-        cmStrCat(cmSystemTools::GetFilenamePath(fileName), "/"_s,
-                 cmSystemTools::GetFilenameWithoutExtension(fileName),
+        cmStrCat(cmSystemTools::GetFilenamePath(filePath), '/',
+                 cmSystemTools::GetFilenameWithoutExtension(filePath),
                  "@*.[Cc][Pp][Ss]"_s))) {
 
     // Try to read supplemental data from each file found.
@@ -2039,6 +2115,7 @@ bool cmFindPackageCommand::ImportPackageTargets(std::string const& fileName,
     }
   }
 
+  packageState.ImportedFiles.emplace(std::move(fileName));
   return true;
 }
 
@@ -2108,7 +2185,7 @@ void cmFindPackageCommand::AppendSuccessInformation()
   }
   this->Makefile->GetState()->SetGlobalProperty(versionInfoPropName,
                                                 versionInfo);
-  if (this->Required) {
+  if (this->IsRequired()) {
     std::string const requiredInfoPropName =
       cmStrCat("_CMAKE_", this->Name, "_TYPE");
     this->Makefile->GetState()->SetGlobalProperty(requiredInfoPropName,
@@ -2717,12 +2794,61 @@ bool cmFindPackageCommand::CheckVersion(std::string const& config_file)
     std::unique_ptr<cmPackageInfoReader> reader =
       cmPackageInfoReader::Read(config_file);
     if (reader && reader->GetName() == this->Name) {
+      // Read version information.
       cm::optional<std::string> cpsVersion = reader->GetVersion();
-      if (cpsVersion) {
-        // TODO: Implement version check for CPS
-        result = true;
-      } else {
-        result = this->Version.empty();
+      cm::optional<ParsedVersion> const& parsedVersion =
+        reader->ParseVersion(cpsVersion);
+      bool const hasVersion = cpsVersion.has_value();
+
+      // Test for version compatibility.
+      result = this->Version.empty();
+      if (hasVersion) {
+        version = std::move(*cpsVersion);
+
+        if (!this->Version.empty()) {
+          if (!parsedVersion) {
+            // If we don't understand the version, compare the exact versions
+            // using full string comparison. This is the correct behavior for
+            // the "custom" schema, and the best we can do otherwise.
+            result = (this->Version == version);
+          } else if (this->VersionExact) {
+            // If EXACT is specified, the version must be exactly the requested
+            // version.
+            result =
+              cmSystemTools::VersionCompareEqual(this->Version, version);
+          } else {
+            // Do we have a compat_version?
+            cm::optional<std::string> const& compatVersion =
+              reader->GetCompatVersion();
+            if (reader->ParseVersion(compatVersion)) {
+              // If yes, the initial result is whether the requested version is
+              // between the actual version and the compat version, inclusive.
+              result = cmSystemTools::VersionCompareGreaterEq(version,
+                                                              this->Version) &&
+                cmSystemTools::VersionCompareGreaterEq(this->Version,
+                                                       *compatVersion);
+
+              if (result && !this->VersionMax.empty()) {
+                // We must also check that the version is less than the version
+                // limit.
+                if (this->VersionRangeMax == VERSION_ENDPOINT_EXCLUDED) {
+                  result = cmSystemTools::VersionCompareGreater(
+                    this->VersionMax, version);
+                } else {
+                  result = cmSystemTools::VersionCompareGreaterEq(
+                    this->VersionMax, version);
+                }
+              }
+            } else {
+              // If no, compat_version is assumed to be exactly the actual
+              // version, so the result is whether the requested version is
+              // exactly the actual version, and we can ignore the version
+              // limit.
+              result =
+                cmSystemTools::VersionCompareEqual(this->Version, version);
+            }
+          }
+        }
       }
 
       if (result) {
@@ -2743,39 +2869,51 @@ bool cmFindPackageCommand::CheckVersion(std::string const& config_file)
         }
 
         // Verify that all required components are available.
+        std::set<std::string> requiredComponents = this->RequiredComponents;
+        requiredComponents.insert(this->RequiredTargets.begin(),
+                                  this->RequiredTargets.end());
+
         std::vector<std::string> missingComponents;
-        std::set_difference(this->RequiredComponents.begin(),
-                            this->RequiredComponents.end(),
-                            allComponents.begin(), allComponents.end(),
+        std::set_difference(requiredComponents.begin(),
+                            requiredComponents.end(), allComponents.begin(),
+                            allComponents.end(),
                             std::back_inserter(missingComponents));
         if (!missingComponents.empty()) {
           result = false;
         }
 
-        if (result && cpsVersion) {
-          this->VersionFound = (version = std::move(*cpsVersion));
+        if (result && hasVersion) {
+          this->VersionFound = version;
 
-          std::vector<unsigned> const& versionParts = reader->ParseVersion();
-          this->VersionFoundCount = static_cast<unsigned>(versionParts.size());
-          switch (this->VersionFoundCount) {
-            case 4:
-              this->VersionFoundTweak = versionParts[3];
-              CM_FALLTHROUGH;
-            case 3:
-              this->VersionFoundPatch = versionParts[2];
-              CM_FALLTHROUGH;
-            case 2:
-              this->VersionFoundMinor = versionParts[1];
-              CM_FALLTHROUGH;
-            case 1:
-              this->VersionFoundMajor = versionParts[0];
-              CM_FALLTHROUGH;
-            default:
-              break;
+          if (parsedVersion) {
+            std::vector<unsigned> const& versionParts =
+              parsedVersion->ReleaseComponents;
+
+            this->VersionFoundCount =
+              static_cast<unsigned>(versionParts.size());
+            switch (std::min(this->VersionFoundCount, 4u)) {
+              case 4:
+                this->VersionFoundTweak = versionParts[3];
+                CM_FALLTHROUGH;
+              case 3:
+                this->VersionFoundPatch = versionParts[2];
+                CM_FALLTHROUGH;
+              case 2:
+                this->VersionFoundMinor = versionParts[1];
+                CM_FALLTHROUGH;
+              case 1:
+                this->VersionFoundMajor = versionParts[0];
+                CM_FALLTHROUGH;
+              default:
+                break;
+            }
+          } else {
+            this->VersionFoundCount = 0;
           }
         }
         this->CpsReader = std::move(reader);
         this->CpsAppendices = std::move(appendices);
+        this->RequiredComponents = std::move(requiredComponents);
       }
     }
   } else {
@@ -3205,6 +3343,13 @@ bool cmFindPackageCommand::SearchEnvironmentPrefix(std::string const& prefix)
 
   // <environment-path>/(Foo|foo|FOO)/
   return TryGeneratedPaths(searchFn, pdt::Cps, prefix, pkgDirGen);
+}
+
+bool cmFindPackageCommand::IsRequired() const
+{
+  return this->Required == RequiredStatus::RequiredExplicit ||
+    this->Required == RequiredStatus::RequiredFromPackageVar ||
+    this->Required == RequiredStatus::RequiredFromFindVar;
 }
 
 // TODO: Debug cmsys::Glob double slash problem.

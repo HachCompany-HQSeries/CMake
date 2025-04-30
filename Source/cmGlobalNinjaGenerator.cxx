@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmGlobalNinjaGenerator.h"
 
 #include <algorithm>
@@ -7,11 +7,11 @@
 #include <cctype>
 #include <cstdio>
 #include <functional>
+#include <iterator>
 #include <sstream>
 #include <type_traits>
 #include <utility>
 
-#include <cm/iterator>
 #include <cm/memory>
 #include <cm/optional>
 #include <cm/string_view>
@@ -182,12 +182,6 @@ std::string cmGlobalNinjaGenerator::EncodeRuleName(std::string const& name)
     }
   }
   return encoded;
-}
-
-std::string cmGlobalNinjaGenerator::GetEncodedLiteral(std::string const& lit)
-{
-  std::string result = lit;
-  return this->EncodeLiteral(result);
 }
 
 std::string& cmGlobalNinjaGenerator::EncodeLiteral(std::string& lit)
@@ -387,7 +381,6 @@ void cmGlobalNinjaGenerator::WriteCustomCommandBuild(
       std::string cmd = command; // NOLINT(*)
 #ifdef _WIN32
       if (cmd.empty())
-        // TODO Shouldn't an empty command be handled by ninja?
         cmd = "cmd.exe /c";
 #endif
       vars["COMMAND"] = std::move(cmd);
@@ -420,20 +413,30 @@ void cmGlobalNinjaGenerator::WriteCustomCommandBuild(
 
 void cmGlobalNinjaGenerator::AddMacOSXContentRule()
 {
-  cmNinjaRule rule("COPY_OSX_CONTENT");
-  rule.Command = cmStrCat(this->CMakeCmd(), " -E copy $in $out");
-  rule.Description = "Copying OS X Content $out";
-  rule.Comment = "Rule for copying OS X bundle content file.";
-  this->AddRule(rule);
+  {
+    cmNinjaRule rule("COPY_OSX_CONTENT_FILE");
+    rule.Command = cmStrCat(this->CMakeCmd(), " -E copy $in $out");
+    rule.Description = "Copying OS X Content $out";
+    rule.Comment = "Rule for copying OS X bundle content file, with style.";
+    this->AddRule(rule);
+  }
+  {
+    cmNinjaRule rule("COPY_OSX_CONTENT_DIR");
+    rule.Command = cmStrCat(this->CMakeCmd(), " -E copy_directory $in $out");
+    rule.Description = "Copying OS X Content $out";
+    rule.Comment = "Rule for copying OS X bundle content dir, with style.";
+    this->AddRule(rule);
+  }
 }
-
 void cmGlobalNinjaGenerator::WriteMacOSXContentBuild(std::string input,
                                                      std::string output,
                                                      std::string const& config)
 {
   this->AddMacOSXContentRule();
   {
-    cmNinjaBuild build("COPY_OSX_CONTENT");
+    cmNinjaBuild build(cmSystemTools::FileIsDirectory(input)
+                         ? "COPY_OSX_CONTENT_DIR"
+                         : "COPY_OSX_CONTENT_FILE");
     build.Outputs.push_back(std::move(output));
     build.ExplicitDeps.push_back(std::move(input));
     this->WriteBuild(*this->GetImplFileStream(config), build);
@@ -663,6 +666,7 @@ void cmGlobalNinjaGenerator::Generate()
 
 void cmGlobalNinjaGenerator::CleanMetaData()
 {
+  constexpr size_t ninja_tool_arg_size = 8; // 2 `-_` flags and 4 separators
   auto run_ninja_tool = [this](std::vector<char const*> const& args) {
     std::vector<std::string> command;
     command.push_back(this->NinjaCommand);
@@ -705,19 +709,27 @@ void cmGlobalNinjaGenerator::CleanMetaData()
     run_ninja_tool({ "recompact" });
   }
   if (this->NinjaSupportsRestatTool && this->OutputPathPrefix.empty()) {
-    // XXX(ninja): We only list `build.ninja` entry files here because CMake
-    // *always* rewrites these files on a reconfigure. If CMake ever gets
-    // smarter about this, all CMake-time created/edited files listed as
-    // outputs for the reconfigure build statement will need to be listed here.
     cmNinjaDeps outputs;
     this->AddRebuildManifestOutputs(outputs);
-    std::vector<char const*> args;
-    args.reserve(outputs.size() + 1);
-    args.push_back("restat");
-    for (auto const& output : outputs) {
-      args.push_back(output.c_str());
+    auto output_it = outputs.begin();
+    size_t static_arg_size = ninja_tool_arg_size + this->NinjaCommand.size() +
+      this->GetCMakeInstance()->GetHomeOutputDirectory().size();
+    // The Windows command-line length limit is 32768.  Leave plenty.
+    constexpr size_t maximum_arg_size = 30000;
+    while (output_it != outputs.end()) {
+      size_t total_arg_size = static_arg_size;
+      std::vector<char const*> args;
+      args.reserve(std::distance(output_it, outputs.end()) + 1);
+      args.push_back("restat");
+      total_arg_size += 7; // restat + 1
+      while (output_it != outputs.end() &&
+             total_arg_size + output_it->size() + 1 < maximum_arg_size) {
+        args.push_back(output_it->c_str());
+        total_arg_size += output_it->size() + 1;
+        ++output_it;
+      }
+      run_ninja_tool(args);
     }
-    run_ninja_tool(args);
   }
 }
 
@@ -1214,11 +1226,8 @@ void cmGlobalNinjaGenerator::AddCXXCompileCommand(
     *this->CompileCommandsStream << ",\n";
   }
 
-  std::string sourceFileName = sourceFile;
-  if (!cmSystemTools::FileIsFullPath(sourceFileName)) {
-    sourceFileName = cmSystemTools::CollapseFullPath(
-      sourceFileName, this->GetCMakeInstance()->GetHomeOutputDirectory());
-  }
+  std::string sourceFileName =
+    cmSystemTools::CollapseFullPath(sourceFile, buildFileDir);
 
   /* clang-format off */
   *this->CompileCommandsStream << "{\n"
@@ -1229,7 +1238,9 @@ void cmGlobalNinjaGenerator::AddCXXCompileCommand(
      << R"(  "file": ")"
      << cmGlobalGenerator::EscapeJSON(sourceFileName) << "\",\n"
      << R"(  "output": ")"
-     << cmGlobalGenerator::EscapeJSON(objPath) << "\"\n"
+     << cmGlobalGenerator::EscapeJSON(
+           cmSystemTools::CollapseFullPath(objPath, buildFileDir))
+           << "\"\n"
      << "}";
   /* clang-format on */
 }
@@ -1237,7 +1248,7 @@ void cmGlobalNinjaGenerator::AddCXXCompileCommand(
 void cmGlobalNinjaGenerator::CloseCompileCommandsStream()
 {
   if (this->CompileCommandsStream) {
-    *this->CompileCommandsStream << "\n]";
+    *this->CompileCommandsStream << "\n]\n";
     this->CompileCommandsStream.reset();
   }
 }
@@ -1762,7 +1773,8 @@ void cmGlobalNinjaGenerator::WriteBuiltinTargets(std::ostream& os)
   this->WriteTargetRebuildManifest(os);
   this->WriteTargetClean(os);
   this->WriteTargetHelp(os);
-#if !defined(CMAKE_BOOTSTRAP)
+#if !defined(CMAKE_BOOTSTRAP) && !defined(_WIN32)
+  // FIXME(#26668) This does not work on Windows
   if (this->GetCMakeInstance()
         ->GetInstrumentation()
         ->HasPreOrPostBuildHook()) {
@@ -1843,7 +1855,8 @@ void cmGlobalNinjaGenerator::WriteTargetRebuildManifest(std::ostream& os)
   }
   reBuild.ImplicitDeps.push_back(this->CMakeCacheFile);
 
-#if !defined(CMAKE_BOOTSTRAP)
+#if !defined(CMAKE_BOOTSTRAP) && !defined(_WIN32)
+  // FIXME(#26668) This does not work on Windows
   if (this->GetCMakeInstance()
         ->GetInstrumentation()
         ->HasPreOrPostBuildHook()) {
@@ -2196,6 +2209,8 @@ void cmGlobalNinjaGenerator::WriteTargetHelp(std::ostream& os)
   }
 }
 
+#if !defined(CMAKE_BOOTSTRAP) && !defined(_WIN32)
+// FIXME(#26668) This does not work on Windows
 void cmGlobalNinjaGenerator::WriteTargetInstrument(std::ostream& os)
 {
   // Write rule
@@ -2204,13 +2219,11 @@ void cmGlobalNinjaGenerator::WriteTargetInstrument(std::ostream& os)
     rule.Command = cmStrCat(
       "\"", cmSystemTools::GetCTestCommand(), "\" --start-instrumentation \"",
       this->GetCMakeInstance()->GetHomeOutputDirectory(), "\"");
-#ifndef _WIN32
     /*
      * On Unix systems, Ninja will prefix the command with `/bin/sh -c`.
      * Use exec so that Ninja is the parent process of the command.
      */
     rule.Command = cmStrCat("exec ", rule.Command);
-#endif
     rule.Description = "Collecting build metrics";
     rule.Comment = "Rule to initialize instrumentation daemon.";
     rule.Restat = "1";
@@ -2231,6 +2244,7 @@ void cmGlobalNinjaGenerator::WriteTargetInstrument(std::ostream& os)
     WriteBuild(os, instrument);
   }
 }
+#endif
 
 void cmGlobalNinjaGenerator::InitOutputPathPrefix()
 {

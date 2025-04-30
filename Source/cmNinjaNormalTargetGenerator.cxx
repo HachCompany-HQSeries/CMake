@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmNinjaNormalTargetGenerator.h"
 
 #include <algorithm>
@@ -18,6 +18,7 @@
 #include "cmCustomCommand.h" // IWYU pragma: keep
 #include "cmCustomCommandGenerator.h"
 #include "cmGeneratedFileStream.h"
+#include "cmGeneratorExpression.h"
 #include "cmGeneratorOptions.h"
 #include "cmGeneratorTarget.h"
 #include "cmGlobalNinjaGenerator.h"
@@ -342,6 +343,7 @@ void cmNinjaNormalTargetGenerator::WriteNvidiaDeviceLinkRule(
     vars.Flags = "$FLAGS";
     vars.LinkFlags = "$LINK_FLAGS";
     vars.Manifests = "$MANIFESTS";
+    vars.Config = "$CONFIG";
 
     vars.LanguageCompileFlags = "$LANGUAGE_COMPILE_FLAGS";
 
@@ -416,6 +418,7 @@ void cmNinjaNormalTargetGenerator::WriteDeviceLinkRules(
 
   std::string flags = this->GetFlags("CUDA", config);
   vars.Flags = flags.c_str();
+  vars.Config = "$CONFIG";
 
   std::string compileCmd = this->GetMakefile()->GetRequiredDefinition(
     "CMAKE_CUDA_DEVICE_LINK_COMPILE");
@@ -444,8 +447,10 @@ void cmNinjaNormalTargetGenerator::WriteDeviceLinkRules(
   this->GetGlobalGenerator()->AddRule(rule);
 }
 
-void cmNinjaNormalTargetGenerator::WriteLinkRule(bool useResponseFile,
-                                                 std::string const& config)
+void cmNinjaNormalTargetGenerator::WriteLinkRule(
+  bool useResponseFile, std::string const& config,
+  std::vector<std::string> const& preLinkComments,
+  std::vector<std::string> const& postBuildComments)
 {
   cmStateEnums::TargetType targetType = this->GetGeneratorTarget()->GetType();
 
@@ -557,6 +562,7 @@ void cmNinjaNormalTargetGenerator::WriteLinkRule(bool useResponseFile,
     vars.Flags = "$FLAGS";
     vars.LinkFlags = "$LINK_FLAGS";
     vars.Manifests = "$MANIFESTS";
+    vars.Config = "$CONFIG";
 
     std::string langFlags;
     if (targetType != cmStateEnums::EXECUTABLE) {
@@ -601,9 +607,19 @@ void cmNinjaNormalTargetGenerator::WriteLinkRule(bool useResponseFile,
     rule.Comment =
       cmStrCat("Rule for linking ", this->TargetLinkLanguage(config), ' ',
                this->GetVisibleTypeName(), '.');
-    rule.Description =
-      cmStrCat("Linking ", this->TargetLinkLanguage(config), ' ',
-               this->GetVisibleTypeName(), " $TARGET_FILE");
+    char const* presep = "";
+    char const* postsep = "";
+    auto prelink = cmJoin(preLinkComments, "; ");
+    if (!prelink.empty()) {
+      presep = "; ";
+    }
+    auto postbuild = cmJoin(postBuildComments, "; ");
+    if (!postbuild.empty()) {
+      postsep = "; ";
+    }
+    rule.Description = cmStrCat(
+      prelink, presep, "Linking ", this->TargetLinkLanguage(config), ' ',
+      this->GetVisibleTypeName(), " $TARGET_FILE", postsep, postbuild);
     rule.Restat = "$RESTAT";
     this->GetGlobalGenerator()->AddRule(rule);
   }
@@ -1313,6 +1329,7 @@ void cmNinjaNormalTargetGenerator::WriteLinkStatement(
   vars["AIX_EXPORTS"] = this->GetAIXExports(config);
 
   vars["LINK_PATH"] = frameworkPath + linkPath;
+  vars["CONFIG"] = config;
 
   // Compute architecture specific link flags.  Yes, these go into a different
   // variable for executables, probably due to a mistake made when duplicating
@@ -1394,12 +1411,19 @@ void cmNinjaNormalTargetGenerator::WriteLinkStatement(
     &gt->GetPostBuildCommands()
   };
 
+  std::vector<std::string> preLinkComments;
+  std::vector<std::string> postBuildComments;
+
   std::vector<std::string> preLinkCmdLines;
   std::vector<std::string> postBuildCmdLines;
 
+  std::vector<std::string>* cmdComments[3] = { &preLinkComments,
+                                               &preLinkComments,
+                                               &postBuildComments };
   std::vector<std::string>* cmdLineLists[3] = { &preLinkCmdLines,
                                                 &preLinkCmdLines,
                                                 &postBuildCmdLines };
+  cmGeneratorExpression ge(*this->GetLocalGenerator()->GetCMakeInstance());
 
   for (unsigned i = 0; i != 3; ++i) {
     for (cmCustomCommand const& cc : *cmdLists[i]) {
@@ -1409,6 +1433,11 @@ void cmNinjaNormalTargetGenerator::WriteLinkStatement(
         cmCustomCommandGenerator ccg(cc, fileConfig, this->GetLocalGenerator(),
                                      true, config);
         localGen.AppendCustomCommandLines(ccg, *cmdLineLists[i]);
+        if (cc.GetComment()) {
+          auto cge = ge.Parse(cc.GetComment());
+          cmdComments[i]->emplace_back(
+            cge->Evaluate(this->GetLocalGenerator(), config));
+        }
         std::vector<std::string> const& ccByproducts = ccg.GetByproducts();
         byproducts.Add(ccByproducts);
         std::transform(
@@ -1562,7 +1591,8 @@ void cmNinjaNormalTargetGenerator::WriteLinkStatement(
   bool usedResponseFile = false;
   globalGen->WriteBuild(this->GetImplFileStream(fileConfig), linkBuild,
                         commandLineLengthLimit, &usedResponseFile);
-  this->WriteLinkRule(usedResponseFile, config);
+  this->WriteLinkRule(usedResponseFile, config, preLinkComments,
+                      postBuildComments);
 
   if (symlinkNeeded) {
     if (targetType == cmStateEnums::EXECUTABLE) {

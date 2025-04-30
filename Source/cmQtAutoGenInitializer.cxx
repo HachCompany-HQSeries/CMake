@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmQtAutoGenInitializer.h"
 
 #include <array>
@@ -1451,8 +1451,11 @@ bool cmQtAutoGenInitializer::InitAutogenTarget()
     if (this->AutogenTarget.DependOrigin) {
       // add_dependencies/addUtility do not support generator expressions.
       // We depend only on the libraries found in all configs therefore.
-      std::map<cmGeneratorTarget const*, std::size_t> commonTargets;
+      std::map<cmGeneratorTarget const*, std::size_t> targetsPartOfAllConfigs;
       for (std::string const& config : this->ConfigsList) {
+        // The same target might appear multiple times in a config, but we
+        // should only count it once.
+        std::set<cmGeneratorTarget const*> seenTargets;
         cmLinkImplementationLibraries const* libs =
           this->GenTarget->GetLinkImplementationLibraries(
             config, cmGeneratorTarget::UseTo::Link);
@@ -1460,14 +1463,15 @@ bool cmQtAutoGenInitializer::InitAutogenTarget()
           for (cmLinkItem const& item : libs->Libraries) {
             cmGeneratorTarget const* libTarget = item.Target;
             if (libTarget &&
-                !StaticLibraryCycle(this->GenTarget, libTarget, config)) {
+                !StaticLibraryCycle(this->GenTarget, libTarget, config) &&
+                seenTargets.insert(libTarget).second) {
               // Increment target config count
-              commonTargets[libTarget]++;
+              targetsPartOfAllConfigs[libTarget]++;
             }
           }
         }
       }
-      for (auto const& item : commonTargets) {
+      for (auto const& item : targetsPartOfAllConfigs) {
         if (item.second == this->ConfigsList.size()) {
           this->AutogenTarget.DependTargets.insert(item.first->Target);
         }
@@ -1916,9 +1920,10 @@ bool cmQtAutoGenInitializer::SetupWriteAutogenInfo()
     if (this->MultiConfig) {
       for (auto const& cfg : this->ConfigsList) {
         if (!cfg.empty()) {
-          cmGeneratorExpressionDAGChecker dagChecker(
-            this->GenTarget, "AUTOMOC_MACRO_NAMES", nullptr, nullptr,
-            this->LocalGen, cfg);
+          cmGeneratorExpressionDAGChecker dagChecker{
+            this->GenTarget, "AUTOMOC_MACRO_NAMES", nullptr,
+            nullptr,         this->LocalGen,        cfg,
+          };
           AddInterfaceEntries(this->GenTarget, cfg,
                               "INTERFACE_AUTOMOC_MACRO_NAMES", "CXX",
                               &dagChecker, InterfaceAutoMocMacroNamesEntries,
@@ -1926,9 +1931,10 @@ bool cmQtAutoGenInitializer::SetupWriteAutogenInfo()
         }
       }
     } else {
-      cmGeneratorExpressionDAGChecker dagChecker(
-        this->GenTarget, "AUTOMOC_MACRO_NAMES", nullptr, nullptr,
-        this->LocalGen, this->ConfigDefault);
+      cmGeneratorExpressionDAGChecker dagChecker{
+        this->GenTarget, "AUTOMOC_MACRO_NAMES", nullptr,
+        nullptr,         this->LocalGen,        this->ConfigDefault,
+      };
       AddInterfaceEntries(this->GenTarget, this->ConfigDefault,
                           "INTERFACE_AUTOMOC_MACRO_NAMES", "CXX", &dagChecker,
                           InterfaceAutoMocMacroNamesEntries,

@@ -4,6 +4,7 @@
 .clang-tidy      export-ignore
 .codespellrc     export-ignore
 .editorconfig    export-ignore
+.pre-commit-config.yaml export-ignore
 .typos.toml      export-ignore
 
 # Custom attribute to mark sources as using our C code style.
@@ -59,6 +60,7 @@ coverage.xml.in  tab-indent
 *.H              our-c-style
 *.h              our-c-style
 *.hh             our-c-style
+*.hip            our-c-style
 *.hpp            our-c-style
 *.hxx            our-c-style
 *.notcu          our-c-style

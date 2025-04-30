@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 
 #pragma once
 
@@ -75,6 +75,7 @@ public:
     char const* RegisterFile = nullptr;
     char const* Launcher = nullptr;
     char const* Role = nullptr;
+    char const* Config = nullptr;
   };
 
   // Expand rule variables in CMake of the type found in language rules

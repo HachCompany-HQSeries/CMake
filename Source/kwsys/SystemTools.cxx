@@ -329,6 +329,9 @@ inline char const* Getcwd(char* buf, unsigned int len)
 }
 inline int Chdir(std::string const& dir)
 {
+  // We cannot use ToWindowsExtendedPath here because that causes a
+  // UNC path to be recorded as the process working directory, and
+  // can break child processes.
   return _wchdir(KWSYS_NAMESPACE::Encoding::ToWide(dir).c_str());
 }
 inline void Realpath(std::string const& path, std::string& resolved_path,
@@ -2086,67 +2089,43 @@ void SystemTools::ConvertToUnixSlashes(std::string& path)
     return;
   }
 
-  char const* pathCString = path.c_str();
-  bool hasDoubleSlash = false;
 #ifdef __VMS
   ConvertVMSToUnix(path);
 #else
-  char const* pos0 = pathCString;
-  for (std::string::size_type pos = 0; *pos0; ++pos) {
-    if (*pos0 == '\\') {
-      path[pos] = '/';
-    }
+  // replace backslashes
+  std::replace(path.begin(), path.end(), '\\', '/');
 
-    // Also, reuse the loop to check for slash followed by another slash
-    if (!hasDoubleSlash && *(pos0 + 1) == '/' && *(pos0 + 2) == '/') {
-#  ifdef _WIN32
-      // However, on windows if the first characters are both slashes,
-      // then keep them that way, so that network paths can be handled.
-      if (pos > 0) {
-        hasDoubleSlash = true;
-      }
-#  else
-      hasDoubleSlash = true;
-#  endif
-    }
-
-    pos0++;
-  }
-
-  if (hasDoubleSlash) {
-    SystemTools::ReplaceString(path, "//", "/");
-  }
+  // collapse repeated slashes, except exactly two leading slashes are
+  // meaningful and must be preserved.
+  bool hasDoubleSlash = path[0] == '/' && path[1] == '/' && path[2] != '/';
+  auto uniqueEnd = std::unique(
+    path.begin() + hasDoubleSlash, path.end(),
+    [](char c1, char c2) -> bool { return c1 == '/' && c1 == c2; });
+  path.erase(uniqueEnd, path.end());
 #endif
 
-  // remove any trailing slash
   // if there is a tilda ~ then replace it with HOME
-  pathCString = path.c_str();
-  if (pathCString[0] == '~' &&
-      (pathCString[1] == '/' || pathCString[1] == '\0')) {
+  if (path[0] == '~' && (path[1] == '/' || path[1] == '\0')) {
     std::string homeEnv;
     if (SystemTools::GetEnv("HOME", homeEnv)) {
       path.replace(0, 1, homeEnv);
     }
   }
 #ifdef HAVE_GETPWNAM
-  else if (pathCString[0] == '~') {
-    std::string::size_type idx = path.find_first_of("/\0");
-    char oldch = path[idx];
-    path[idx] = '\0';
-    passwd* pw = getpwnam(path.c_str() + 1);
-    path[idx] = oldch;
+  else if (path[0] == '~') {
+    std::string::size_type idx = path.find('/');
+    std::string user = path.substr(1, idx - 1);
+    passwd* pw = getpwnam(user.c_str());
     if (pw) {
       path.replace(0, idx, pw->pw_dir);
     }
   }
 #endif
-  // remove trailing slash if the path is more than
-  // a single /
-  pathCString = path.c_str();
+  // remove trailing slash, but preserve the root slash and the slash
+  // after windows drive letter (c:/).
   size_t size = path.size();
   if (size > 1 && path.back() == '/') {
-    // if it is c:/ then do not remove the trailing slash
-    if (!((size == 3 && pathCString[1] == ':'))) {
+    if (!(size == 3 && path[1] == ':') && path[size - 2] != '/') {
       path.resize(size - 1);
     }
   }
@@ -2914,17 +2893,6 @@ std::string SystemTools::FindDirectory(
  * the system search path.  Returns the full path to the executable if it is
  * found.  Otherwise, the empty string is returned.
  */
-std::string SystemTools::FindProgram(char const* nameIn,
-                                     std::vector<std::string> const& userPaths,
-                                     bool no_system_path)
-{
-  if (!nameIn || !*nameIn) {
-    return "";
-  }
-  return SystemTools::FindProgram(std::string(nameIn), userPaths,
-                                  no_system_path);
-}
-
 std::string SystemTools::FindProgram(std::string const& name,
                                      std::vector<std::string> const& userPaths,
                                      bool no_system_path)
@@ -2993,105 +2961,6 @@ std::string SystemTools::FindProgram(std::string const& name,
     }
   }
   // Couldn't find the program.
-  return "";
-}
-
-std::string SystemTools::FindProgram(std::vector<std::string> const& names,
-                                     std::vector<std::string> const& path,
-                                     bool noSystemPath)
-{
-  for (std::string const& name : names) {
-    // Try to find the program.
-    std::string result = SystemTools::FindProgram(name, path, noSystemPath);
-    if (!result.empty()) {
-      return result;
-    }
-  }
-  return "";
-}
-
-/**
- * Find the library with the given name.  Searches the given path and then
- * the system search path.  Returns the full path to the library if it is
- * found.  Otherwise, the empty string is returned.
- */
-std::string SystemTools::FindLibrary(std::string const& name,
-                                     std::vector<std::string> const& userPaths)
-{
-  // See if the executable exists as written.
-  if (SystemTools::FileExists(name, true)) {
-    return SystemTools::CollapseFullPath(name);
-  }
-
-  // Add the system search path to our path.
-  std::vector<std::string> path;
-  SystemTools::GetPath(path);
-  // now add the additional paths
-  path.reserve(path.size() + userPaths.size());
-  path.insert(path.end(), userPaths.begin(), userPaths.end());
-  // Add a trailing slash to all paths to aid the search process.
-  for (std::string& p : path) {
-    if (p.empty() || p.back() != '/') {
-      p += '/';
-    }
-  }
-  std::string tryPath;
-  for (std::string const& p : path) {
-#if defined(__APPLE__)
-    tryPath = p;
-    tryPath += name;
-    tryPath += ".framework";
-    if (SystemTools::FileIsDirectory(tryPath)) {
-      return SystemTools::CollapseFullPath(tryPath);
-    }
-#endif
-#if defined(_WIN32) && !defined(__CYGWIN__) && !defined(__MINGW32__)
-    tryPath = p;
-    tryPath += name;
-    tryPath += ".lib";
-    if (SystemTools::FileExists(tryPath, true)) {
-      return SystemTools::CollapseFullPath(tryPath);
-    }
-#else
-    tryPath = p;
-    tryPath += "lib";
-    tryPath += name;
-    tryPath += ".so";
-    if (SystemTools::FileExists(tryPath, true)) {
-      return SystemTools::CollapseFullPath(tryPath);
-    }
-    tryPath = p;
-    tryPath += "lib";
-    tryPath += name;
-    tryPath += ".a";
-    if (SystemTools::FileExists(tryPath, true)) {
-      return SystemTools::CollapseFullPath(tryPath);
-    }
-    tryPath = p;
-    tryPath += "lib";
-    tryPath += name;
-    tryPath += ".sl";
-    if (SystemTools::FileExists(tryPath, true)) {
-      return SystemTools::CollapseFullPath(tryPath);
-    }
-    tryPath = p;
-    tryPath += "lib";
-    tryPath += name;
-    tryPath += ".dylib";
-    if (SystemTools::FileExists(tryPath, true)) {
-      return SystemTools::CollapseFullPath(tryPath);
-    }
-    tryPath = p;
-    tryPath += "lib";
-    tryPath += name;
-    tryPath += ".dll";
-    if (SystemTools::FileExists(tryPath, true)) {
-      return SystemTools::CollapseFullPath(tryPath);
-    }
-#endif
-  }
-
-  // Couldn't find the library.
   return "";
 }
 
@@ -3398,33 +3267,6 @@ bool SystemTools::SplitProgramPath(std::string const& in_name,
     dir = in_name;
     return false;
   }
-  return true;
-}
-
-bool SystemTools::FindProgramPath(char const* argv0, std::string& pathOut,
-                                  std::string& errorMsg)
-{
-  std::vector<std::string> failures;
-  std::string self = argv0 ? argv0 : "";
-  failures.push_back(self);
-  SystemTools::ConvertToUnixSlashes(self);
-  self = SystemTools::FindProgram(self);
-  if (!SystemTools::FileIsExecutable(self)) {
-    failures.push_back(self);
-    std::ostringstream msg;
-    msg << "Can not find the command line program ";
-    msg << "\n";
-    if (argv0) {
-      msg << "  argv[0] = \"" << argv0 << "\"\n";
-    }
-    msg << "  Attempted paths:\n";
-    for (std::string const& ff : failures) {
-      msg << "    \"" << ff << "\"\n";
-    }
-    errorMsg = msg.str();
-    return false;
-  }
-  pathOut = self;
   return true;
 }
 

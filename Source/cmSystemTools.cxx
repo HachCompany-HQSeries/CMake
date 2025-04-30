@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 
 #if !defined(_WIN32) && !defined(__sun) && !defined(__OpenBSD__)
 // POSIX APIs are needed
@@ -141,6 +141,23 @@
 #  include <sys/utsname.h>
 #endif
 
+#if defined(CMAKE_BOOTSTRAP) && defined(__sun) && defined(__i386)
+#  define CMAKE_NO_MKDTEMP
+#endif
+
+#ifdef CMAKE_NO_MKDTEMP
+#  include <dlfcn.h>
+#endif
+
+#ifndef CMAKE_NO_GETPWNAM
+#  if defined(_WIN32)
+#    define CMAKE_NO_GETPWNAM
+#  endif
+#endif
+#ifndef CMAKE_NO_GETPWNAM
+#  include <pwd.h>
+#endif
+
 #if defined(_MSC_VER) && _MSC_VER >= 1800
 #  define CM_WINDOWS_DEPRECATED_GetVersionEx
 #endif
@@ -151,6 +168,35 @@ cmSystemTools::InterruptCallback s_InterruptCallback;
 cmSystemTools::MessageCallback s_MessageCallback;
 cmSystemTools::OutputCallback s_StderrCallback;
 cmSystemTools::OutputCallback s_StdoutCallback;
+
+std::string ResolveTildePath(std::string p)
+{
+  if (!p.empty() && p[0] == '~') {
+    cm::optional<std::string> home;
+    std::string::size_type last = p.find_first_of("/\\");
+    if (last == std::string::npos) {
+      last = p.size();
+    }
+    if (last == 1) {
+#if defined(_WIN32) && !defined(__CYGWIN__)
+      home = cmSystemTools::GetEnvVar("USERPROFILE");
+      if (!home)
+#endif
+        home = cmSystemTools::GetEnvVar("HOME");
+#ifndef CMAKE_NO_GETPWNAM
+    } else if (last > 1) {
+      std::string user = p.substr(1, last - 1);
+      if (passwd* pw = getpwnam(user.c_str())) {
+        home = std::string(pw->pw_dir);
+      }
+#endif
+    }
+    if (home) {
+      p.replace(0, last, *home);
+    }
+  }
+  return p;
+}
 
 #ifdef _WIN32
 std::string GetDosDriveWorkingDirectory(char letter)
@@ -787,38 +833,31 @@ std::size_t cmSystemTools::CalculateCommandLineLengthLimit()
   return sz;
 }
 
-cmsys::Status cmSystemTools::MaybePrependCmdExe(
-  std::vector<std::string>& cmdLine)
+void cmSystemTools::MaybePrependCmdExe(std::vector<std::string>& cmdLine)
 {
 #if defined(_WIN32) && !defined(__CYGWIN__)
-  cmsys::Status status;
   if (!cmdLine.empty()) {
     std::string& applicationName = cmdLine.at(0);
     static cmsys::RegularExpression const winCmdRegex(
       "\\.([Bb][Aa][Tt]|[Cc][Mm][Dd])$");
     cmsys::RegularExpressionMatch winCmdMatch;
     if (winCmdRegex.find(applicationName.c_str(), winCmdMatch)) {
+      // Wrap `.bat` and `.cmd` commands with `cmd /c call`.
       std::vector<std::string> output;
-      output.reserve(cmdLine.size() + 2);
+      output.reserve(cmdLine.size() + 3);
       output.emplace_back(cmSystemTools::GetComspec());
       output.emplace_back("/c");
+      output.emplace_back("call");
       // Convert the batch file path to use backslashes for cmd.exe to parse.
       std::replace(applicationName.begin(), applicationName.end(), '/', '\\');
-      if (applicationName.find(' ') != std::string::npos) {
-        // Convert the batch file path to a short path to avoid spaces.
-        // Otherwise, cmd.exe may not handle arguments with spaces.
-        status = cmSystemTools::GetShortPath(applicationName, applicationName);
-      }
-      output.push_back(applicationName);
+      output.emplace_back(applicationName);
       std::move(cmdLine.begin() + 1, cmdLine.end(),
                 std::back_inserter(output));
       cmdLine = std::move(output);
     }
   }
-  return status;
 #else
   static_cast<void>(cmdLine);
-  return cmsys::Status::Success();
 #endif
 }
 
@@ -1304,23 +1343,77 @@ bool FileModeGuard::HasErrors() const
   return filepath_.empty();
 }
 
+std::string cmSystemTools::GetRealPathResolvingWindowsSubst(
+  std::string const& path, std::string* errorMessage)
+{
+#ifdef _WIN32
+  // uv_fs_realpath uses Windows Vista API so fallback to kwsys if not found
+  std::string resolved_path;
+  uv_fs_t req;
+  int err = uv_fs_realpath(nullptr, &req, path.c_str(), nullptr);
+  if (!err) {
+    resolved_path = std::string((char*)req.ptr);
+    cmSystemTools::ConvertToUnixSlashes(resolved_path);
+  } else if (err == UV_ENOSYS) {
+    resolved_path = cmsys::SystemTools::GetRealPath(path, errorMessage);
+  } else if (errorMessage) {
+    cmsys::Status status =
+      cmsys::Status::Windows(uv_fs_get_system_error(&req));
+    *errorMessage = status.GetString();
+    resolved_path.clear();
+  } else {
+    resolved_path = path;
+  }
+  // Normalize to upper-case drive letter as cm::PathResolver does.
+  if (resolved_path.size() > 1 && resolved_path[1] == ':') {
+    resolved_path[0] = toupper(resolved_path[0]);
+  }
+  return resolved_path;
+#else
+  return cmsys::SystemTools::GetRealPath(path, errorMessage);
+#endif
+}
+
 std::string cmSystemTools::GetRealPath(std::string const& path,
                                        std::string* errorMessage)
 {
 #ifdef _WIN32
-  std::string resolved_path;
-  using namespace cm::PathResolver;
-  // IWYU pragma: no_forward_declare cm::PathResolver::Policies::RealPath
-  static Resolver<Policies::RealPath> const resolver(RealOS);
-  cmsys::Status status = resolver.Resolve(path, resolved_path);
-  if (!status) {
-    if (errorMessage) {
-      *errorMessage = status.GetString();
-      resolved_path.clear();
-    } else {
-      resolved_path = path;
+  std::string resolved_path =
+    cmSystemTools::GetRealPathResolvingWindowsSubst(path, errorMessage);
+
+  // If the original path used a subst drive and the real path starts
+  // with the substitution, restore the subst drive prefix.  This may
+  // incorrectly restore a subst drive if the underlying drive was
+  // encountered via an absolute symlink, but this is an acceptable
+  // limitation to otherwise preserve susbt drives.
+  if (resolved_path.size() >= 2 && resolved_path[1] == ':' &&
+      path.size() >= 2 && path[1] == ':' &&
+      toupper(resolved_path[0]) != toupper(path[0])) {
+    // FIXME: Add thread_local or mutex if we use threads.
+    static std::map<char, std::string> substMap;
+    char const drive = static_cast<char>(toupper(path[0]));
+    std::string maybe_subst = cmStrCat(drive, ":/");
+    auto smi = substMap.find(drive);
+    if (smi == substMap.end()) {
+      smi = substMap
+              .emplace(
+                drive,
+                cmSystemTools::GetRealPathResolvingWindowsSubst(maybe_subst))
+              .first;
+    }
+    std::string const& resolved_subst = smi->second;
+    std::string::size_type const ns = resolved_subst.size();
+    if (ns > 0) {
+      std::string::size_type const np = resolved_path.size();
+      if (ns == np && resolved_path == resolved_subst) {
+        resolved_path = maybe_subst;
+      } else if (ns > 0 && ns < np && resolved_path[ns] == '/' &&
+                 resolved_path.compare(0, ns, resolved_subst) == 0) {
+        resolved_path.replace(0, ns + 1, maybe_subst);
+      }
     }
   }
+
   return resolved_path;
 #else
   return cmsys::SystemTools::GetRealPath(path, errorMessage);
@@ -1368,6 +1461,29 @@ inline int Mkdir(char const* dir, mode_t const* mode)
   return mkdir(dir, mode ? *mode : 0777);
 #endif
 }
+
+#ifdef CMAKE_NO_MKDTEMP
+namespace {
+char* cm_mkdtemp_fallback(char* template_)
+{
+  if (mktemp(template_) == nullptr || mkdir(template_, 0700) != 0) {
+    return nullptr;
+  }
+  return template_;
+}
+using cm_mkdtemp_t = char* (*)(char*);
+cm_mkdtemp_t const cm_mkdtemp = []() -> cm_mkdtemp_t {
+  cm_mkdtemp_t f = (cm_mkdtemp_t)dlsym(RTLD_DEFAULT, "mkdtemp");
+  dlerror(); // Ignore/cleanup dlsym errors.
+  if (!f) {
+    f = cm_mkdtemp_fallback;
+  }
+  return f;
+}();
+}
+#else
+#  define cm_mkdtemp mkdtemp
+#endif
 
 cmsys::Status cmSystemTools::MakeTempDirectory(std::string& path,
                                                mode_t const* mode)
@@ -1422,7 +1538,7 @@ cmsys::Status cmSystemTools::MakeTempDirectory(char* path, mode_t const* mode)
   }
   return cmsys::Status::POSIX(EAGAIN);
 #else
-  if (mkdtemp(path)) {
+  if (cm_mkdtemp(path)) {
     if (mode) {
       chmod(path, *mode);
     }
@@ -1966,9 +2082,15 @@ std::vector<std::string> cmSystemTools::SplitEnvPathNormalized(
 
 std::string cmSystemTools::ToNormalizedPathOnDisk(std::string p)
 {
+  p = ResolveTildePath(p);
   using namespace cm::PathResolver;
+#ifdef _WIN32
+  // IWYU pragma: no_forward_declare cm::PathResolver::Policies::CasePath
+  static Resolver<Policies::CasePath> const resolver(RealOS);
+#else
   // IWYU pragma: no_forward_declare cm::PathResolver::Policies::LogicalPath
   static Resolver<Policies::LogicalPath> const resolver(RealOS);
+#endif
   resolver.Resolve(std::move(p), p);
   return p;
 }
@@ -2305,7 +2427,7 @@ void list_item_verbose(FILE* out, struct archive_entry* entry)
   if (!now) {
     time(&now);
   }
-  fprintf(out, "%s %d ", archive_entry_strmode(entry),
+  fprintf(out, "%s %u ", archive_entry_strmode(entry),
           archive_entry_nlink(entry));
 
   /* Use uname if it's present, else uid. */
@@ -2870,15 +2992,26 @@ unsigned int cmSystemTools::RandomNumber()
   return static_cast<unsigned int>(gen());
 }
 
+std::string cmSystemTools::FindProgram(std::string const& name,
+                                       std::vector<std::string> const& path)
+{
+  std::string exe = cmsys::SystemTools::FindProgram(name, path);
+  if (!exe.empty()) {
+    exe = cmSystemTools::ToNormalizedPathOnDisk(std::move(exe));
+  }
+  return exe;
+}
+
 namespace {
 std::string InitLogicalWorkingDirectory()
 {
   std::string cwd = cmsys::SystemTools::GetCurrentWorkingDirectory();
   std::string pwd;
-  if (cmSystemTools::GetEnv("PWD", pwd)) {
+  if (cmSystemTools::GetEnv("PWD", pwd) &&
+      cmSystemTools::FileIsFullPath(pwd)) {
     std::string const pwd_real = cmSystemTools::GetRealPath(pwd);
     if (pwd_real == cwd) {
-      cwd = std::move(pwd);
+      cwd = cmSystemTools::ToNormalizedPathOnDisk(std::move(pwd));
     }
   }
   return cwd;
@@ -2943,11 +3076,7 @@ std::string FindOwnExecutable(char const* argv0)
     }
   }
 #else
-  std::string errorMsg;
-  std::string exe;
-  if (!cmSystemTools::FindProgramPath(argv0, exe, errorMsg)) {
-    // ???
-  }
+  std::string exe = cmsys::SystemTools::FindProgram(argv0);
 #endif
   exe = cmSystemTools::ToNormalizedPathOnDisk(std::move(exe));
   return exe;
@@ -4274,10 +4403,6 @@ cm::string_view cmSystemTools::GetSystemName()
       systemName = "BSDOS";
     }
 
-    // fix for GNU/kFreeBSD, remove the GNU/
-    if (systemName.find("kFreeBSD") != cm::string_view::npos) {
-      systemName = "kFreeBSD";
-    }
     return systemName;
   }
   return "";

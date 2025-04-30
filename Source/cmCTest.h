@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #pragma once
 
 #include "cmConfigure.h" // IWYU pragma: keep
@@ -21,6 +21,7 @@
 
 class cmake;
 class cmGeneratedFileStream;
+class cmInstrumentation;
 class cmMakefile;
 class cmValue;
 class cmXMLWriter;
@@ -197,6 +198,8 @@ public:
   std::string GetScheduleType() const;
   void SetScheduleType(std::string const& type);
 
+  cm::optional<unsigned int> GetRandomSeed() const;
+
   /** The max output width */
   int GetMaxTestNameWidth() const;
   void SetMaxTestNameWidth(int w);
@@ -298,12 +301,6 @@ public:
   static std::string DecodeURL(std::string const&);
 
   /**
-   * Should ctect configuration be updated. When using new style ctest
-   * script, this should be true.
-   */
-  void SetSuppressUpdatingCTestConfiguration(bool val);
-
-  /**
    * Add overwrite to ctest configuration.
    *
    * The format is key=value
@@ -391,6 +388,11 @@ public:
   bool StartLogFile(char const* name, int submitIndex,
                     cmGeneratedFileStream& xofs);
 
+  void ConvertInstrumentationSnippetsToXML(cmXMLWriter& xml,
+                                           std::string const& subdir);
+  bool ConvertInstrumentationJSONFileToXML(std::string const& fpath,
+                                           cmXMLWriter& xml);
+
   void AddSiteProperties(cmXMLWriter& xml, cmake* cm);
 
   bool GetInteractiveDebugMode() const;
@@ -433,6 +435,9 @@ public:
   cmCTestTestOptions const& GetTestOptions() const;
   std::vector<std::string> GetCommandLineHttpHeaders() const;
 
+  cmInstrumentation& GetInstrumentation();
+  bool GetUseVerboseInstrumentation() const;
+
 private:
   int GenerateNotesFile(cmake* cm, std::string const& files);
 
@@ -471,7 +476,7 @@ private:
 
   int RunCMakeAndTest();
   int RunScripts(std::vector<std::pair<std::string, bool>> const& scripts);
-  int ExecuteTests();
+  int ExecuteTests(std::vector<std::string> const& args);
 
   struct Private;
   std::unique_ptr<Private> Impl;

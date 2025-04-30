@@ -1,5 +1,5 @@
 # Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-# file Copyright.txt or https://cmake.org/licensing for details.
+# file LICENSE.rst or https://cmake.org/licensing for details.
 
 #[=======================================================================[.rst:
 FindGettext
@@ -35,10 +35,11 @@ This module provides several function.
 
   .. code-block:: cmake
 
-    gettext_create_translations(<mofile> [ALL] <file>...)
+    gettext_create_translations(<potfile> [ALL] <file>...)
 
-  This will create a target "translations" which will convert the
-  given input .po files into the binary output .mo file. Options:
+  This function creates a custom target "translations" which processes the
+  given .pot file to .mo files. The generated binary files will be installed
+  into ``share/locale/`` directory. Options:
 
   ``ALL``
     The translations will be created when building the default target.
@@ -51,7 +52,7 @@ This module provides several function.
                                [INSTALL_DESTINATION <destdir>]
                                LANGUAGES <lang>...)
 
-  This function creates a custom target "potfile" which processes the given
+  This function creates a custom target "potfiles" which processes the given
   .pot file to .mo files. Options:
 
   ``ALL``
@@ -77,7 +78,7 @@ This module provides several function.
 
   ``INSTALL_DESTINATION``
     Install the results into the given directory (``share/locale/`` by
-    default). The language subdirectory will be taken into account .
+    default). The language subdirectory will be taken into account.
 
 .. versionadded:: 3.2
   If you wish to use the Gettext runtime library (libintl), use
@@ -95,7 +96,7 @@ if(GETTEXT_MSGMERGE_EXECUTABLE)
                   OUTPUT_STRIP_TRAILING_WHITESPACE)
   get_filename_component(msgmerge_name ${GETTEXT_MSGMERGE_EXECUTABLE} NAME)
   get_filename_component(msgmerge_namewe ${GETTEXT_MSGMERGE_EXECUTABLE} NAME_WE)
-  if (gettext_version MATCHES "^(${msgmerge_name}|${msgmerge_namewe}) \\([^\\)]*\\) ([0-9\\.]+[^ \n]*)")
+  if(gettext_version MATCHES "^(${msgmerge_name}|${msgmerge_namewe}) \\([^\\)]*\\) ([0-9\\.]+[^ \n]*)")
     set(GETTEXT_VERSION_STRING "${CMAKE_MATCH_2}")
   endif()
   unset(gettext_version)
@@ -116,7 +117,7 @@ function(_GETTEXT_GET_UNIQUE_TARGET_NAME _name _unique_name)
   endif()
   set(${_unique_name} "${_name}_${currentCounter}" PARENT_SCOPE)
   math(EXPR currentCounter "${currentCounter} + 1")
-  set_property(GLOBAL PROPERTY ${propertyName} ${currentCounter} )
+  set_property(GLOBAL PROPERTY ${propertyName} ${currentCounter})
 endfunction()
 
 macro(GETTEXT_CREATE_TRANSLATIONS _potFile _firstPoFileArg)
@@ -134,7 +135,7 @@ macro(GETTEXT_CREATE_TRANSLATIONS _potFile _firstPoFileArg)
     set(_firstPoFile)
   endif()
 
-  foreach (_currentPoFile ${_firstPoFile} ${ARGN})
+  foreach(_currentPoFile ${_firstPoFile} ${ARGN})
     get_filename_component(_absFile ${_currentPoFile} ABSOLUTE)
     get_filename_component(_abs_PATH ${_absFile} PATH)
     get_filename_component(_lang ${_absFile} NAME_WE)
@@ -142,7 +143,7 @@ macro(GETTEXT_CREATE_TRANSLATIONS _potFile _firstPoFileArg)
 
     add_custom_command(
       OUTPUT ${_gmoFile}
-      COMMAND ${GETTEXT_MSGMERGE_EXECUTABLE} --quiet --update --backup=none -s ${_absFile} ${_absPotFile}
+      COMMAND ${GETTEXT_MSGMERGE_EXECUTABLE} --quiet --update --backup=none ${_absFile} ${_absPotFile}
       COMMAND ${GETTEXT_MSGFMT_EXECUTABLE} -o ${_gmoFile} ${_absFile}
       DEPENDS ${_absPotFile} ${_absFile}
     )
@@ -150,7 +151,7 @@ macro(GETTEXT_CREATE_TRANSLATIONS _potFile _firstPoFileArg)
     install(FILES ${_gmoFile} DESTINATION share/locale/${_lang}/LC_MESSAGES RENAME ${_potBasename}.mo)
     set(_gmoFiles ${_gmoFiles} ${_gmoFile})
 
-  endforeach ()
+  endforeach()
 
   if(NOT TARGET translations)
     add_custom_target(translations)
@@ -177,13 +178,13 @@ function(GETTEXT_PROCESS_POT_FILE _potFile)
   string(REGEX REPLACE "^(.+)(\\.[^.]+)$" "\\1" _potBasename ${_potName})
   get_filename_component(_absPotFile ${_potFile} ABSOLUTE)
 
-  foreach (_lang ${_parsedArguments_LANGUAGES})
+  foreach(_lang ${_parsedArguments_LANGUAGES})
     set(_poFile  "${CMAKE_CURRENT_BINARY_DIR}/${_lang}.po")
     set(_gmoFile "${CMAKE_CURRENT_BINARY_DIR}/${_lang}.gmo")
 
     add_custom_command(
       OUTPUT "${_poFile}"
-      COMMAND ${GETTEXT_MSGMERGE_EXECUTABLE} --quiet --update --backup=none -s ${_poFile} ${_absPotFile}
+      COMMAND ${GETTEXT_MSGMERGE_EXECUTABLE} --quiet --update --backup=none ${_poFile} ${_absPotFile}
       DEPENDS ${_absPotFile}
     )
 
@@ -197,7 +198,7 @@ function(GETTEXT_PROCESS_POT_FILE _potFile)
       install(FILES ${_gmoFile} DESTINATION ${_parsedArguments_INSTALL_DESTINATION}/${_lang}/LC_MESSAGES RENAME ${_potBasename}.mo)
     endif()
     list(APPEND _gmoFiles ${_gmoFile})
-  endforeach ()
+  endforeach()
 
   if(NOT TARGET potfiles)
     add_custom_target(potfiles)
@@ -245,7 +246,7 @@ function(GETTEXT_PROCESS_PO_FILES _lang)
     add_custom_target(pofiles)
   endif()
 
-  _GETTEXT_GET_UNIQUE_TARGET_NAME( pofiles uniqueTargetName)
+  _GETTEXT_GET_UNIQUE_TARGET_NAME(pofiles uniqueTargetName)
 
   if(_parsedArguments_ALL)
     add_custom_target(${uniqueTargetName} ALL DEPENDS ${_gmoFiles})

@@ -1,5 +1,5 @@
 # Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-# file Copyright.txt or https://cmake.org/licensing for details.
+# file LICENSE.rst or https://cmake.org/licensing for details.
 
 #[=======================================================================[.rst:
 FindOpenMP
@@ -152,6 +152,7 @@ function(_OPENMP_FLAG_CANDIDATES LANG)
     set(OMP_FLAG_XL "-qsmp=omp")
     # Cray compiler activate OpenMP with -h omp, which is enabled by default.
     set(OMP_FLAG_Cray " " "-h omp")
+    set(OMP_FLAG_CrayClang "-fopenmp")
     set(OMP_FLAG_Fujitsu "-Kopenmp" "-KOMP")
     set(OMP_FLAG_FujitsuClang "-fopenmp" "-Kopenmp")
 
@@ -677,7 +678,8 @@ foreach(LANG IN LISTS OpenMP_FINDLIST)
         set_property(TARGET OpenMP::OpenMP_${LANG} PROPERTY
           INTERFACE_COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:${LANG}>:SHELL:${OpenMP_${LANG}_FLAGS}>")
         if(CMAKE_${LANG}_COMPILER_ID STREQUAL "Fujitsu"
-          OR ${CMAKE_${LANG}_COMPILER_ID} STREQUAL "IntelLLVM")
+          OR ${CMAKE_${LANG}_COMPILER_ID} STREQUAL "IntelLLVM"
+          OR CMAKE_${LANG}_COMPILER_ID MATCHES "^(Cray|CrayClang)$")
           set_property(TARGET OpenMP::OpenMP_${LANG} PROPERTY
             INTERFACE_LINK_OPTIONS "SHELL:${OpenMP_${LANG}_FLAGS}")
         endif()

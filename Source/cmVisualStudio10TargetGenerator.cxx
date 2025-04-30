@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmVisualStudio10TargetGenerator.h"
 
 #include <algorithm>
@@ -4589,6 +4589,13 @@ bool cmVisualStudio10TargetGenerator::ComputeLinkOptions(
       linkOptions.AddFlag("ImportLibrary", imLib);
     }
     linkOptions.AddFlag("ProgramDataBaseFile", pdb);
+
+    // Add image version
+    int major, minor;
+    this->GeneratorTarget->GetTargetVersion(major, minor);
+    if (major || minor) {
+      linkOptions.AddFlag("Version", cmStrCat(major, '.', minor));
+    }
 
     // A Windows Runtime component uses internal .NET metadata,
     // so does not have an import library.

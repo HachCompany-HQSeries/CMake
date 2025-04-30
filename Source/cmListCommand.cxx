@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmListCommand.h"
 
 #include <cassert>
@@ -677,6 +677,11 @@ bool HandleTransformCommand(std::vector<std::string> const& args,
       status.GetMakefile().AddDefinition(outputName, "");
       return true;
     }
+
+    if (!selector) {
+      selector = cmList::TransformSelector::New();
+    }
+    selector->Makefile = &status.GetMakefile();
 
     list->transform(descriptor->Action, arguments, std::move(selector));
     status.GetMakefile().AddDefinition(outputName, list->to_string());

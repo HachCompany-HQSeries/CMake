@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmMakefileExecutableTargetGenerator.h"
 
 #include <set>
@@ -554,6 +554,7 @@ void cmMakefileExecutableTargetGenerator::WriteExecutableRule(bool relink)
       cmOutputConverter::SHELL, useWatcomQuote);
     vars.Target = target.c_str();
     vars.TargetPDB = targetOutPathPDB.c_str();
+    vars.Config = this->GetConfigName().c_str();
 
     // Setup the target version.
     std::string targetVersionMajor;

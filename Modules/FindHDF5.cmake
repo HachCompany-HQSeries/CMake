@@ -1,5 +1,5 @@
 # Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-# file Copyright.txt or https://cmake.org/licensing for details.
+# file LICENSE.rst or https://cmake.org/licensing for details.
 
 #[=======================================================================[.rst:
 FindHDF5
@@ -216,6 +216,13 @@ else()
   set(HDF5_C_COMPILER_NAMES h5cc h5pcc)
   set(HDF5_CXX_COMPILER_NAMES h5c++ h5pc++)
   set(HDF5_Fortran_COMPILER_NAMES h5fc h5pfc)
+endif()
+
+# Prefer h5hl<LANG> compilers if HDF5_FIND_HL is enabled
+if(HDF5_FIND_HL)
+  list(PREPEND HDF5_C_COMPILER_NAMES h5hlcc)
+  list(PREPEND HDF5_CXX_COMPILER_NAMES h5hlc++)
+  list(PREPEND HDF5_Fortran_COMPILER_NAMES h5hlfc)
 endif()
 
 # Test first if the current compilers automatically wrap HDF5

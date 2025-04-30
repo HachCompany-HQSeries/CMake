@@ -1,7 +1,8 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmExportPackageInfoGenerator.h"
 
+#include <cstddef>
 #include <memory>
 #include <set>
 #include <utility>
@@ -127,9 +128,22 @@ void cmExportPackageInfoGenerator::GeneratePackageRequires(
 {
   if (!this->Requirements.empty()) {
     Json::Value& requirements = package["requires"];
+
+    // Build description for each requirement.
     for (auto const& requirement : this->Requirements) {
+      auto data = Json::Value{ Json::objectValue };
+
+      // Add required components.
+      if (!requirement.second.empty()) {
+        auto components = Json::Value{ Json::arrayValue };
+        for (std::string const& component : requirement.second) {
+          components.append(component);
+        }
+        data["components"] = components;
+      }
+
       // TODO: version, hint
-      requirements[requirement] = Json::Value{};
+      requirements[requirement.first] = data;
     }
   }
 }
@@ -197,13 +211,15 @@ bool cmExportPackageInfoGenerator::GenerateInterfaceProperties(
 }
 
 namespace {
-bool forbidGeneratorExpressions(std::string const& propertyName,
-                                std::string const& propertyValue,
-                                cmGeneratorTarget const* target)
+bool ForbidGeneratorExpressions(
+  cmGeneratorTarget const* target, std::string const& propertyName,
+  std::string const& propertyValue, std::string& evaluatedValue,
+  std::map<std::string, std::vector<std::string>>& allowList)
 {
-  std::string const& evaluatedValue = cmGeneratorExpression::Preprocess(
-    propertyValue, cmGeneratorExpression::StripAllGeneratorExpressions);
-  if (evaluatedValue != propertyValue) {
+  size_t const allowedExpressions = allowList.size();
+  evaluatedValue = cmGeneratorExpression::Collect(propertyValue, allowList);
+  if (evaluatedValue != propertyValue &&
+      allowList.size() > allowedExpressions) {
     target->Makefile->IssueMessage(
       MessageType::FATAL_ERROR,
       cmStrCat("Property \"", propertyName, "\" of target \"",
@@ -211,7 +227,31 @@ bool forbidGeneratorExpressions(std::string const& propertyName,
                "\" contains a generator expression. This is not allowed."));
     return false;
   }
+  // Forbid Nested Generator Expressions
+  for (auto const& genexp : allowList) {
+    for (auto const& value : genexp.second) {
+      if (value.find("$<") != std::string::npos) {
+        target->Makefile->IssueMessage(
+          MessageType::FATAL_ERROR,
+          cmStrCat(
+            "$<", genexp.first, ":...> expression in \"", propertyName,
+            "\" of target \"", target->GetName(),
+            "\" contains a generator expression. This is not allowed."));
+        return false;
+      }
+    }
+  }
   return true;
+}
+
+bool ForbidGeneratorExpressions(cmGeneratorTarget const* target,
+                                std::string const& propertyName,
+                                std::string const& propertyValue)
+{
+  std::map<std::string, std::vector<std::string>> allowList;
+  std::string evaluatedValue;
+  return ForbidGeneratorExpressions(target, propertyName, propertyValue,
+                                    evaluatedValue, allowList);
 }
 }
 
@@ -257,14 +297,14 @@ bool cmExportPackageInfoGenerator::NoteLinkedTarget(
       return false;
     }
 
+    std::string component = linkedName.substr(prefix.length());
+    this->LinkTargets.emplace(linkedName, cmStrCat(pkgName, ':', component));
     // TODO: Record package version, hint.
-    this->Requirements.emplace(pkgName);
-    this->LinkTargets.emplace(
-      linkedName, cmStrCat(pkgName, ':', linkedName.substr(prefix.length())));
+    this->Requirements[pkgName].emplace(std::move(component));
     return true;
   }
 
-  // Target belongs to multiple namespaces or multiple export sets.
+  // Target belongs to another export from this build.
   auto const& exportInfo = this->FindExportInfo(linkedTarget);
   if (exportInfo.Namespaces.size() == 1 && exportInfo.Sets.size() == 1) {
     auto const& linkNamespace = *exportInfo.Namespaces.begin();
@@ -278,20 +318,18 @@ bool cmExportPackageInfoGenerator::NoteLinkedTarget(
       return false;
     }
 
-    auto pkgName =
-      cm::string_view{ linkNamespace.data(), linkNamespace.size() - 2 };
-
+    std::string pkgName{ linkNamespace.data(), linkNamespace.size() - 2 };
+    std::string component = linkedTarget->GetExportName();
     if (pkgName == this->GetPackageName()) {
-      this->LinkTargets.emplace(linkedName,
-                                cmStrCat(':', linkedTarget->GetExportName()));
+      this->LinkTargets.emplace(linkedName, cmStrCat(':', component));
     } else {
-      this->Requirements.emplace(pkgName);
-      this->LinkTargets.emplace(
-        linkedName, cmStrCat(pkgName, ':', linkedTarget->GetExportName()));
+      this->LinkTargets.emplace(linkedName, cmStrCat(pkgName, ':', component));
+      this->Requirements[pkgName].emplace(std::move(component));
     }
     return true;
   }
 
+  // Target belongs to multiple namespaces or multiple export sets.
   // cmExportFileGenerator::HandleMissingTarget should have complained about
   // this already.
   return false;
@@ -306,31 +344,43 @@ void cmExportPackageInfoGenerator::GenerateInterfaceLinkProperties(
     return;
   }
 
-  // TODO: Support $<LINK_ONLY>.
-  if (!forbidGeneratorExpressions(iter->first, iter->second, target)) {
+  // Extract any $<LINK_ONLY:...> from the link libraries, and assert that no
+  // other generator expressions are present.
+  std::map<std::string, std::vector<std::string>> allowList = { { "LINK_ONLY",
+                                                                  {} } };
+  std::string interfaceLinkLibraries;
+  if (!ForbidGeneratorExpressions(target, iter->first, iter->second,
+                                  interfaceLinkLibraries, allowList)) {
     result = false;
     return;
   }
 
-  std::vector<std::string> buildRequires;
-  // std::vector<std::string> linkRequires; TODO
   std::vector<std::string> linkLibraries;
+  std::vector<std::string> linkRequires;
+  std::vector<std::string> buildRequires;
 
-  for (auto const& name : cmList{ iter->second }) {
-    auto const& ti = this->LinkTargets.find(name);
-    if (ti != this->LinkTargets.end()) {
-      if (ti->second.empty()) {
-        result = false;
+  auto addLibraries = [this, &linkLibraries,
+                       &result](std::vector<std::string> const& names,
+                                std::vector<std::string>& output) -> void {
+    for (auto const& name : names) {
+      auto const& ti = this->LinkTargets.find(name);
+      if (ti != this->LinkTargets.end()) {
+        if (ti->second.empty()) {
+          result = false;
+        } else {
+          output.emplace_back(ti->second);
+        }
       } else {
-        buildRequires.emplace_back(ti->second);
+        linkLibraries.emplace_back(name);
       }
-    } else {
-      linkLibraries.emplace_back(name);
     }
-  }
+  };
+
+  addLibraries(allowList["LINK_ONLY"], linkRequires);
+  addLibraries(cmList{ interfaceLinkLibraries }, buildRequires);
 
   buildArray(component, "requires", buildRequires);
-  // buildArray(component, "link_requires", linkRequires); TODO
+  buildArray(component, "link_requires", linkRequires);
   buildArray(component, "link_libraries", linkLibraries);
 }
 
@@ -343,7 +393,7 @@ void cmExportPackageInfoGenerator::GenerateInterfaceCompileFeatures(
     return;
   }
 
-  if (!forbidGeneratorExpressions(iter->first, iter->second, target)) {
+  if (!ForbidGeneratorExpressions(target, iter->first, iter->second)) {
     result = false;
     return;
   }
@@ -372,7 +422,7 @@ void cmExportPackageInfoGenerator::GenerateInterfaceCompileDefines(
   }
 
   // TODO: Support language-specific defines.
-  if (!forbidGeneratorExpressions(iter->first, iter->second, target)) {
+  if (!ForbidGeneratorExpressions(target, iter->first, iter->second)) {
     result = false;
     return;
   }
@@ -403,7 +453,7 @@ void cmExportPackageInfoGenerator::GenerateInterfaceListProperty(
     return;
   }
 
-  if (!forbidGeneratorExpressions(prop, iter->second, target)) {
+  if (!ForbidGeneratorExpressions(target, prop, iter->second)) {
     result = false;
     return;
   }
@@ -414,8 +464,7 @@ void cmExportPackageInfoGenerator::GenerateInterfaceListProperty(
   }
 }
 
-void cmExportPackageInfoGenerator::GenerateInterfaceConfigProperties(
-  Json::Value& components, cmGeneratorTarget const* target,
+Json::Value cmExportPackageInfoGenerator::GenerateInterfaceConfigProperties(
   std::string const& suffix, ImportPropertyMap const& properties) const
 {
   Json::Value component;
@@ -446,7 +495,5 @@ void cmExportPackageInfoGenerator::GenerateInterfaceConfigProperties(
     }
   }
 
-  if (!component.empty()) {
-    components[target->GetExportName()] = component;
-  }
+  return component;
 }

@@ -1,17 +1,19 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 
 #include "cmStateSnapshot.h"
 
 #include <algorithm>
 #include <cassert>
 #include <string>
+#include <unordered_map>
 
 #include <cm/iterator>
 
 #include "cmDefinitions.h"
 #include "cmLinkedTree.h"
 #include "cmListFileCache.h"
+#include "cmPackageState.h"
 #include "cmPropertyMap.h"
 #include "cmState.h"
 #include "cmStateDirectory.h"
@@ -325,6 +327,11 @@ void cmStateSnapshot::SetDefaultDefinitions()
   this->SetDefinition("CMAKE_HOST_LINUX", "1");
 #endif
 
+#if defined(_AIX)
+  this->SetDefinition("AIX", "1");
+  this->SetDefinition("CMAKE_HOST_AIX", "1");
+#endif
+
   this->SetDefinition("CMAKE_MAJOR_VERSION",
                       std::to_string(cmVersion::GetMajorVersion()));
   this->SetDefinition("CMAKE_MINOR_VERSION",
@@ -411,6 +418,12 @@ void cmStateSnapshot::SetProjectName(std::string const& name)
 std::string cmStateSnapshot::GetProjectName() const
 {
   return this->Position->BuildSystemDirectory->ProjectName;
+}
+
+cmPackageState& cmStateSnapshot::GetPackageState(
+  std::string const& packagePath)
+{
+  return this->Position->BuildSystemDirectory->Packages[packagePath];
 }
 
 void cmStateSnapshot::InitializeFromParent_ForSubdirsCommand()

@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #pragma once
 
 #include "cmConfigure.h" // IWYU pragma: keep
@@ -29,10 +29,13 @@ public:
     cm::optional<std::map<std::string, std::string>> arrayOptions =
       cm::nullopt,
     bool reloadQueriesAfterCommand = false);
-  int InstrumentTest(std::string const& name, std::string const& command,
-                     std::vector<std::string> const& args, int64_t result,
-                     std::chrono::steady_clock::time_point steadyStart,
-                     std::chrono::system_clock::time_point systemStart);
+  std::string InstrumentTest(std::string const& name,
+                             std::string const& command,
+                             std::vector<std::string> const& args,
+                             int64_t result,
+                             std::chrono::steady_clock::time_point steadyStart,
+                             std::chrono::system_clock::time_point systemStart,
+                             std::string config);
   void GetPreTestStats();
   void LoadQueries();
   bool HasQuery() const;
@@ -48,7 +51,10 @@ public:
   int CollectTimingData(cmInstrumentationQuery::Hook hook);
   int SpawnBuildDaemon();
   int CollectTimingAfterBuild(int ppid);
-  std::string errorMsg;
+  void AddHook(cmInstrumentationQuery::Hook hook);
+  void AddQuery(cmInstrumentationQuery::Query query);
+  bool HasErrors() const;
+  std::string const& GetCDashDir();
 
 private:
   void WriteInstrumentationJson(Json::Value& index,
@@ -65,13 +71,18 @@ private:
   static std::string GetCommandStr(std::vector<std::string> const& args);
   static std::string ComputeSuffixHash(std::string const& command_str);
   static std::string ComputeSuffixTime();
+  void PrepareDataForCDash(std::string const& data_dir,
+                           std::string const& index_path);
   std::string binaryDir;
   std::string timingDirv1;
   std::string userTimingDirv1;
+  std::string cdashDir;
   std::set<cmInstrumentationQuery::Query> queries;
   std::set<cmInstrumentationQuery::Hook> hooks;
   std::vector<std::string> callbacks;
   std::vector<std::string> queryFiles;
+  std::map<std::string, std::string> cdashSnippetsMap;
   Json::Value preTestStats;
+  std::string errorMsg;
   bool hasQuery = false;
 };

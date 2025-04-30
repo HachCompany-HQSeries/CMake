@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmExecuteProcessCommand.h"
 
 #include <cstdint>
@@ -166,16 +166,7 @@ bool cmExecuteProcessCommand(std::vector<std::string> const& args,
       status.SetError(" given COMMAND argument with no value.");
       return false;
     }
-#ifdef _WIN32
-    cmsys::Status shortPathRes = cmSystemTools::MaybePrependCmdExe(cmd);
-    if (!shortPathRes) {
-      status.GetMakefile().IssueMessage(
-        MessageType::WARNING,
-        cmStrCat("Conversion of COMMAND:\n  ", cmd[2], '\n',
-                 "to a short path without spaces failed:\n  ",
-                 shortPathRes.GetString()));
-    }
-#endif
+    cmSystemTools::MaybePrependCmdExe(cmd);
   }
 
   // Parse the timeout string.

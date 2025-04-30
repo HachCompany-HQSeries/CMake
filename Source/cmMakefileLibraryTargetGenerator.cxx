@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmMakefileLibraryTargetGenerator.h"
 
 #include <cstddef>
@@ -809,8 +809,8 @@ void cmMakefileLibraryTargetGenerator::WriteLibraryRules(
       vars.TargetSOName = targetOutSOName.c_str();
     }
     vars.LinkFlags = linkFlags.c_str();
-
     vars.Manifests = manifests.c_str();
+    vars.Config = this->GetConfigName().c_str();
 
     // Compute the directory portion of the install_name setting.
     std::string install_name_dir;

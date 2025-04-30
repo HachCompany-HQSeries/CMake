@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmFindProgramCommand.h"
 
 #include <algorithm>
@@ -18,7 +18,9 @@
 class cmExecutionStatus;
 
 #if defined(__APPLE__)
-#  include <CoreFoundation/CoreFoundation.h>
+#  include <CoreFoundation/CFBundle.h>
+#  include <CoreFoundation/CFString.h>
+#  include <CoreFoundation/CFURL.h>
 #endif
 
 struct cmFindProgramHelper
@@ -193,7 +195,7 @@ bool cmFindProgramCommand::InitialPass(std::vector<std::string> const& argsIn)
   }
   this->DebugMode = this->ComputeIfDebugModeWanted(this->VariableName);
 
-  if (this->AlreadyDefined) {
+  if (this->IsFound()) {
     this->NormalizeFindResult();
     return true;
   }

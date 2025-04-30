@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmCTestTestHandler.h"
 
 #include <algorithm>
@@ -41,6 +41,8 @@
 #include "cmExecutionStatus.h"
 #include "cmGeneratedFileStream.h"
 #include "cmGlobalGenerator.h"
+#include "cmInstrumentation.h"
+#include "cmInstrumentationQuery.h"
 #include "cmList.h"
 #include "cmMakefile.h"
 #include "cmState.h"
@@ -1322,7 +1324,14 @@ bool cmCTestTestHandler::ProcessDirectory(std::vector<std::string>& passed,
 
   bool randomSchedule = this->CTest->GetScheduleType() == "Random";
   if (randomSchedule) {
-    srand(static_cast<unsigned>(time(nullptr)));
+    cm::optional<unsigned int> scheduleRandomSeed =
+      this->CTest->GetRandomSeed();
+    if (!scheduleRandomSeed.has_value()) {
+      scheduleRandomSeed = static_cast<unsigned int>(time(nullptr));
+    }
+    srand(*scheduleRandomSeed);
+    *this->LogFile << "Test order random seed: " << *scheduleRandomSeed
+                   << std::endl;
   }
 
   for (cmCTestTestProperties& p : this->TestList) {
@@ -1381,6 +1390,9 @@ void cmCTestTestHandler::GenerateCTestXML(cmXMLWriter& xml)
     return;
   }
 
+  this->CTest->GetInstrumentation().CollectTimingData(
+    cmInstrumentationQuery::Hook::PrepareForCDash);
+
   this->CTest->StartXML(xml, this->CMake, this->AppendXML);
   this->CTest->GenerateSubprojectsOutput(xml);
   xml.StartElement("Testing");
@@ -1395,7 +1407,6 @@ void cmCTestTestHandler::GenerateCTestXML(cmXMLWriter& xml)
   for (cmCTestTestResult& result : this->TestResults) {
     this->WriteTestResultHeader(xml, result);
     xml.StartElement("Results");
-
     if (result.Status != cmCTestTestHandler::NOT_RUN) {
       if (result.Status != cmCTestTestHandler::COMPLETED ||
           result.ReturnValue) {
@@ -1473,6 +1484,15 @@ void cmCTestTestHandler::GenerateCTestXML(cmXMLWriter& xml)
     xml.Content(result.Output);
     xml.EndElement(); // Value
     xml.EndElement(); // Measurement
+
+    if (!result.InstrumentationFile.empty()) {
+      std::string instrument_file_path =
+        cmStrCat(this->CTest->GetInstrumentation().GetCDashDir(), "/test/",
+                 result.InstrumentationFile);
+      this->CTest->ConvertInstrumentationJSONFileToXML(instrument_file_path,
+                                                       xml);
+    }
+
     xml.EndElement(); // Results
 
     this->AttachFiles(xml, result);
@@ -1695,7 +1715,7 @@ std::string cmCTestTestHandler::FindExecutable(
   // if everything else failed, check the users path, but only if a full path
   // wasn't specified
   if (fullPath.empty() && filepath.empty()) {
-    std::string path = cmSystemTools::FindProgram(filename.c_str());
+    std::string path = cmSystemTools::FindProgram(filename);
     if (!path.empty()) {
       resultingConfig.clear();
       return path;

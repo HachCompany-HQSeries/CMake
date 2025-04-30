@@ -1,5 +1,5 @@
 # Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-# file Copyright.txt or https://cmake.org/licensing for details.
+# file LICENSE.rst or https://cmake.org/licensing for details.
 
 macro(__determine_compiler_id_test testflags_var userflags_var)
   set(_CMAKE_${lang}_COMPILER_ID_LOG "")
@@ -719,9 +719,8 @@ Id flags: ${testflags} ${CMAKE_${lang}_COMPILER_ID_FLAGS_ALWAYS}
       set(id_sdkroot "SDKROOT = \"${CMAKE_OSX_SYSROOT}\";")
       if(CMAKE_OSX_SYSROOT MATCHES "(^|/)[Ii][Pp][Hh][Oo][Nn][Ee]" OR
         CMAKE_OSX_SYSROOT MATCHES "(^|/)[Xx][Rr]" OR
-        CMAKE_OSX_SYSROOT MATCHES "(^|/)[Aa][Pp][Pp][Ll][Ee][Tt][Vv]")
-        set(id_product_type "com.apple.product-type.bundle.unit-test")
-      elseif(CMAKE_OSX_SYSROOT MATCHES "(^|/)[Ww][Aa][Tt][Cc][Hh]")
+        CMAKE_OSX_SYSROOT MATCHES "(^|/)[Aa][Pp][Pp][Ll][Ee][Tt][Vv]" OR
+        CMAKE_OSX_SYSROOT MATCHES "(^|/)[Ww][Aa][Tt][Cc][Hh]")
         set(id_product_type "com.apple.product-type.framework")
       endif()
     else()

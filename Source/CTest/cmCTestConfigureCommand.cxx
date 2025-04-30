@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmCTestConfigureCommand.h"
 
 #include <chrono>
@@ -17,6 +17,8 @@
 #include "cmExecutionStatus.h"
 #include "cmGeneratedFileStream.h"
 #include "cmGlobalGenerator.h"
+#include "cmInstrumentation.h"
+#include "cmInstrumentationQuery.h"
 #include "cmList.h"
 #include "cmMakefile.h"
 #include "cmStringAlgorithms.h"
@@ -203,6 +205,11 @@ bool cmCTestConfigureCommand::ExecuteConfigure(ConfigureArguments const& args,
   xml.Element("EndDateTime", endDateTime);
   xml.Element("EndConfigureTime", endTime);
   xml.Element("ElapsedMinutes", elapsedMinutes.count());
+
+  this->CTest->GetInstrumentation().CollectTimingData(
+    cmInstrumentationQuery::Hook::PrepareForCDash);
+  this->CTest->ConvertInstrumentationSnippetsToXML(xml, "configure");
+
   xml.EndElement(); // Configure
   this->CTest->EndXML(xml);
 

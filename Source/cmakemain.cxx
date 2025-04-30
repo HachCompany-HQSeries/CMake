@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 
 #include "cmConfigure.h" // IWYU pragma: keep
 
@@ -43,7 +43,6 @@
 
 #ifndef CMAKE_BOOTSTRAP
 #  include "cmDocumentation.h"
-#  include "cmDynamicLoader.h"
 #endif
 
 #include "cmsys/Encoding.hxx"
@@ -396,6 +395,9 @@ int do_cmake(int ac, char const* const* av)
       mode = cmState::FindPackage;
       break;
   }
+  auto const failurePolicy = workingMode == cmake::NORMAL_MODE
+    ? cmake::CommandFailureAction::EXIT_CODE
+    : cmake::CommandFailureAction::FATAL_ERROR;
   cmake cm(role, mode);
   cm.SetHomeDirectory("");
   cm.SetHomeOutputDirectory("");
@@ -406,7 +408,7 @@ int do_cmake(int ac, char const* const* av)
   cm.SetProgressCallback([&cm](std::string const& msg, float prog) {
     cmakemainProgressCallback(msg, prog, &cm);
   });
-  cm.SetWorkingMode(workingMode);
+  cm.SetWorkingMode(workingMode, failurePolicy);
 
   int res = cm.Run(parsedArgs, view_only);
   if (list_cached || list_all_cached) {
@@ -705,27 +707,12 @@ int do_build(int ac, char const* const* av)
     cmakemainProgressCallback(msg, prog, &cm);
   });
 
-  cmInstrumentation instrumentation(dir);
-  if (!instrumentation.errorMsg.empty()) {
-    cmSystemTools::Error(instrumentation.errorMsg);
-    return 1;
-  }
   cmBuildOptions buildOptions(cleanFirst, false, resolveMode);
-  std::function<int()> doBuild = [&cm, &jobs, &dir, &targets, &config,
-                                  &nativeOptions, &buildOptions, &verbose,
-                                  &presetName, &listPresets]() {
-    return cm.Build(jobs, dir, std::move(targets), std::move(config),
-                    std::move(nativeOptions), buildOptions, verbose,
-                    presetName, listPresets);
-  };
-  instrumentation.CollectTimingData(
-    cmInstrumentationQuery::Hook::PreCMakeBuild);
   std::vector<std::string> cmd;
   cm::append(cmd, av, av + ac);
-  int ret = instrumentation.InstrumentCommand("cmakeBuild", cmd, doBuild);
-  instrumentation.CollectTimingData(
-    cmInstrumentationQuery::Hook::PostCMakeBuild);
-  return ret;
+  return cm.Build(jobs, dir, std::move(targets), std::move(config),
+                  std::move(nativeOptions), buildOptions, verbose, presetName,
+                  listPresets, cmd);
 #endif
 }
 
@@ -986,8 +973,7 @@ int do_install(int ac, char const* const* av)
     }
   }
 
-  std::function<int()> doInstall = [&handler, &verbose, &jobs,
-                                    &instrumentation]() -> int {
+  auto doInstall = [&handler, &verbose, &jobs, &instrumentation]() -> int {
     int ret_ = 0;
     if (handler.IsParallel()) {
       ret_ = handler.Install(jobs, instrumentation);
@@ -1004,7 +990,8 @@ int do_install(int ac, char const* const* av)
         cm.SetHomeDirectory("");
         cm.SetHomeOutputDirectory("");
         cm.SetDebugOutputOn(verbose);
-        cm.SetWorkingMode(cmake::SCRIPT_MODE);
+        cm.SetWorkingMode(cmake::SCRIPT_MODE,
+                          cmake::CommandFailureAction::FATAL_ERROR);
         ret_ = int(bool(cm.Run(cmd)));
       }
     }
@@ -1148,7 +1135,7 @@ int do_open(int ac, char const* const* av)
   cm.SetProgressCallback([&cm](std::string const& msg, float prog) {
     cmakemainProgressCallback(msg, prog, &cm);
   });
-  return cm.Open(dir, false) ? 0 : 1;
+  return cm.Open(dir, cmake::DryRun::No) ? 0 : 1;
 #endif
 }
 } // namespace
@@ -1193,9 +1180,6 @@ int main(int ac, char const* const* av)
     }
   }
   int ret = do_cmake(ac, av);
-#ifndef CMAKE_BOOTSTRAP
-  cmDynamicLoader::FlushCache();
-#endif
   if (uv_loop_t* loop = uv_default_loop()) {
     uv_loop_close(loop);
   }

@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmMakefileTargetGenerator.h"
 
 #include <algorithm>
@@ -110,7 +110,7 @@ std::unique_ptr<cmMakefileTargetGenerator> cmMakefileTargetGenerator::New(
   return result;
 }
 
-std::string cmMakefileTargetGenerator::GetConfigName() const
+std::string const& cmMakefileTargetGenerator::GetConfigName() const
 {
   auto const& configNames = this->LocalGenerator->GetConfigNames();
   assert(configNames.size() == 1);
@@ -617,7 +617,9 @@ void cmMakefileTargetGenerator::MacOSXContentGeneratorType::operator()(
   this->Generator->LocalGenerator->AppendEcho(
     commands, copyEcho, cmLocalUnixMakefileGenerator3::EchoBuild);
   std::string copyCommand =
-    cmStrCat("$(CMAKE_COMMAND) -E copy ",
+    cmStrCat(cmSystemTools::FileIsDirectory(input)
+               ? "$(CMAKE_COMMAND) -E copy_directory "
+               : "$(CMAKE_COMMAND) -E copy ",
              this->Generator->LocalGenerator->ConvertToOutputFormat(
                input, cmOutputConverter::SHELL),
              ' ',
@@ -952,6 +954,7 @@ void cmMakefileTargetGenerator::WriteObjectRuleFiles(
   vars.ObjectFileDir = objectFileDir.c_str();
   vars.Flags = flags.c_str();
   vars.ISPCHeader = ispcHeaderForShell.c_str();
+  vars.Config = this->GetConfigName().c_str();
 
   std::string definesString = cmStrCat("$(", lang, "_DEFINES)");
 
@@ -1700,6 +1703,7 @@ void cmMakefileTargetGenerator::WriteDeviceLinkRule(
   vars.Object = output.c_str();
   vars.Fatbinary = fatbinaryOutput.c_str();
   vars.RegisterFile = registerFile.c_str();
+  vars.Config = this->GetConfigName().c_str();
 
   std::string linkFlags;
   this->GetDeviceLinkFlags(linkFlags, "CUDA");

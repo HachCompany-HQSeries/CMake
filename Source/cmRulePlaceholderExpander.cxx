@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmRulePlaceholderExpander.h"
 
 #include <utility>
@@ -280,6 +280,12 @@ std::string cmRulePlaceholderExpander::ExpandVariable(
   if (variable == "ROLE") {
     if (this->ReplaceValues->Role) {
       return this->ReplaceValues->Role;
+    }
+    return "";
+  }
+  if (variable == "CONFIG") {
+    if (this->ReplaceValues->Config) {
+      return this->ReplaceValues->Config;
     }
     return "";
   }

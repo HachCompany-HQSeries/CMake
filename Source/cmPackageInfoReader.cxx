@@ -1,5 +1,5 @@
 /* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
-   file Copyright.txt or https://cmake.org/licensing for details.  */
+   file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmPackageInfoReader.h"
 
 #include <initializer_list>
@@ -146,16 +146,24 @@ std::string DeterminePrefix(std::string const& filepath,
   }
 
   // Get and validate prefix-relative path.
+  std::string const& absPath = cmSystemTools::GetFilenamePath(filepath);
   std::string relPath = data["cps_path"].asString();
   cmSystemTools::ConvertToUnixSlashes(relPath);
-  if (relPath.empty() || !cmHasLiteralPrefix(relPath, "@prefix@/")) {
+  if (relPath.empty() || !cmHasLiteralPrefix(relPath, "@prefix@")) {
+    // The relative prefix is not valid.
+    return {};
+  }
+  if (relPath.size() == 8) {
+    // The relative path is exactly "@prefix@".
+    return absPath;
+  }
+  if (relPath[8] != '/') {
     // The relative prefix is not valid.
     return {};
   }
   relPath = relPath.substr(8);
 
   // Get directory portion of the absolute path.
-  std::string const& absPath = cmSystemTools::GetFilenamePath(filepath);
   if (ComparePathSuffix(absPath, relPath)) {
     return absPath.substr(0, absPath.size() - relPath.size());
   }
@@ -366,6 +374,62 @@ void AddDefinitions(cmMakefile* makefile, cmTarget* target,
   }
 }
 
+cm::optional<cmPackageInfoReader::Pep440Version> ParseSimpleVersion(
+  std::string const& version)
+{
+  if (version.empty()) {
+    return cm::nullopt;
+  }
+
+  cmPackageInfoReader::Pep440Version result;
+  result.Simple = true;
+
+  cm::string_view remnant{ version };
+  for (;;) {
+    // Find the next part separator.
+    std::string::size_type const n = remnant.find_first_of(".+-"_s);
+    if (n == 0) {
+      // The part is an empty string.
+      return cm::nullopt;
+    }
+
+    // Extract the part as a number.
+    cm::string_view const part = remnant.substr(0, n);
+    std::string::size_type const l = part.size();
+    std::string::size_type p;
+    unsigned long const value = std::stoul(std::string{ part }, &p);
+    if (p != l || value > std::numeric_limits<unsigned>::max()) {
+      // The part was not a valid number or is too big.
+      return cm::nullopt;
+    }
+    result.ReleaseComponents.push_back(static_cast<unsigned>(value));
+
+    // Have we consumed the entire input?
+    if (n == std::string::npos) {
+      return { std::move(result) };
+    }
+
+    // Lop off the current part.
+    char const sep = remnant[n];
+    remnant = remnant.substr(n + 1);
+    if (sep == '+' || sep == '-') {
+      // If we hit the local label, we're done.
+      result.LocalLabel = remnant;
+      return { std::move(result) };
+    }
+
+    // We just consumed a '.'; check that there's more.
+    if (remnant.empty()) {
+      // A trailing part separator is not allowed.
+      return cm::nullopt;
+    }
+
+    // Continue with the remaining input.
+  }
+
+  // Unreachable.
+}
+
 } // namespace
 
 std::unique_ptr<cmPackageInfoReader> cmPackageInfoReader::Read(
@@ -376,7 +440,7 @@ std::unique_ptr<cmPackageInfoReader> cmPackageInfoReader::Read(
   //   - the input is a JSON object
   //   - the input has a "cps_version" that we (in theory) know how to parse
   Json::Value data = ReadJson(path);
-  if (!data.isObject() || !CheckSchemaVersion(data)) {
+  if (!data.isObject() || (!parent && !CheckSchemaVersion(data))) {
     return nullptr;
   }
 
@@ -408,7 +472,11 @@ std::unique_ptr<cmPackageInfoReader> cmPackageInfoReader::Read(
     reader->ComponentTargets = parent->ComponentTargets;
     reader->DefaultConfigurations = parent->DefaultConfigurations;
   } else {
-    reader->DefaultConfigurations = ReadList(reader->Data, "configurations");
+    for (std::string const& config :
+         ReadList(reader->Data, "configurations")) {
+      reader->DefaultConfigurations.emplace_back(
+        cmSystemTools::UpperCase(config));
+    }
   }
 
   return reader;
@@ -428,40 +496,31 @@ cm::optional<std::string> cmPackageInfoReader::GetVersion() const
   return cm::nullopt;
 }
 
-std::vector<unsigned> cmPackageInfoReader::ParseVersion() const
+cm::optional<std::string> cmPackageInfoReader::GetCompatVersion() const
+{
+  Json::Value const& version = this->Data["compat_version"];
+  if (version.isString()) {
+    return version.asString();
+  }
+  return cm::nullopt;
+}
+
+cm::optional<cmPackageInfoReader::Pep440Version>
+cmPackageInfoReader::ParseVersion(
+  cm::optional<std::string> const& version) const
 {
   // Check that we have a version.
-  cm::optional<std::string> const& version = this->GetVersion();
   if (!version) {
-    return {};
+    return cm::nullopt;
   }
-
-  std::vector<unsigned> result;
-  cm::string_view remnant{ *version };
 
   // Check if we know how to parse the version.
   Json::Value const& schema = this->Data["version_schema"];
   if (schema.isNull() || cmStrCaseEq(schema.asString(), "simple"_s)) {
-    // Keep going until we run out of parts.
-    while (!remnant.empty()) {
-      std::string::size_type n = remnant.find('.');
-      cm::string_view part = remnant.substr(0, n);
-      if (n == std::string::npos) {
-        remnant = {};
-      } else {
-        remnant = remnant.substr(n + 1);
-      }
-
-      unsigned long const value = std::stoul(std::string{ part }, &n);
-      if (n == 0 || value > std::numeric_limits<unsigned>::max()) {
-        // The part was not a valid number or is too big.
-        return {};
-      }
-      result.push_back(static_cast<unsigned>(value));
-    }
+    return ParseSimpleVersion(*version);
   }
 
-  return result;
+  return cm::nullopt;
 }
 
 std::vector<cmPackageRequirement> cmPackageInfoReader::GetRequirements() const
@@ -527,6 +586,13 @@ void cmPackageInfoReader::SetTargetProperties(
   cmMakefile* makefile, cmTarget* target, Json::Value const& data,
   std::string const& package, cm::string_view configuration) const
 {
+  // Add configuration (if applicable).
+  if (!configuration.empty()) {
+    target->AppendProperty("IMPORTED_CONFIGURATIONS",
+                           cmSystemTools::UpperCase(configuration),
+                           makefile->GetBacktrace());
+  }
+
   // Add compile and link features.
   for (std::string const& def : ReadList(data, "compile_features")) {
     AddCompileFeature(makefile, target, configuration, def);
@@ -602,17 +668,17 @@ cmTarget* cmPackageInfoReader::AddLibraryComponent(
   // Create the imported target.
   cmTarget* const target = makefile->AddImportedTarget(name, type, false);
 
+  // Set default configurations.
+  if (!this->DefaultConfigurations.empty()) {
+    target->SetProperty("IMPORTED_CONFIGURATIONS",
+                        cmJoin(this->DefaultConfigurations, ";"_s));
+  }
+
   // Set target properties.
   this->SetTargetProperties(makefile, target, data, package, {});
   auto const& cfgData = data["configurations"];
   for (auto ci = cfgData.begin(), ce = cfgData.end(); ci != ce; ++ci) {
     this->SetTargetProperties(makefile, target, *ci, package, IterKey(ci));
-  }
-
-  // Set default configurations.
-  if (!this->DefaultConfigurations.empty()) {
-    target->SetProperty("IMPORTED_CONFIGURATIONS",
-                        cmJoin(this->DefaultConfigurations, ";"_s));
   }
 
   return target;
