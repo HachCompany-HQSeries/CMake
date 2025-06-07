@@ -19,6 +19,7 @@ bool cmIncludeCommand(std::vector<std::string> const& args,
 {
   static std::map<std::string, cmPolicies::PolicyID> DeprecatedModules;
   if (DeprecatedModules.empty()) {
+    DeprecatedModules["CMakeDetermineVSServicePack"] = cmPolicies::CMP0196;
     DeprecatedModules["CMakeFindFrameworks"] = cmPolicies::CMP0173;
     DeprecatedModules["Dart"] = cmPolicies::CMP0145;
     DeprecatedModules["Documentation"] = cmPolicies::CMP0106;
@@ -96,7 +97,7 @@ bool cmIncludeCommand(std::vector<std::string> const& args,
             status.GetMakefile().IssueMessage(
               MessageType::AUTHOR_WARNING,
               cmStrCat(cmPolicies::GetPolicyWarning(ModulePolicy->second),
-                       "\n"));
+                       '\n'));
             CM_FALLTHROUGH;
           }
           case cmPolicies::OLD:

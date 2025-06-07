@@ -35,7 +35,8 @@ macro(__windows_compiler_intel lang)
 
   set(CMAKE_${lang}_CREATE_WIN32_EXE "${CMAKE_${lang}_LINKER_WRAPPER_FLAG}/subsystem:windows")
   set(CMAKE_${lang}_CREATE_CONSOLE_EXE "${CMAKE_${lang}_LINKER_WRAPPER_FLAG}/subsystem:console")
-  set(CMAKE_LINK_DEF_FILE_FLAG "${CMAKE_${lang}_LINKER_WRAPPER_FLAG}/DEF:")
+  set(CMAKE_${lang}_LINK_DEF_FILE_FLAG "${CMAKE_${lang}_LINKER_WRAPPER_FLAG}/DEF:")
+  set(CMAKE_LINK_DEF_FILE_FLAG "${CMAKE_${lang}_LINK_DEF_FILE_FLAG}")
   set(CMAKE_LIBRARY_PATH_FLAG "${CMAKE_${lang}_LINKER_WRAPPER_FLAG}/LIBPATH:")
 
   set(CMAKE_${lang}_LINK_EXECUTABLE
@@ -46,7 +47,7 @@ macro(__windows_compiler_intel lang)
   if (NOT "${lang}" STREQUAL "Fortran" OR CMAKE_${lang}_COMPILER_VERSION VERSION_GREATER_EQUAL 2022.1)
     # The Fortran driver does not support -fuse-ld=llvm-lib before compiler version 2022.1
     set(CMAKE_${lang}_CREATE_STATIC_LIBRARY
-      "<CMAKE_${lang}_COMPILER> ${CMAKE_CL_NOLOGO} <CMAKE_${lang}_LINK_FLAGS> <OBJECTS> ${CMAKE_START_TEMP_FILE} -fuse-ld=llvm-lib -o <TARGET> <LINK_FLAGS> <LINK_LIBRARIES> ${CMAKE_END_TEMP_FILE}")
+      "<CMAKE_${lang}_COMPILER> ${CMAKE_CL_NOLOGO}${_PLATFORM_ARCHIVE_FLAGS} <CMAKE_${lang}_LINK_FLAGS> <OBJECTS> ${CMAKE_START_TEMP_FILE} -fuse-ld=llvm-lib -o <TARGET> <LINK_FLAGS> <LINK_LIBRARIES> ${CMAKE_END_TEMP_FILE}")
   endif()
 
   set(CMAKE_DEPFILE_FLAGS_${lang} "-QMD -QMT <DEP_TARGET> -QMF <DEP_FILE>")

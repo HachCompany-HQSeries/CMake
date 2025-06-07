@@ -32,7 +32,9 @@ namespace std {
 /* clang-format on */
 #endif
 
+class cmConfigureLog;
 class cmExecutionStatus;
+class cmMakefile;
 class cmPackageState;
 class cmSearchPath;
 
@@ -73,6 +75,7 @@ public:
                    SortDirectionType dir);
 
   cmFindPackageCommand(cmExecutionStatus& status);
+  ~cmFindPackageCommand() override;
 
   bool InitialPass(std::vector<std::string> const& args);
 
@@ -94,6 +97,9 @@ private:
   };
 
   void InheritOptions(cmFindPackageCommand* other);
+
+  bool IsFound() const override;
+  bool IsDefined() const override;
 
   // Try to find a package, assuming most state has already been set up. This
   // is used for recursive dependency solving, particularly when importing
@@ -174,6 +180,14 @@ private:
   void PopFindPackageRootPathStack();
   class PushPopRootPathStack;
 
+  enum class FoundPackageMode
+  {
+    None,
+    Module,
+    Config,
+    Cps,
+    Provider,
+  };
   void ComputePrefixes();
   void FillPrefixesPackageRedirect();
   void FillPrefixesPackageRoot();
@@ -195,7 +209,7 @@ private:
   bool SearchDirectory(std::string const& dir, PackageDescriptionType type);
   bool CheckDirectory(std::string const& dir, PackageDescriptionType type);
   bool FindConfigFile(std::string const& dir, PackageDescriptionType type,
-                      std::string& file);
+                      std::string& file, FoundPackageMode& foundMode);
   bool CheckVersion(std::string const& config_file);
   bool CheckVersionFile(std::string const& version_file,
                         std::string& result_version);
@@ -238,6 +252,7 @@ private:
   unsigned int VersionMaxCount = 0;
   bool VersionExact = false;
   std::string FileFound;
+  FoundPackageMode FileFoundMode = FoundPackageMode::None;
   std::string VersionFound;
   unsigned int VersionFoundMajor = 0;
   unsigned int VersionFoundMinor = 0;
@@ -245,6 +260,7 @@ private:
   unsigned int VersionFoundTweak = 0;
   unsigned int VersionFoundCount = 0;
   KWIML_INT_uint64_t RequiredCMakeVersion = 0;
+  bool BypassProvider = false;
   bool Quiet = false;
   RequiredStatus Required = RequiredStatus::Optional;
   bool UseCpsFiles = false;
@@ -268,6 +284,32 @@ private:
   std::set<std::string> OptionalComponents;
   std::set<std::string> RequiredTargets;
   std::string DebugBuffer;
+  enum class SearchResult
+  {
+    InsufficientVersion,
+    NoExist,
+    Ignored,
+    NoConfigFile,
+    NotFound,
+  };
+  struct ConsideredPath
+  {
+    ConsideredPath(std::string path, FoundPackageMode mode,
+                   SearchResult reason)
+      : Path(std::move(path))
+      , Mode(mode)
+      , Reason(reason)
+    {
+    }
+
+    std::string Path;
+    FoundPackageMode Mode;
+    SearchResult Reason;
+    std::string Message;
+  };
+  std::vector<ConsideredPath> ConsideredPaths;
+
+  static FoundPackageMode FoundMode(PackageDescriptionType type);
 
   struct ConfigName
   {
@@ -322,6 +364,7 @@ private:
   AppendixMap CpsAppendices;
 
   friend struct std::hash<ConfigFileInfo>;
+  friend class cmFindPackageDebugState;
 };
 
 namespace std {
@@ -342,3 +385,23 @@ struct hash<cmFindPackageCommand::ConfigFileInfo>
 
 bool cmFindPackage(std::vector<std::string> const& args,
                    cmExecutionStatus& status);
+
+class cmFindPackageDebugState : public cmFindCommonDebugState
+{
+public:
+  explicit cmFindPackageDebugState(cmFindPackageCommand const* findPackage);
+  ~cmFindPackageDebugState() override;
+
+private:
+  void FoundAtImpl(std::string const& path, std::string regexName) override;
+  void FailedAtImpl(std::string const& path, std::string regexName) override;
+
+  void WriteDebug() const override;
+#ifndef CMAKE_BOOTSTRAP
+  void WriteEvent(cmConfigureLog& log, cmMakefile const& mf) const override;
+  std::vector<std::pair<VariableSource, std::string>> ExtraSearchVariables()
+    const override;
+#endif
+
+  cmFindPackageCommand const* const FindPackageCommand;
+};

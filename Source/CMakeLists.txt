@@ -148,8 +148,6 @@ add_library(
   cmComputeTargetDepends.cxx
   cmConfigureLog.h
   cmConfigureLog.cxx
-  cmConsoleBuf.h
-  cmConsoleBuf.cxx
   cmConstStack.h
   cmConstStack.tcc
   cmCPackPropertiesGenerator.h
@@ -411,6 +409,8 @@ add_library(
   cmNewLineStyle.cxx
   cmOrderDirectories.cxx
   cmOrderDirectories.h
+  cmPackageInfoArguments.cxx
+  cmPackageInfoArguments.h
   cmPackageInfoReader.cxx
   cmPackageInfoReader.h
   cmPackageState.h
@@ -468,6 +468,14 @@ add_library(
   cmStateSnapshot.cxx
   cmStateSnapshot.h
   cmStateTypes.h
+  cmStdIoConsole.h
+  cmStdIoConsole.cxx
+  cmStdIoInit.h
+  cmStdIoInit.cxx
+  cmStdIoStream.h
+  cmStdIoStream.cxx
+  cmStdIoTerminal.h
+  cmStdIoTerminal.cxx
   cmStringAlgorithms.cxx
   cmStringAlgorithms.h
   cmSyntheticTargetCache.h

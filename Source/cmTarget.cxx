@@ -381,6 +381,7 @@ TargetProperty const StaticTargetProperties[] = {
   // ---- moc
   { "AUTOMOC"_s, IC::CanCompileSources },
   { "AUTOMOC_COMPILER_PREDEFINES"_s, IC::CanCompileSources },
+  { "AUTOMOC_INCLUDE_DIRECTORIES"_s, IC::CanCompileSources },
   { "AUTOMOC_MACRO_NAMES"_s, IC::CanCompileSources },
   { "AUTOMOC_MOC_OPTIONS"_s, IC::CanCompileSources },
   { "AUTOMOC_PATH_PREFIX"_s, IC::CanCompileSources },
@@ -448,14 +449,18 @@ TargetProperty const StaticTargetProperties[] = {
   // ---- C++
   { "CXX_LINKER_LAUNCHER"_s, IC::CanCompileSources },
   // ---- CUDA
+  { "CUDA_LINKER_LAUNCHER"_s, IC::CanCompileSources },
   { "CUDA_RESOLVE_DEVICE_SYMBOLS"_s, IC::CanCompileSources },
   { "CUDA_RUNTIME_LIBRARY"_s, IC::CanCompileSources },
   // ---- HIP
+  { "HIP_LINKER_LAUNCHER"_s, IC::CanCompileSources },
   { "HIP_RUNTIME_LIBRARY"_s, IC::CanCompileSources },
   // ---- Objective C
   { "OBJC_LINKER_LAUNCHER"_s, IC::CanCompileSources },
   // ---- Objective C++
   { "OBJCXX_LINKER_LAUNCHER"_s, IC::CanCompileSources },
+  // ---- Fortran
+  { "Fortran_LINKER_LAUNCHER"_s, IC::CanCompileSources },
 
   // Static analysis
   // -- C
@@ -729,8 +734,7 @@ bool FileSetType::WriteProperties(cmTarget* tgt, cmTargetInternals* impl,
     } else {
       impl->AddDirectoryToFileSet(
         tgt, fileSetName, value, this->TypeName,
-        cmStrCat(this->ArbitraryDescription, " \"", fileSetName, "\""),
-        action);
+        cmStrCat(this->ArbitraryDescription, " \"", fileSetName, '"'), action);
     }
     return true;
   }
@@ -743,8 +747,7 @@ bool FileSetType::WriteProperties(cmTarget* tgt, cmTargetInternals* impl,
     } else {
       impl->AddPathToFileSet(
         tgt, fileSetName, value, this->TypeName,
-        cmStrCat(this->ArbitraryDescription, " \"", fileSetName, "\""),
-        action);
+        cmStrCat(this->ArbitraryDescription, " \"", fileSetName, '"'), action);
     }
     return true;
   }
@@ -2140,7 +2143,7 @@ void cmTarget::SetProperty(std::string const& prop, cmValue value)
       this->impl->Properties.SetProperty(prop, value);
     } else {
       auto e = cmStrCat(prop, " property is not supported by ", compiler,
-                        "  compiler version ", compilerVersion, ".");
+                        "  compiler version ", compilerVersion, '.');
       this->impl->Makefile->IssueMessage(MessageType::FATAL_ERROR, e);
       return;
     }
@@ -3094,11 +3097,11 @@ std::string cmTarget::ImportedGetFullPath(
         }
 
         if (!config.empty()) {
-          configuration = cmStrCat(" configuration \"", config, "\"");
+          configuration = cmStrCat(" configuration \"", config, '"');
         }
 
         return cmStrCat(unset, " not set for imported target \"",
-                        this->GetName(), "\"", configuration, ".");
+                        this->GetName(), '"', configuration, '.');
       };
 
       switch (this->GetPolicyStatus(cmPolicies::CMP0111)) {

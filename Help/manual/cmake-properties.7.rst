@@ -145,6 +145,7 @@ Properties on Targets
    /prop_tgt/AUTOMOC_COMPILER_PREDEFINES
    /prop_tgt/AUTOMOC_DEPEND_FILTERS
    /prop_tgt/AUTOMOC_EXECUTABLE
+   /prop_tgt/AUTOMOC_INCLUDE_DIRECTORIES
    /prop_tgt/AUTOMOC_MACRO_NAMES
    /prop_tgt/AUTOMOC_MOC_OPTIONS
    /prop_tgt/AUTOMOC_PATH_PREFIX
@@ -328,6 +329,7 @@ Properties on Targets
    /prop_tgt/LIBRARY_OUTPUT_DIRECTORY_CONFIG
    /prop_tgt/LIBRARY_OUTPUT_NAME
    /prop_tgt/LIBRARY_OUTPUT_NAME_CONFIG
+   /prop_tgt/SPDX_LICENSE
    /prop_tgt/LINK_DEPENDS
    /prop_tgt/LINK_DEPENDS_NO_SHARED
    /prop_tgt/LINK_DIRECTORIES

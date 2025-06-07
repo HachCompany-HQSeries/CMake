@@ -571,7 +571,7 @@ List Transformations
   :ref:`$\<LIST:JOIN,list,glue\> <GenEx LIST-JOIN>`, but the two have
   different behavior with regard to empty items.
   :ref:`$\<LIST:JOIN,list,glue\> <GenEx LIST-JOIN>` preserves all empty items,
-  whereas ``$<JOIN,list,glue>`` drops all empty items from the list.
+  whereas ``$<JOIN:list,glue>`` drops all empty items from the list.
 
 .. genex:: $<REMOVE_DUPLICATES:list>
 
@@ -1288,14 +1288,12 @@ related to most of the expressions in this sub-section.
   .. versionadded:: 3.3
 
   The compile language of source files when evaluating compile options.
-  See :ref:`the related boolean expression
-  <Boolean COMPILE_LANGUAGE Generator Expression>`
-  ``$<COMPILE_LANGUAGE:language>``
+  See the related boolean expression
+  :genex:`$<COMPILE_LANGUAGE:languages> <COMPILE_LANGUAGE:languages>`
   for notes about the portability of this generator expression.
 
-.. _`Boolean COMPILE_LANGUAGE Generator Expression`:
-
 .. genex:: $<COMPILE_LANGUAGE:languages>
+  :target: COMPILE_LANGUAGE:languages
 
   .. versionadded:: 3.3
 

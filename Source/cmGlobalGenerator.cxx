@@ -2003,6 +2003,7 @@ void cmGlobalGenerator::ClearGeneratorMembers()
   this->GeneratedFiles.clear();
   this->RuntimeDependencySets.clear();
   this->RuntimeDependencySetsByName.clear();
+  this->WarnedExperimental.clear();
 }
 
 void cmGlobalGenerator::ComputeTargetObjectDirectory(
@@ -3635,7 +3636,7 @@ void cmGlobalGenerator::WriteSummary()
         continue;
       }
       this->WriteSummary(tgt.get());
-      fout << tgt->GetSupportDirectory() << '\n';
+      fout << tgt->GetCMFSupportDirectory() << '\n';
     }
   }
 }
@@ -3643,7 +3644,7 @@ void cmGlobalGenerator::WriteSummary()
 void cmGlobalGenerator::WriteSummary(cmGeneratorTarget* target)
 {
   // Place the labels file in a per-target support directory.
-  std::string dir = target->GetSupportDirectory();
+  std::string dir = target->GetCMFSupportDirectory();
   std::string file = cmStrCat(dir, "/Labels.txt");
   std::string json_file = cmStrCat(dir, "/Labels.json");
 
@@ -3913,4 +3914,12 @@ void cmGlobalGenerator::AddCMakeFilesToRebuild(
   files.insert(files.end(), this->InstallScripts.begin(),
                this->InstallScripts.end());
   files.insert(files.end(), this->TestFiles.begin(), this->TestFiles.end());
+}
+
+bool cmGlobalGenerator::ShouldWarnExperimental(cm::string_view featureName,
+                                               cm::string_view featureUuid)
+{
+  return this->WarnedExperimental
+    .emplace(cmStrCat(featureName, '-', featureUuid))
+    .second;
 }
