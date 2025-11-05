@@ -29,14 +29,6 @@ cmExperimental::FeatureData const LookupTable[] = {
     "only for experimentation and feedback to CMake developers.",
     {},
     cmExperimental::TryCompileCondition::Always },
-  // WindowsKernelModeDriver
-  { "WindowsKernelModeDriver",
-    "9157bf90-2313-44d6-aefa-67cd83c8be7c",
-    "CMAKE_EXPERIMENTAL_WINDOWS_KERNEL_MODE_DRIVER",
-    "CMake's Windows kernel-mode driver support is experimental. It is meant "
-    "only for experimentation and feedback to CMake developers.",
-    {},
-    cmExperimental::TryCompileCondition::Always },
   // CxxImportStd
   { "CxxImportStd",
     "d0edc3af-4c50-42ea-a356-e2862fe7a444",
@@ -73,7 +65,7 @@ cmExperimental::FeatureData const LookupTable[] = {
     cmExperimental::TryCompileCondition::Never },
   // Instrumentation
   { "Instrumentation",
-    "a37d1069-1972-4901-b9c9-f194aaf2b6e0",
+    "ec7aa2dc-b87f-45a3-8022-fe01c5f59984",
     "CMAKE_EXPERIMENTAL_INSTRUMENTATION",
     "CMake's support for collecting instrumentation data is experimental. It "
     "is meant only for experimentation and feedback to CMake developers.",

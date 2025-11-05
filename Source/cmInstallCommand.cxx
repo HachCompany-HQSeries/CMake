@@ -24,7 +24,6 @@
 #include "cmExecutionStatus.h"
 #include "cmExperimental.h"
 #include "cmExportSet.h"
-#include "cmFileSet.h"
 #include "cmGeneratorExpression.h"
 #include "cmGlobalGenerator.h"
 #include "cmInstallAndroidMKExportGenerator.h"
@@ -198,15 +197,15 @@ std::unique_ptr<cmInstallFilesGenerator> CreateInstallFilesGenerator(
 }
 
 std::unique_ptr<cmInstallFileSetGenerator> CreateInstallFileSetGenerator(
-  Helper& helper, cmTarget& target, cmFileSet* fileSet,
-  std::string const& destination, cmInstallCommandArguments const& args)
+  Helper& helper, cmTarget& target, cmFileSetDestinations dests,
+  cmInstallCommandFileSetArguments const& args)
 {
   cmInstallGenerator::MessageLevel message =
     cmInstallGenerator::SelectMessageLevel(helper.Makefile);
   return cm::make_unique<cmInstallFileSetGenerator>(
-    target.GetName(), fileSet, destination, args.GetPermissions(),
-    args.GetConfigurations(), args.GetComponent(), message,
-    args.GetExcludeFromAll(), args.GetOptional(),
+    target.GetName(), args.GetFileSet(), std::move(dests),
+    args.GetPermissions(), args.GetConfigurations(), args.GetComponent(),
+    message, args.GetExcludeFromAll(), args.GetOptional(),
     helper.Makefile->GetBacktrace());
 }
 
@@ -809,7 +808,7 @@ bool HandleTargetsMode(std::vector<std::string> const& args,
         te->RuntimeGenerator = runtimeGenerator.get();
         te->ObjectsGenerator = objectGenerator.get();
         for (auto const& gen : fileSetGenerators) {
-          te->FileSetGenerators[gen->GetFileSet()] = gen.get();
+          te->FileSetGenerators[gen->GetFileSetName()] = gen.get();
         }
         te->CxxModuleBmiGenerator = cxxModuleBmiGenerator.get();
         target.AddInstallIncludeDirectories(
@@ -1145,31 +1144,12 @@ bool HandleTargetsMode(std::vector<std::string> const& args,
 
     if (!namelinkOnly) {
       for (std::size_t i = 0; i < fileSetArgs.size(); i++) {
-        if (auto* fileSet = target.GetFileSet(fileSetArgs[i].GetFileSet())) {
-          cmList interfaceFileSetEntries{ target.GetSafeProperty(
-            cmTarget::GetInterfaceFileSetsPropertyName(fileSet->GetType())) };
-          if (std::find(interfaceFileSetEntries.begin(),
-                        interfaceFileSetEntries.end(),
-                        fileSetArgs[i].GetFileSet()) !=
-              interfaceFileSetEntries.end()) {
-            std::string destination;
-            if (fileSet->GetType() == "HEADERS"_s) {
-              destination = helper.GetIncludeDestination(&fileSetArgs[i]);
-            } else {
-              destination = fileSetArgs[i].GetDestination();
-              if (destination.empty()) {
-                status.SetError(cmStrCat(
-                  "TARGETS given no FILE_SET DESTINATION for target \"",
-                  target.GetName(), "\" file set \"", fileSet->GetName(),
-                  "\"."));
-                return false;
-              }
-            }
-            fileSetGenerators.push_back(CreateInstallFileSetGenerator(
-              helper, target, fileSet, destination, fileSetArgs[i]));
-            installsFileSet[i] = true;
-          }
-        }
+        cmFileSetDestinations dests;
+        dests.Headers = helper.GetIncludeDestination(&fileSetArgs[i]);
+        dests.CXXModules = fileSetArgs[i].GetDestination();
+        fileSetGenerators.push_back(CreateInstallFileSetGenerator(
+          helper, target, std::move(dests), fileSetArgs[i]));
+        installsFileSet[i] = true;
       }
     }
 
@@ -1807,14 +1787,6 @@ bool HandleDirectoryMode(std::vector<std::string> const& args,
       }
       exclude_from_all = true;
       doing = DoingNone;
-    } else if (args[i] == "EXCLUDE_EMPTY_DIRECTORIES") {
-      if (in_match_mode) {
-        status.SetError(cmStrCat(args[0], " does not allow \"", args[i],
-                                 "\" after PATTERN or REGEX."));
-        return false;
-      }
-      literal_args += " EXCLUDE_EMPTY_DIRECTORIES";
-      doing = DoingNone;
     } else if (doing == DoingDirs) {
       // Convert this directory to a full path.
       std::string dir = args[i];
@@ -2042,6 +2014,11 @@ bool HandleExportAndroidMKMode(std::vector<std::string> const& args,
   cmInstallGenerator::MessageLevel message =
     cmInstallGenerator::SelectMessageLevel(helper.Makefile);
 
+  // Tell the global generator about any installation component names
+  // specified
+  helper.Makefile->GetGlobalGenerator()->AddInstallComponent(
+    ica.GetComponent());
+
   // Create the export install generator.
   helper.Makefile->AddInstallGenerator(
     cm::make_unique<cmInstallAndroidMKExportGenerator>(
@@ -2099,6 +2076,11 @@ bool HandleExportMode(std::vector<std::string> const& args,
     return false;
   }
 
+  if (exp.empty()) {
+    status.SetError(cmStrCat(args[0], " missing EXPORT."));
+    return false;
+  }
+
   // Make sure there is a destination.
   if (ica.GetDestination().empty()) {
     // A destination is required.
@@ -2147,6 +2129,11 @@ bool HandleExportMode(std::vector<std::string> const& args,
 
   cmInstallGenerator::MessageLevel message =
     cmInstallGenerator::SelectMessageLevel(helper.Makefile);
+
+  // Tell the global generator about any installation component names
+  // specified
+  helper.Makefile->GetGlobalGenerator()->AddInstallComponent(
+    ica.GetComponent());
 
   // Create the export install generator.
   helper.Makefile->AddInstallGenerator(
@@ -2222,6 +2209,11 @@ bool HandlePackageInfoMode(std::vector<std::string> const& args,
 
   cmInstallGenerator::MessageLevel message =
     cmInstallGenerator::SelectMessageLevel(helper.Makefile);
+
+  // Tell the global generator about any installation component names
+  // specified
+  helper.Makefile->GetGlobalGenerator()->AddInstallComponent(
+    ica.GetComponent());
 
   // Create the export install generator.
   helper.Makefile->AddInstallGenerator(

@@ -50,6 +50,26 @@ cmStateEnums::SnapshotType cmStateSnapshot::GetType() const
   return this->Position->SnapshotType;
 }
 
+cmStateEnums::SnapshotUnwindType cmStateSnapshot::GetUnwindType() const
+{
+  return this->Position->UnwindType;
+}
+
+void cmStateSnapshot::SetUnwindType(cmStateEnums::SnapshotUnwindType type)
+{
+  this->Position->UnwindType = type;
+}
+
+cmStateEnums::SnapshotUnwindState cmStateSnapshot::GetUnwindState() const
+{
+  return this->Position->UnwindState;
+}
+
+void cmStateSnapshot::SetUnwindState(cmStateEnums::SnapshotUnwindState state)
+{
+  this->Position->UnwindState = state;
+}
+
 void cmStateSnapshot::SetListFile(std::string const& listfile)
 {
   *this->Position->ExecutionListFile = listfile;
@@ -270,7 +290,8 @@ void InitializeContentFromParent(T& parentContent, T& thisContent,
 
   auto parentRbegin = cm::make_reverse_iterator(parentEnd);
   auto parentRend = parentContent.rend();
-  parentRbegin = std::find(parentRbegin, parentRend, cmPropertySentinel);
+  parentRbegin =
+    std::find(parentRbegin, parentRend, cmStateDetail::PropertySentinel);
   auto parentIt = parentRbegin.base();
 
   thisContent = std::vector<BT<std::string>>(parentIt, parentEnd);

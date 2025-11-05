@@ -148,8 +148,6 @@ add_library(
   cmComputeTargetDepends.cxx
   cmConfigureLog.h
   cmConfigureLog.cxx
-  cmConstStack.h
-  cmConstStack.tcc
   cmCPackPropertiesGenerator.h
   cmCPackPropertiesGenerator.cxx
   cmCryptoHash.cxx
@@ -272,9 +270,11 @@ add_library(
   cmGccDepfileLexerHelper.h
   cmGccDepfileReader.cxx
   cmGccDepfileReader.h
+  cmGenExContext.cxx
+  cmGenExContext.h
+  cmGenExEvaluation.cxx
+  cmGenExEvaluation.h
   cmGeneratedFileStream.cxx
-  cmGeneratorExpressionContext.cxx
-  cmGeneratorExpressionContext.h
   cmGeneratorExpressionDAGChecker.cxx
   cmGeneratorExpressionDAGChecker.h
   cmGeneratorExpressionEvaluationFile.cxx
@@ -403,6 +403,8 @@ add_library(
   cmMSVC60LinkLineComputer.h
   cmOSXBundleGenerator.cxx
   cmOSXBundleGenerator.h
+  cmObjectLocation.cxx
+  cmObjectLocation.h
   cmOutputConverter.cxx
   cmOutputConverter.h
   cmNewLineStyle.h
@@ -458,6 +460,8 @@ add_library(
   cmSourceFileLocationKind.h
   cmSourceGroup.cxx
   cmSourceGroup.h
+  cmStack.h
+  cmStack.tcc
   cmStandardLevel.h
   cmStandardLevelResolver.cxx
   cmStandardLevelResolver.h
@@ -697,6 +701,8 @@ add_library(
   cmRemoveDefinitionsCommand.h
   cmReturnCommand.cxx
   cmReturnCommand.h
+  cmSbomObject.h
+  cmSbomSerializer.h
   cmSearchPath.cxx
   cmSearchPath.h
   cmSeparateArgumentsCommand.cxx
@@ -717,6 +723,10 @@ add_library(
   cmSiteNameCommand.h
   cmSourceGroupCommand.cxx
   cmSourceGroupCommand.h
+  cmSpdx.cxx
+  cmSpdx.h
+  cmSpdxSerializer.cxx
+  cmSpdxSerializer.h
   cmString.cxx
   cmString.hxx
   cmStringReplaceHelper.cxx
@@ -777,9 +787,21 @@ add_library(
   cmNinjaLinkLineComputer.h
   cmNinjaLinkLineDeviceComputer.cxx
   cmNinjaLinkLineDeviceComputer.h
+  # FASTBuild support
+  cmGlobalFastbuildGenerator.cxx
+  cmGlobalFastbuildGenerator.h
+  cmLocalFastbuildGenerator.cxx
+  cmLocalFastbuildGenerator.h
+  cmFastbuildTargetGenerator.cxx
+  cmFastbuildTargetGenerator.h
+  cmFastbuildLinkLineComputer.cxx
+  cmFastbuildNormalTargetGenerator.cxx
+  cmFastbuildNormalTargetGenerator.h
+  cmFastbuildUtilityTargetGenerator.cxx
+  cmFastbuildUtilityTargetGenerator.h
 
-  cm_get_date.h
-  cm_get_date.c
+  cm_parse_date.h
+  cm_parse_date.c
   cm_utf8.h
   cm_utf8.c
   cm_codecvt.hxx
@@ -918,8 +940,6 @@ if(WIN32)
         cmGlobalNMakeMakefileGenerator.h
         cmGlobalJOMMakefileGenerator.cxx
         cmGlobalJOMMakefileGenerator.h
-        cmGlobalVisualStudio71Generator.cxx
-        cmGlobalVisualStudio71Generator.h
         cmGlobalVisualStudio7Generator.cxx
         cmGlobalVisualStudio7Generator.h
         cmGlobalVisualStudio8Generator.cxx
@@ -958,11 +978,18 @@ if(WIN32)
         cmVisualStudioWCEPlatformParser.cxx
         cmVSSetupHelper.cxx
         cmVSSetupHelper.h
+        cmVSSolution.cxx
+        cmVSSolution.h
+        cmVSVersion.h
       )
 
     # Add a manifest file to executables on Windows to allow for
     # GetVersion to work properly on Windows 8 and above.
-    target_sources(ManifestLib INTERFACE cmake.version.manifest)
+    if(MSVC)
+      target_sources(ManifestLib INTERFACE cmake.version.manifest)
+    else()
+      target_sources(ManifestLib INTERFACE cmake.version.manifest.rc)
+    endif()
   endif()
 endif()
 
@@ -1174,7 +1201,9 @@ add_library(
   CPack/cmCPackArchiveGenerator.cxx
   CPack/cmCPackComponentGroup.cxx
   CPack/cmCPackDebGenerator.cxx
+  CPack/cmCPackDebGenerator.h
   CPack/cmCPackExternalGenerator.cxx
+  CPack/cmCPackExternalGenerator.h
   CPack/cmCPackGeneratorFactory.cxx
   CPack/cmCPackGenerator.cxx
   CPack/cmCPackLog.cxx
@@ -1237,6 +1266,15 @@ if(UNIX)
     set(FREEBSD_PKG_INCLUDE_DIRS NOTFOUND)
     set(FREEBSD_PKG_LIBRARIES NOTFOUND)
   endif()
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(
+    CPackLib
+    PRIVATE
+      CPack/cmCPackAppImageGenerator.cxx
+      CPack/cmCPackAppImageGenerator.h
+    )
 endif()
 
 if(CYGWIN)
@@ -1377,7 +1415,7 @@ endif()
 
 foreach(_tool IN LISTS _tools)
   CMake_OPTIONAL_COMPONENT(${_tool})
-  install(TARGETS ${_tool} DESTINATION ${CMAKE_BIN_DIR} ${COMPONENT})
+  install(TARGETS ${_tool} DESTINATION ${CMake_INSTALL_BIN_DIR} ${COMPONENT})
 endforeach()
 
 # Unset temporary variables
