@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -1066,7 +1067,7 @@ Json::Value DirectoryObject::DumpInstaller(cmInstallGenerator* gen)
     installer["destination"] = installDir->GetDestination(this->Config);
     Json::Value paths = Json::arrayValue;
     for (std::string const& dir : dirs) {
-      if (cmHasLiteralSuffix(dir, "/")) {
+      if (cmHasSuffix(dir, '/')) {
         paths.append(this->DumpInstallerPath(
           this->TopSource, dir.substr(0, dir.size() - 1), "."));
       } else {

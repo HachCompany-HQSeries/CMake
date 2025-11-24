@@ -11,7 +11,6 @@
 #include <initializer_list>
 #include <iterator>
 #include <sstream>
-#include <type_traits>
 #include <utility>
 
 #include <cm/memory>
@@ -44,6 +43,7 @@
 #include "cmInstallRuntimeDependencySet.h"
 #include "cmLinkLineComputer.h"
 #include "cmList.h"
+#include "cmListFileCache.h"
 #include "cmLocalGenerator.h"
 #include "cmMSVC60LinkLineComputer.h"
 #include "cmMakefile.h"
@@ -70,8 +70,6 @@
 
 #  include "cmQtAutoGenGlobalInitializer.h"
 #endif
-
-class cmListFileBacktrace;
 
 std::string const kCMAKE_PLATFORM_INFO_INITIALIZED =
   "CMAKE_PLATFORM_INFO_INITIALIZED";
@@ -1187,7 +1185,7 @@ void cmGlobalGenerator::SetLanguageEnabledMaps(std::string const& l,
     std::string outputExtension = *p;
     this->LanguageToOutputExtension[l] = outputExtension;
     this->OutputExtensions[outputExtension] = outputExtension;
-    if (cmHasPrefix(outputExtension, ".")) {
+    if (cmHasPrefix(outputExtension, '.')) {
       outputExtension = outputExtension.substr(1);
       this->OutputExtensions[outputExtension] = outputExtension;
     }
@@ -1789,7 +1787,17 @@ void cmGlobalGenerator::ComputeTargetOrder(cmGeneratorTarget const* gt,
 bool cmGlobalGenerator::ApplyCXXStdTargets()
 {
   for (auto const& gen : this->LocalGenerators) {
-    for (auto const& tgt : gen->GetGeneratorTargets()) {
+
+    // tgt->ApplyCXXStd can create targets itself, so we need iterators which
+    // won't be invalidated by that target creation
+    auto const& genTgts = gen->GetGeneratorTargets();
+    std::vector<cmGeneratorTarget*> existingTgts;
+    existingTgts.reserve(genTgts.size());
+    for (auto const& tgt : genTgts) {
+      existingTgts.push_back(tgt.get());
+    }
+
+    for (auto const& tgt : existingTgts) {
       if (!tgt->ApplyCXXStdTargets()) {
         return false;
       }

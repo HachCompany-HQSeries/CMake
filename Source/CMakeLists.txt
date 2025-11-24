@@ -135,6 +135,8 @@ add_library(
   cmCMakePresetsGraphReadJSONPackagePresets.cxx
   cmCMakePresetsGraphReadJSONTestPresets.cxx
   cmCMakePresetsGraphReadJSONWorkflowPresets.cxx
+  cmCMakeString.hxx
+  cmCMakeString.cxx
   cmCommandLineArgument.h
   cmCommonTargetGenerator.cxx
   cmCommonTargetGenerator.h
@@ -163,6 +165,8 @@ add_library(
   cmCustomCommandTypes.h
   cmCxxModuleMapper.cxx
   cmCxxModuleMapper.h
+  cmCxxModuleMetadata.cxx
+  cmCxxModuleMetadata.h
   cmCxxModuleUsageEffects.cxx
   cmCxxModuleUsageEffects.h
   cmDefinitions.cxx

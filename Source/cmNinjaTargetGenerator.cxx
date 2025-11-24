@@ -24,6 +24,7 @@
 
 #include "cmBuildDatabase.h"
 #include "cmComputeLinkInformation.h"
+#include "cmCustomCommand.h"
 #include "cmCustomCommandGenerator.h"
 #include "cmDyndepCollation.h"
 #include "cmFileSet.h"
@@ -54,8 +55,6 @@
 #include "cmTargetDepend.h"
 #include "cmValue.h"
 #include "cmake.h"
-
-class cmCustomCommand;
 
 std::unique_ptr<cmNinjaTargetGenerator> cmNinjaTargetGenerator::New(
   cmGeneratorTarget* target)
@@ -457,7 +456,7 @@ std::string cmNinjaTargetGenerator::GetPreprocessedFilePath(
 {
   // Choose an extension to compile already-preprocessed source.
   std::string ppExt = source->GetExtension();
-  if (cmHasLiteralPrefix(ppExt, "F")) {
+  if (cmHasPrefix(ppExt, 'F')) {
     // Some Fortran compilers automatically enable preprocessing for
     // upper-case extensions.  Since the source is already preprocessed,
     // use a lower-case extension.

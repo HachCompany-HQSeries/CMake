@@ -642,7 +642,7 @@ std::vector<std::string> cmSystemTools::HandleResponseFile(
 {
   std::vector<std::string> arg_full;
   for (std::string const& arg : cmMakeRange(argBeg, argEnd)) {
-    if (cmHasLiteralPrefix(arg, "@")) {
+    if (cmHasPrefix(arg, '@')) {
       cmsys::ifstream responseFile(arg.substr(1).c_str(), std::ios::in);
       if (!responseFile) {
         std::string error = cmStrCat("failed to open for reading (",
@@ -890,7 +890,8 @@ bool cmSystemTools::RunSingleCommand(std::vector<std::string> const& command,
         auto* timedOutPtr = static_cast<bool*>(t->data);
         *timedOutPtr = true;
       },
-      static_cast<uint64_t>(timeout.count() * 1000.0), 0);
+      static_cast<uint64_t>(timeout.count() * 1000.0), 0,
+      cm::uv_update_time::yes);
   }
 
   std::vector<char> tempStdOut;
@@ -975,6 +976,7 @@ bool cmSystemTools::RunSingleCommand(std::vector<std::string> const& command,
 
   bool result = true;
   if (timedOut) {
+    chain.Terminate();
     char const* error_str = "Process terminated due to timeout\n";
     if (outputflag != OUTPUT_NONE) {
       std::cerr << error_str << std::endl;
@@ -1642,20 +1644,6 @@ cmSystemTools::CopyResult cmSystemTools::CopySingleFile(
     }
   }
   return CopyResult::Success;
-}
-
-bool cmSystemTools::CopyFileIfNewer(std::string const& source,
-                                    std::string const& destination)
-{
-  return cmsys::SystemTools::CopyFileIfNewer(source, destination).IsSuccess();
-}
-
-bool cmSystemTools::CopyADirectory(std::string const& source,
-                                   std::string const& destination,
-                                   CopyWhen when)
-{
-  return cmsys::SystemTools::CopyADirectory(source, destination, when)
-    .IsSuccess();
 }
 
 bool cmSystemTools::RenameFile(std::string const& oldname,
@@ -2862,7 +2850,8 @@ cmSystemTools::WaitForLineResult cmSystemTools::WaitForLine(
         auto* timedOutPtr = static_cast<bool*>(handle->data);
         *timedOutPtr = true;
       },
-      static_cast<uint64_t>(timeout.count() * 1000.0), 0);
+      static_cast<uint64_t>(timeout.count() * 1000.0), 0,
+      cm::uv_update_time::no);
 
     uv_run(loop, UV_RUN_ONCE);
     if (timedOut) {

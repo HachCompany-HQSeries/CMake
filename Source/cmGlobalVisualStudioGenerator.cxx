@@ -30,6 +30,7 @@
 #include "cmMessageType.h"
 #include "cmPolicies.h"
 #include "cmSourceFile.h"
+#include "cmSourceGroup.h"
 #include "cmState.h"
 #include "cmStateTypes.h"
 #include "cmStringAlgorithms.h"
@@ -797,6 +798,9 @@ cm::string_view cmGlobalVisualStudioGenerator::ExternalProjectTypeId(
   if (extension == ".dbproj"_s) {
     return Solution::Project::TypeIdDatabase;
   }
+  if (extension == ".wapproj"_s) {
+    return Solution::Project::TypeIdWinAppPkg;
+  }
   if (extension == ".wixproj"_s) {
     return Solution::Project::TypeIdWiX;
   }
@@ -994,7 +998,7 @@ cm::VS::Solution cmGlobalVisualStudioGenerator::CreateSolution(
         root->MaybeRelativeToCurBinDir(lg->GetCurrentBinaryDirectory());
       if (dir == "."_s) {
         dir.clear();
-      } else if (!cmHasLiteralSuffix(dir, "/")) {
+      } else if (!cmHasSuffix(dir, '/')) {
         dir += "/";
       }
 

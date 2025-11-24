@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <memory>
 #include <set>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -477,7 +476,7 @@ void cmExportPackageInfoGenerator::GenerateInterfaceCompileDefines(
   }
 
   if (!defines.empty()) {
-    component["compile_definitions"]["*"] = std::move(defines);
+    component["definitions"]["*"] = std::move(defines);
   }
 }
 

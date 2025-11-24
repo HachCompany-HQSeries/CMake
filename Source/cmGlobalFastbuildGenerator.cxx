@@ -44,8 +44,6 @@
 
 #endif
 
-class cmLinkLineComputer;
-
 #define FASTBUILD_REBUILD_BFF_TARGET_NAME "rebuild-bff"
 #define FASTBUILD_GLOB_CHECK_TARGET "glob-check"
 #define FASTBUILD_ENV_VAR_NAME "LocalEnv"
@@ -1633,7 +1631,7 @@ void cmGlobalFastbuildGenerator::WriteSolution()
         folderName,
         { { "Path", Quote(pathToFolder) },
           { "Projects",
-            cmStrCat("{", cmJoin(Wrap(projectsInFolder), ","), "}") } },
+            cmStrCat('{', cmJoin(Wrap(projectsInFolder), ","), '}') } },
         1);
       folders.emplace_back(std::move(folderName));
     }
