@@ -31,3 +31,5 @@ if(CMake_TEST_CUDA AND NOT CMake_TEST_CUDA STREQUAL "Clang")
 endif()
 
 add_cuda_test_macro(Cuda.WithC CudaWithC)
+add_cuda_test_macro(Cuda.Bin2C CudaBin2C)
+add_cuda_test_macro(Cuda.Sanitizer ${CMAKE_CTEST_COMMAND} --output-on-failure)

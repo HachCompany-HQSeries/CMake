@@ -5,6 +5,11 @@
 #include <sstream>
 #include <utility>
 
+#include <cm/string_view>
+
+#include "cmDiagnostics.h"
+#include "cmListFileCache.h"
+#include "cmLocalGenerator.h"
 #include "cmMakefile.h"
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
@@ -84,7 +89,7 @@ void cmInstallGenerator::AddInstallRule(
         if (rename && *rename) {
           os << rename;
         } else {
-          os << cmSystemTools::GetFilenameName(file);
+          os << cmSystemTools::GetFilenameNameView(file);
         }
         firstIteration = false;
       }
@@ -215,12 +220,29 @@ bool cmInstallGenerator::InstallsForConfig(std::string const& config)
 std::string cmInstallGenerator::ConvertToAbsoluteDestination(
   std::string const& dest)
 {
+  if (dest == ".") {
+    return "${CMAKE_INSTALL_PREFIX}";
+  }
+
   std::string result;
   if (!dest.empty() && !cmSystemTools::FileIsFullPath(dest)) {
     result = "${CMAKE_INSTALL_PREFIX}/";
   }
   result += dest;
   return result;
+}
+
+void cmInstallGenerator::CheckAbsoluteDestination(
+  std::string const& dest, cmLocalGenerator* lg, cmListFileBacktrace const& bt)
+{
+  if (!cmSystemTools::FileIsFullPath(dest)) {
+    return;
+  }
+  lg->IssueDiagnostic(
+    cmDiagnostics::CMD_INSTALL_ABSOLUTE_DESTINATION,
+    cmStrCat("INSTALL command given absolute DESTINATION path (", dest,
+             ").\n"),
+    bt);
 }
 
 cmInstallGenerator::MessageLevel cmInstallGenerator::SelectMessageLevel(

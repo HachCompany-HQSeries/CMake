@@ -38,9 +38,10 @@ using MacroExpander = cmCMakePresetsGraphInternal::MacroExpander;
 using MacroExpanderVector = cmCMakePresetsGraphInternal::MacroExpanderVector;
 using cmCMakePresetsGraphInternal::BaseMacroExpander;
 using cmCMakePresetsGraphInternal::ExpandMacros;
+using cmCMakePresetsGraphInternal::ExpandImmediateMacros;
 
 constexpr int MIN_VERSION = 1;
-constexpr int MAX_VERSION = 10;
+constexpr int MAX_VERSION = 12;
 
 struct CMakeVersion
 {
@@ -384,6 +385,21 @@ bool PresetOptionalIntHelper(cm::optional<int>& out, Json::Value const* value,
   return helper(out, value, state);
 }
 
+bool PresetUIntHelper(unsigned int& out, Json::Value const* value,
+                      cmJSONState* state)
+{
+  static auto const helper = JSONHelperBuilder::UInt();
+  return helper(out, value, state);
+}
+
+bool PresetOptionalUIntHelper(cm::optional<unsigned int>& out,
+                              Json::Value const* value, cmJSONState* state)
+{
+  static auto const helper =
+    JSONHelperBuilder::Optional<unsigned int>(PresetUIntHelper);
+  return helper(out, value, state);
+}
+
 bool PresetVectorIntHelper(std::vector<int>& out, Json::Value const* value,
                            cmJSONState* state)
 {
@@ -576,11 +592,9 @@ bool cmCMakePresetsGraph::ReadJSONFile(std::string const& filename,
       return false;
     }
 
-    PresetPair<ConfigurePreset> presetPair;
-    presetPair.Unexpanded = preset;
-    presetPair.Expanded = cm::nullopt;
-    if (!this->ConfigurePresets.emplace(preset.Name, presetPair).second) {
-      cmCMakePresetsErrors::DUPLICATE_PRESETS(preset.Name, &this->parseState);
+    if (!ExpandImmediateMacros<ConfigurePreset>(preset)) {
+      cmCMakePresetsErrors::INVALID_MACRO_EXPANSION(preset.Name,
+                                                    &this->parseState);
       return false;
     }
 
@@ -617,6 +631,20 @@ bool cmCMakePresetsGraph::ReadJSONFile(std::string const& filename,
       return false;
     }
 
+    // Support for diagnostics.
+    if (!cmCMakePresetsGraphInternal::CheckDiagnostics(&this->parseState, v,
+                                                       preset)) {
+      return false;
+    }
+
+    PresetPair<ConfigurePreset> presetPair;
+    presetPair.Unexpanded = preset;
+    presetPair.Expanded = cm::nullopt;
+    if (!this->ConfigurePresets.emplace(preset.Name, presetPair).second) {
+      cmCMakePresetsErrors::DUPLICATE_PRESETS(preset.Name, &this->parseState);
+      return false;
+    }
+
     this->ConfigurePresetOrder.push_back(preset.Name);
   }
 
@@ -624,6 +652,12 @@ bool cmCMakePresetsGraph::ReadJSONFile(std::string const& filename,
     preset.OriginFile = file;
     if (preset.Name.empty()) {
       // No error, already handled by PresetNameHelper
+      return false;
+    }
+
+    if (!ExpandImmediateMacros<BuildPreset>(preset)) {
+      cmCMakePresetsErrors::INVALID_MACRO_EXPANSION(preset.Name,
+                                                    &this->parseState);
       return false;
     }
 
@@ -648,6 +682,12 @@ bool cmCMakePresetsGraph::ReadJSONFile(std::string const& filename,
     preset.OriginFile = file;
     if (preset.Name.empty()) {
       // No error, already handled by PresetNameHelper
+      return false;
+    }
+
+    if (!ExpandImmediateMacros<TestPreset>(preset)) {
+      cmCMakePresetsErrors::INVALID_MACRO_EXPANSION(preset.Name,
+                                                    &this->parseState);
       return false;
     }
 
@@ -678,6 +718,20 @@ bool cmCMakePresetsGraph::ReadJSONFile(std::string const& filename,
       return false;
     }
 
+    // Support for processor-count-based jobs added in version 11.
+    if (v < 11 && preset.Execution && preset.Execution->Jobs.has_value() &&
+        !preset.Execution->Jobs->has_value()) {
+      cmCMakePresetsErrors::JOBS_PROC_UNSUPPORTED(&this->parseState);
+      return false;
+    }
+
+    // Support for testPassthroughArguments added in version 12.
+    if (v < 12 && preset.Execution &&
+        !preset.Execution->TestPassthroughArguments.empty()) {
+      cmCMakePresetsErrors::PASSTHROUGH_ARGS_UNSUPPORTED(&this->parseState);
+      return false;
+    }
+
     this->TestPresetOrder.push_back(preset.Name);
   }
 
@@ -685,6 +739,12 @@ bool cmCMakePresetsGraph::ReadJSONFile(std::string const& filename,
     preset.OriginFile = file;
     if (preset.Name.empty()) {
       // No error, already handled by PresetNameHelper
+      return false;
+    }
+
+    if (!ExpandImmediateMacros<PackagePreset>(preset)) {
+      cmCMakePresetsErrors::INVALID_MACRO_EXPANSION(preset.Name,
+                                                    &this->parseState);
       return false;
     }
 
@@ -706,6 +766,12 @@ bool cmCMakePresetsGraph::ReadJSONFile(std::string const& filename,
     preset.OriginFile = file;
     if (preset.Name.empty()) {
       // No error, already handled by PresetNameHelper
+      return false;
+    }
+
+    if (!ExpandImmediateMacros<WorkflowPreset>(preset)) {
+      cmCMakePresetsErrors::INVALID_MACRO_EXPANSION(preset.Name,
+                                                    &this->parseState);
       return false;
     }
 

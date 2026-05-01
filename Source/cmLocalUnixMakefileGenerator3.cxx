@@ -37,6 +37,7 @@
 #include "cmOutputConverter.h"
 #include "cmRange.h"
 #include "cmRulePlaceholderExpander.h"
+#include "cmScriptGenerator.h"
 #include "cmSourceFile.h"
 #include "cmState.h"
 #include "cmStateSnapshot.h"
@@ -956,7 +957,8 @@ void cmLocalUnixMakefileGenerator3::AppendCustomDepend(
   for (std::string const& d : ccg.GetDepends()) {
     // Lookup the real name of the dependency in case it is a CMake target.
     std::string dep;
-    if (this->GetRealDependency(d, this->GetConfigName(), dep)) {
+    if (this->GetRealDependency(d, this->GetConfigName(), dep,
+                                ccg.GetCC().GetCMP0212Status())) {
       depends.push_back(std::move(dep));
     }
   }
@@ -1154,7 +1156,7 @@ void cmLocalUnixMakefileGenerator3::AppendCleanCommand(
     fout << "file(REMOVE_RECURSE\n";
     for (std::string const& file : files) {
       std::string fc = this->MaybeRelativeToCurBinDir(file);
-      fout << "  " << cmOutputConverter::EscapeForCMake(fc) << '\n';
+      fout << "  " << cmScriptGenerator::Quote(fc) << '\n';
     }
     fout << ")\n";
   }
@@ -1215,7 +1217,7 @@ void cmLocalUnixMakefileGenerator3::AppendDirectoryCleanCommand(
     for (std::string const& cfl : cleanFiles) {
       std::string fc = rootLG->MaybeRelativeToCurBinDir(
         cmSystemTools::CollapseFullPath(cfl, currentBinaryDir));
-      fout << "  " << cmOutputConverter::EscapeForCMake(fc) << '\n';
+      fout << "  " << cmScriptGenerator::Quote(fc) << '\n';
     }
     fout << ")\n";
   }
@@ -2027,8 +2029,7 @@ void cmLocalUnixMakefileGenerator3::WriteDependLanguageInfo(
                            "set(CMAKE_TARGET_DEFINITIONS_"
                         << lang << '\n';
         for (std::string const& define : defines) {
-          cmakefileStream << "  " << cmOutputConverter::EscapeForCMake(define)
-                          << '\n';
+          cmakefileStream << "  " << cmScriptGenerator::Quote(define) << '\n';
         }
         cmakefileStream << "  )\n";
       }
@@ -2068,8 +2069,7 @@ void cmLocalUnixMakefileGenerator3::WriteDependLanguageInfo(
     if (!transformRules.empty()) {
       cmakefileStream << "\nset(CMAKE_INCLUDE_TRANSFORMS\n";
       for (std::string const& tr : transformRules) {
-        cmakefileStream << "  " << cmOutputConverter::EscapeForCMake(tr)
-                        << '\n';
+        cmakefileStream << "  " << cmScriptGenerator::Quote(tr) << '\n';
       }
       cmakefileStream << "  )\n";
     }

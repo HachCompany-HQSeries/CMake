@@ -524,6 +524,35 @@ Target Created:
 
 **Note**: direct usage of this target by consumers should not be necessary.
 
+.. _`FindCUDAToolkit_bin2c`:
+
+bin2c
+"""""
+
+.. versionadded:: 4.3
+
+A utility that converts binary files to C files containing byte arrays.
+
+Target Created:
+
+- ``CUDA::bin2c``
+
+.. _`FindCUDAToolkit_sanitizer`:
+
+compute-sanitizer
+"""""""""""""""""
+
+.. versionadded:: 4.4
+
+The `NVIDIA Compute Sanitizer`_ library, which allows the tracing of CUDA
+runtime and driver calls.
+
+Target Created:
+
+- ``CUDA::sanitizer``
+
+.. _`NVIDIA Compute Sanitizer`: https://docs.nvidia.com/compute-sanitizer
+
 Result Variables
 ^^^^^^^^^^^^^^^^
 
@@ -693,7 +722,7 @@ else()
         if(NOT $ENV{CUDAHOSTCXX} STREQUAL "")
           get_filename_component(CUDAToolkit_CUDA_HOST_COMPILER $ENV{CUDAHOSTCXX} PROGRAM)
           if(NOT EXISTS ${CUDAToolkit_CUDA_HOST_COMPILER})
-            message(FATAL_ERROR "Could not find compiler set in environment variable CUDAHOSTCXX:\n$ENV{CUDAHOSTCXX}.\n${CUDAToolkit_CUDA_HOST_COMPILER}")
+            message(FATAL_ERROR "Could not find the compiler specified in the environment variable CUDAHOSTCXX:\n$ENV{CUDAHOSTCXX}.\n${CUDAToolkit_CUDA_HOST_COMPILER}")
           endif()
         elseif(CUDAToolkit_CUDA_HOST_COMPILER)
           # We get here if CUDAToolkit_CUDA_HOST_COMPILER was specified by the user or toolchain file.
@@ -709,7 +738,7 @@ else()
             unset(_CUDAToolkit_CUDA_HOST_COMPILER_PATH)
           endif()
           if(NOT EXISTS "${CUDAToolkit_CUDA_HOST_COMPILER}")
-            message(FATAL_ERROR "Could not find compiler set in variable CUDAToolkit_CUDA_HOST_COMPILER:\n  ${CUDAToolkit_CUDA_HOST_COMPILER}")
+            message(FATAL_ERROR "Could not find the compiler specified in the variable CUDAToolkit_CUDA_HOST_COMPILER:\n  ${CUDAToolkit_CUDA_HOST_COMPILER}")
           endif()
           # If the value was cached, update the cache entry with our modifications.
           get_property(_CUDAToolkit_CUDA_HOST_COMPILER_CACHED CACHE CUDAToolkit_CUDA_HOST_COMPILER PROPERTY TYPE)
@@ -1199,12 +1228,22 @@ endif()
 unset(CUDAToolkit_IMPLICIT_LIBRARY_DIRECTORIES)
 unset(CUDAToolkit_INCLUDE_DIRECTORIES)
 
+# CUDAToolkit_LIBRARY_ROOT is accidentally set to the target directory in some environments
+# when the CUDA language is enabled, so patch it out
+if(CUDAToolkit_LIBRARY_ROOT MATCHES "^(.*)/targets/([^/]*)$")
+  set(CUDAToolkit_LIBRARY_ROOT "${CMAKE_MATCH_1}")
+endif()
+
 #-----------------------------------------------------------------------------
 # Construct import targets
 if(CUDAToolkit_FOUND)
 
   function(_CUDAToolkit_find_and_add_import_lib lib_name)
-    cmake_parse_arguments(arg "" "" "ALT;DEPS;EXTRA_PATH_SUFFIXES;EXTRA_INCLUDE_DIRS;ONLY_SEARCH_FOR" ${ARGN})
+    cmake_parse_arguments(arg "" "" "ALT;DEPS;EXTRA_PATH_SUFFIXES;EXTRA_INCLUDE_DIRS;ONLY_SEARCH_FOR;LIBRARY_SEARCH_DIRS" ${ARGN})
+
+    if(NOT arg_LIBRARY_SEARCH_DIRS)
+      set(arg_LIBRARY_SEARCH_DIRS "${CUDAToolkit_LIBRARY_SEARCH_DIRS}")
+    endif()
 
     if(arg_ONLY_SEARCH_FOR)
       set(search_names ${arg_ONLY_SEARCH_FOR})
@@ -1214,7 +1253,7 @@ if(CUDAToolkit_FOUND)
 
     find_library(CUDA_${lib_name}_LIBRARY
       NAMES ${search_names}
-      HINTS ${CUDAToolkit_LIBRARY_SEARCH_DIRS}
+      HINTS ${arg_LIBRARY_SEARCH_DIRS}
             ENV CUDA_PATH
       PATH_SUFFIXES nvidia/current lib64 ${_CUDAToolkit_win_search_dirs} lib
                     # Support NVHPC splayed math library layout
@@ -1229,7 +1268,7 @@ if(CUDAToolkit_FOUND)
     if(NOT CUDA_${lib_name}_LIBRARY)
       find_library(CUDA_${lib_name}_LIBRARY
         NAMES ${search_names}
-        HINTS ${CUDAToolkit_LIBRARY_SEARCH_DIRS}
+        HINTS ${arg_LIBRARY_SEARCH_DIRS}
               ENV CUDA_PATH
         PATH_SUFFIXES lib64/stubs ${_CUDAToolkit_win_stub_search_dirs} lib/stubs stubs
       )
@@ -1302,7 +1341,7 @@ if(CUDAToolkit_FOUND)
 
   if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 12.0.0)
     _CUDAToolkit_find_and_add_import_lib(nvJitLink)
-    _CUDAToolkit_find_and_add_import_lib(nvJitLink_static DEPS cudart_static_deps)
+    _CUDAToolkit_find_and_add_import_lib(nvJitLink_static DEPS cudart_static_deps nvptxcompiler_static)
   endif()
 
   if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 12.4.0)
@@ -1486,6 +1525,34 @@ if(CUDAToolkit_FOUND)
   endif()
 
   _CUDAToolkit_find_and_add_import_lib(OpenCL)
+
+  find_program(CUDA_bin2c_EXECUTABLE
+    NAMES bin2c
+    HINTS ${CUDAToolkit_BIN_DIR}
+    NO_DEFAULT_PATH
+  )
+  if(NOT TARGET CUDA::bin2c AND CUDA_bin2c_EXECUTABLE)
+    add_executable(CUDA::bin2c IMPORTED)
+    set_property(TARGET CUDA::bin2c PROPERTY IMPORTED_LOCATION "${CUDA_bin2c_EXECUTABLE}")
+  endif()
+
+  _CUDAToolkit_find_and_add_import_lib(
+    sanitizer
+    ONLY_SEARCH_FOR sanitizer-public
+    EXTRA_PATH_SUFFIXES
+      "../compute-sanitizer"
+      "../../../compute-sanitizer"
+      "../Sanitizer"
+      "../../../Sanitizer"
+      "../extras/Sanitizer"
+      "../../../extras/Sanitizer"
+    EXTRA_INCLUDE_DIRS "${CUDAToolkit_CUPTI_INCLUDE_DIR}"
+  )
+  if(TARGET CUDA::sanitizer)
+    get_property(loc TARGET CUDA::sanitizer PROPERTY IMPORTED_LOCATION)
+    get_filename_component(sanitizer_dir "${loc}" DIRECTORY)
+    target_include_directories(CUDA::sanitizer INTERFACE "${sanitizer_dir}/include")
+  endif()
 endif()
 
 if(_CUDAToolkit_Pop_ROOT_PATH)

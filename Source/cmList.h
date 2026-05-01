@@ -813,6 +813,8 @@ public:
 
   void resize(size_type count) { this->Values.resize(count); }
 
+  void reserve(size_type count) { this->Values.reserve(count); }
+
   enum class FilterMode
   {
     INCLUDE,
@@ -939,7 +941,8 @@ public:
     TOUPPER,
     STRIP,
     GENEX_STRIP,
-    REPLACE
+    REPLACE,
+    APPLY
   };
 
   // Transforms the list by applying an action
@@ -953,6 +956,9 @@ public:
                     std::unique_ptr<TransformSelector> = {});
   cmList& transform(TransformAction action,
                     std::vector<std::string> const& args,
+                    std::unique_ptr<TransformSelector> = {});
+  cmList& transform(TransformAction action, std::string const& arg,
+                    cmMakefile& makefile,
                     std::unique_ptr<TransformSelector> = {});
 
   std::string join(cm::string_view glue) const

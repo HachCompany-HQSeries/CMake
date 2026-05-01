@@ -55,7 +55,8 @@ std::string AddLangSpecificInterfaceIncludeDirectories(
   switch (dagChecker.Check()) {
     case cmGeneratorExpressionDAGChecker::SELF_REFERENCE:
       dagChecker.ReportError(
-        nullptr, "$<TARGET_PROPERTY:" + target->GetName() + ",propertyName");
+        nullptr,
+        cmStrCat("$<TARGET_PROPERTY:", target->GetName(), ",propertyName"));
       CM_FALLTHROUGH;
     case cmGeneratorExpressionDAGChecker::CYCLIC_REFERENCE:
       // No error. We just skip cyclic references.
@@ -96,7 +97,7 @@ std::string AddLangSpecificInterfaceIncludeDirectories(
 void AddLangSpecificImplicitIncludeDirectories(
   cmGeneratorTarget const* target, std::string const& lang,
   std::string const& config, std::string const& propertyName,
-  IncludeDirectoryFallBack mode, EvaluatedTargetPropertyEntries& entries)
+  IncludeDirectoryFallBack mode, cm::EvaluatedTargetPropertyEntries& entries)
 {
   if (auto const* libraries =
         target->GetLinkImplementationLibraries(config, UseTo::Compile)) {
@@ -112,7 +113,7 @@ void AddLangSpecificImplicitIncludeDirectories(
         }
         if (cm::contains(dependency->GetAllConfigCompileLanguages(), lang)) {
           auto* lg = dependency->GetLocalGenerator();
-          EvaluatedTargetPropertyEntry entry{ library, library.Backtrace };
+          cm::EvaluatedTargetPropertyEntry entry{ library, library.Backtrace };
 
           if (lang == "Swift") {
             entry.Values.emplace_back(
@@ -140,12 +141,12 @@ void AddLangSpecificImplicitIncludeDirectories(
 }
 
 void processIncludeDirectories(cmGeneratorTarget const* tgt,
-                               EvaluatedTargetPropertyEntries& entries,
+                               cm::EvaluatedTargetPropertyEntries& entries,
                                std::vector<BT<std::string>>& includes,
                                std::unordered_set<std::string>& uniqueIncludes,
                                bool debugIncludes)
 {
-  for (EvaluatedTargetPropertyEntry& entry : entries.Entries) {
+  for (cm::EvaluatedTargetPropertyEntry& entry : entries.Entries) {
     cmLinkItem const& item = entry.LinkItem;
     std::string const& targetName = item.AsStr();
     bool const fromImported = item.Target && item.Target->IsImported();
@@ -195,15 +196,15 @@ void processIncludeDirectories(cmGeneratorTarget const* tgt,
       if (uniqueIncludes.insert(entryInclude).second) {
         includes.emplace_back(entryInclude, entry.Backtrace);
         if (debugIncludes) {
-          usedIncludes += " * " + entryInclude + "\n";
+          usedIncludes += cmStrCat(" * ", entryInclude, "\n");
         }
       }
     }
     if (!usedIncludes.empty()) {
       tgt->GetLocalGenerator()->GetCMakeInstance()->IssueMessage(
         MessageType::LOG,
-        std::string("Used includes for target ") + tgt->GetName() + ":\n" +
-          usedIncludes,
+        cmStrCat("Used includes for target ", tgt->GetName(), ":\n",
+                 usedIncludes),
         entry.Backtrace);
     }
   }
@@ -236,8 +237,9 @@ std::vector<BT<std::string>> cmGeneratorTarget::GetIncludeDirectories(
 
   this->DebugIncludesDone = true;
 
-  EvaluatedTargetPropertyEntries entries = EvaluateTargetPropertyEntries(
-    this, context, &dagChecker, this->IncludeDirectoriesEntries);
+  cm::EvaluatedTargetPropertyEntries entries =
+    cm::EvaluateTargetPropertyEntries(this, context, &dagChecker,
+                                      this->IncludeDirectoriesEntries);
 
   if (lang == "Swift") {
     AddLangSpecificImplicitIncludeDirectories(
@@ -265,7 +267,7 @@ std::vector<BT<std::string>> cmGeneratorTarget::GetIncludeDirectories(
   }
 
   AddInterfaceEntries(this, "INTERFACE_INCLUDE_DIRECTORIES", context,
-                      &dagChecker, entries, IncludeRuntimeInterface::Yes);
+                      &dagChecker, entries, cm::IncludeRuntimeInterface::Yes);
 
   processIncludeDirectories(this, entries, includes, uniqueIncludes,
                             debugIncludes);

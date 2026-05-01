@@ -52,7 +52,7 @@ run_cmake(ProjectVars)
 
 set(RunCMake_TEST_OPTIONS --debug-trycompile)
 run_cmake(PlatformVariables)
-run_cmake(WarnDeprecated)
+run_cmake(CudaArchitectures)
 unset(RunCMake_TEST_OPTIONS)
 
 if (CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin|Windows)$" AND
@@ -67,6 +67,13 @@ run_cmake(CMP0066)
 run_cmake(CMP0067)
 run_cmake(CMP0137-WARN)
 run_cmake(CMP0137-NEW)
+run_cmake(CMP0210-WARN)
+if(NOT CMAKE_C_COMPILER_ID STREQUAL "Intel")
+  # Intel compiler does not reject bad flags or objects!
+  set(RunCMake_TEST_OUTPUT_MERGE 1)
+  run_cmake(CMP0210-NEW)
+  unset(RunCMake_TEST_OUTPUT_MERGE)
+endif()
 
 if(RunCMake_GENERATOR MATCHES "Make|Ninja")
   # Use a single build tree for a few tests without cleaning.

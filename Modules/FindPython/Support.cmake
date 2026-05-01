@@ -238,20 +238,30 @@ function (_PYTHON_GET_REGISTRIES _PYTHON_PGR_REGISTRY_PATHS)
 
   foreach (implementation IN LISTS _PGR_IMPLEMENTATIONS)
     if (implementation STREQUAL "CPython")
+      set (abi "${_${_PYTHON_PREFIX}_ABIFLAGS}")
+      list (TRANSFORM abi REPLACE "^<none>$" "")
       foreach (version IN LISTS _PGR_VERSION)
         string (REPLACE "." "" version_no_dots ${version})
-        list (TRANSFORM _${_PYTHON_PREFIX}_ARCH REPLACE "^(.+)$" "[HKEY_CURRENT_USER/SOFTWARE/Python/PythonCore/${version}-\\1/InstallPath]" OUTPUT_VARIABLE reg_paths)
-        list (APPEND registries ${reg_paths})
-        if (version VERSION_GREATER_EQUAL "3.5")
-          # cmake_host_system_information is not usable in bootstrap
-          get_filename_component (arch "[HKEY_CURRENT_USER\\Software\\Python\\PythonCore\\${version};SysArchitecture]" NAME)
-          string (REPLACE "bit" "" arch "${arch}")
-          if (arch IN_LIST _${_PYTHON_PREFIX}_ARCH)
-            list (APPEND registries [HKEY_CURRENT_USER/SOFTWARE/Python/PythonCore/${version}/InstallPath])
-          endif()
+        if (abi)
+          set (abiversions "${abi}")
+          list (TRANSFORM abiversions PREPEND "${version}")
         else()
-          list (APPEND registries [HKEY_CURRENT_USER/SOFTWARE/Python/PythonCore/${version}/InstallPath])
+          set (abiversions "${version}")
         endif()
+        foreach (abiversion IN LISTS abiversions)
+          list (TRANSFORM _${_PYTHON_PREFIX}_ARCH REPLACE "^(.+)$" "[HKEY_CURRENT_USER/SOFTWARE/Python/PythonCore/${abiversion}-\\1/InstallPath]" OUTPUT_VARIABLE reg_paths)
+          list (APPEND registries ${reg_paths})
+          if (version VERSION_GREATER_EQUAL "3.5")
+            # cmake_host_system_information is not usable in bootstrap
+            get_filename_component (arch "[HKEY_CURRENT_USER\\Software\\Python\\PythonCore\\${abiversion};SysArchitecture]" NAME)
+            string (REPLACE "bit" "" arch "${arch}")
+            if (arch IN_LIST _${_PYTHON_PREFIX}_ARCH)
+              list (APPEND registries [HKEY_CURRENT_USER/SOFTWARE/Python/PythonCore/${abiversion}/InstallPath])
+            endif()
+          else()
+            list (APPEND registries [HKEY_CURRENT_USER/SOFTWARE/Python/PythonCore/${abiversion}/InstallPath])
+          endif()
+        endforeach()
         list (TRANSFORM _${_PYTHON_PREFIX}_ARCH REPLACE "^(.+)$" "[HKEY_CURRENT_USER/SOFTWARE/Python/ContinuumAnalytics/Anaconda${version_no_dots}-\\1/InstallPath]" OUTPUT_VARIABLE reg_paths)
         list (APPEND registries ${reg_paths})
         list (TRANSFORM _${_PYTHON_PREFIX}_ARCH REPLACE "^(.+)$" "[HKEY_CURRENT_USER/SOFTWARE/Python/PythonCore/${version}-\\1/InstallPath]" OUTPUT_VARIABLE reg_paths)
@@ -549,7 +559,11 @@ function (_PYTHON_GET_CONFIG_VAR _PYTHON_PGCV_VALUE NAME)
     if (CMAKE_SYSTEM_NAME STREQUAL "Windows" OR CMAKE_SYSTEM_NAME MATCHES "MSYS|CYGWIN")
       set (_values "")
     else()
-      set (_values "abi${_${_PYTHON_PREFIX}_REQUIRED_VERSION_MAJOR}")
+      if (${_PYTHON_PREFIX}_FREE_THREADED)
+        set (_values "abi${_${_PYTHON_PREFIX}_REQUIRED_VERSION_MAJOR}t")
+      else()
+        set (_values "abi${_${_PYTHON_PREFIX}_REQUIRED_VERSION_MAJOR}")
+      endif()
     endif()
   elseif (_${_PYTHON_PREFIX}_CONFIG)
     if (NAME STREQUAL "SOABI")
@@ -580,15 +594,27 @@ function (_PYTHON_GET_CONFIG_VAR _PYTHON_PGCV_VALUE NAME)
         endif()
       endif()
     endif()
-    if (NAME STREQUAL "ABIFLAGS" AND NOT _values)
-      set (_values "<none>")
-    endif()
   endif()
 
   if ("Interpreter" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS AND _${_PYTHON_PREFIX}_EXECUTABLE
       AND (_${_PYTHON_PREFIX}_CROSSCOMPILING OR NOT CMAKE_CROSSCOMPILING))
     if (NAME STREQUAL "PREFIX")
-      execute_process (COMMAND ${_${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c "import sys\ntry:\n   import sysconfig\n   sys.stdout.write(';'.join([sysconfig.get_config_var('base') or '', sysconfig.get_config_var('installed_base') or '']))\nexcept Exception:\n   from distutils import sysconfig\n   sys.stdout.write(';'.join([sysconfig.PREFIX,sysconfig.EXEC_PREFIX,sysconfig.BASE_EXEC_PREFIX]))"
+      execute_process (COMMAND ${_${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c [==[
+import sys
+try:
+    import sysconfig
+    sys.stdout.write(';'.join([
+        sysconfig.get_config_var('base') or '',
+        sysconfig.get_config_var('installed_base') or '',
+    ]))
+except Exception:
+    from distutils import sysconfig
+    sys.stdout.write(';'.join([
+        sysconfig.PREFIX,
+        sysconfig.EXEC_PREFIX,
+        sysconfig.BASE_EXEC_PREFIX,
+    ]))
+]==]
                        RESULT_VARIABLE _result
                        OUTPUT_VARIABLE _values
                        ERROR_QUIET
@@ -605,7 +631,23 @@ function (_PYTHON_GET_CONFIG_VAR _PYTHON_PGCV_VALUE NAME)
         set (_scheme "posix_prefix")
       endif()
       execute_process (COMMAND ${_${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c
-                               "import sys\ntry:\n   import sysconfig\n   sys.stdout.write(';'.join([sysconfig.get_path('platinclude'),sysconfig.get_path('platinclude','${_scheme}'),sysconfig.get_path('include'),sysconfig.get_path('include','${_scheme}')]))\nexcept Exception:\n   from distutils import sysconfig\n   sys.stdout.write(';'.join([sysconfig.get_python_inc(plat_specific=True),sysconfig.get_python_inc(plat_specific=False)]))"
+                               [==[
+import sys
+try:
+    import sysconfig
+    sys.stdout.write(';'.join([
+        sysconfig.get_path('platinclude'),
+        sysconfig.get_path('platinclude', sys.argv[1]),
+        sysconfig.get_path('include'),
+        sysconfig.get_path('include', sys.argv[1]),
+    ]))
+except Exception:
+    from distutils import sysconfig
+    sys.stdout.write(';'.join([
+        sysconfig.get_python_inc(plat_specific=True),
+        sysconfig.get_python_inc(plat_specific=False),
+    ]))
+]==] "${_scheme}"
                        RESULT_VARIABLE _result
                        OUTPUT_VARIABLE _values
                        ERROR_QUIET
@@ -618,7 +660,15 @@ function (_PYTHON_GET_CONFIG_VAR _PYTHON_PGCV_VALUE NAME)
     elseif (NAME STREQUAL "SOABI")
       # first step: compute SOABI form EXT_SUFFIX config variable
       execute_process (COMMAND ${_${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c
-                               "import sys\ntry:\n   import sysconfig\n   sys.stdout.write(sysconfig.get_config_var('EXT_SUFFIX') or '')\nexcept Exception:\n   from distutils import sysconfig;sys.stdout.write(sysconfig.get_config_var('EXT_SUFFIX') or '')"
+                               [==[
+import sys
+try:
+    import sysconfig
+    sys.stdout.write(sysconfig.get_config_var('EXT_SUFFIX') or '')
+except Exception:
+    from distutils import sysconfig
+    sys.stdout.write(sysconfig.get_config_var('EXT_SUFFIX') or '')
+]==]
                        RESULT_VARIABLE _result
                        OUTPUT_VARIABLE _values
                        ERROR_QUIET
@@ -639,7 +689,21 @@ function (_PYTHON_GET_CONFIG_VAR _PYTHON_PGCV_VALUE NAME)
       # second step: use SOABI or SO config variables as fallback
       if (NOT _values)
         execute_process (COMMAND ${_${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c
-          "import sys\ntry:\n   import sysconfig\n   sys.stdout.write(';'.join([sysconfig.get_config_var('SOABI') or '',sysconfig.get_config_var('SO') or '']))\nexcept Exception:\n   from distutils import sysconfig;sys.stdout.write(';'.join([sysconfig.get_config_var('SOABI') or '',sysconfig.get_config_var('SO') or '']))"
+          [==[
+import sys
+try:
+    import sysconfig
+    sys.stdout.write(';'.join([
+        sysconfig.get_config_var('SOABI') or '',
+        sysconfig.get_config_var('SO') or '',
+    ]))
+except Exception:
+    from distutils import sysconfig
+    sys.stdout.write(';'.join([
+        sysconfig.get_config_var('SOABI') or '',
+        sysconfig.get_config_var('SO') or '',
+    ]))
+]==]
           RESULT_VARIABLE _result
           OUTPUT_VARIABLE _soabi
           ERROR_QUIET
@@ -664,7 +728,12 @@ function (_PYTHON_GET_CONFIG_VAR _PYTHON_PGCV_VALUE NAME)
         endif()
       endif()
     elseif (NAME STREQUAL "SOSABI")
-      execute_process (COMMAND ${_${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c "import sys\nimport re\nimport importlib.machinery\nsys.stdout.write(next(filter(lambda x: re.search('^\\.abi', x), importlib.machinery.EXTENSION_SUFFIXES)))"
+      execute_process (COMMAND ${_${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c [==[
+import sys
+import re
+import importlib.machinery
+sys.stdout.write(next(filter(lambda x: re.search('^\\.abi', x), importlib.machinery.EXTENSION_SUFFIXES)))
+]==]
                        RESULT_VARIABLE _result
                        OUTPUT_VARIABLE _values
                        ERROR_QUIET
@@ -677,7 +746,14 @@ function (_PYTHON_GET_CONFIG_VAR _PYTHON_PGCV_VALUE NAME)
     elseif (NAME STREQUAL "ABIFLAGS" AND WIN32)
       # config var ABIFLAGS does not exist for version < 3.14, check GIL specific variable
       execute_process (COMMAND ${_${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c
-                               "import sys\nimport sysconfig\ntry:\n   sys.stdout.write(sysconfig.get_config_var('ABIFLAGS'))\nexcept Exception:\n   sys.stdout.write('t' if sysconfig.get_config_var('Py_GIL_DISABLED') == 1 else '<none>')"
+                               [==[
+import sys
+import sysconfig
+try:
+    sys.stdout.write(sysconfig.get_config_var('ABIFLAGS'))
+except Exception:
+    sys.stdout.write('t' if sysconfig.get_config_var('Py_GIL_DISABLED') == 1 else '<none>')
+]==]
                      RESULT_VARIABLE _result
                      OUTPUT_VARIABLE _values
                      ERROR_QUIET
@@ -692,7 +768,15 @@ function (_PYTHON_GET_CONFIG_VAR _PYTHON_PGCV_VALUE NAME)
         set (config_flag "LIBPL")
       endif()
       execute_process (COMMAND ${_${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c
-                               "import sys\ntry:\n   import sysconfig\n   sys.stdout.write(sysconfig.get_config_var('${config_flag}'))\nexcept Exception:\n   from distutils import sysconfig\n   sys.stdout.write(sysconfig.get_config_var('${config_flag}'))"
+                               [=[
+import sys
+try:
+    import sysconfig
+    sys.stdout.write(sysconfig.get_config_var(sys.argv[1]))
+except Exception:
+    from distutils import sysconfig
+    sys.stdout.write(sysconfig.get_config_var(sys.argv[1]))
+]=] "${config_flag}"
                        RESULT_VARIABLE _result
                        OUTPUT_VARIABLE _values
                        ERROR_QUIET
@@ -700,10 +784,11 @@ function (_PYTHON_GET_CONFIG_VAR _PYTHON_PGCV_VALUE NAME)
       if (_result)
         unset (_values)
       endif()
-      if (NAME STREQUAL "ABIFLAGS" AND NOT _values)
-        set (_values "<none>")
-      endif()
     endif()
+  endif()
+
+  if (NAME STREQUAL "ABIFLAGS" AND NOT _values)
+    set (_values "<none>")
   endif()
 
   if (NAME STREQUAL "ABIFLAGS" OR NAME STREQUAL "SOABI" OR NAME STREQUAL "SOSABI" OR NAME STREQUAL "POSTFIX")
@@ -1061,7 +1146,7 @@ function (_PYTHON_VALIDATE_INTERPRETER)
       AND (_${_PYTHON_PREFIX}_CROSSCOMPILING OR NOT CMAKE_CROSSCOMPILING))
     # In this case, interpreter must have same architecture as environment
     execute_process (COMMAND ${_${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c
-                             "import sys, struct; sys.stdout.write(str(struct.calcsize(\"P\")))"
+                             "import sys, struct; sys.stdout.write(str(struct.calcsize('P')))"
                      RESULT_VARIABLE result
                      OUTPUT_VARIABLE size
                      ERROR_QUIET
@@ -1082,7 +1167,7 @@ function (_PYTHON_VALIDATE_INTERPRETER)
 
     if (WIN32)
       # In this case, check if the interpreter is compatible with the target processor architecture
-      if (NOT CMAKE_GENERATOR_PLATFORM AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM" OR CMAKE_GENERATOR_PLATFORM MATCHES "ARM")
+      if (_$_PYTHON_PREFIX}_ARCHITECTURE_ID MATCHES "ARM")
         set(target_arm TRUE)
       else()
         set(target_arm FALSE)
@@ -1139,7 +1224,11 @@ function (_PYTHON_VALIDATE_COMPILER)
 
   # retrieve python environment version from compiler
   set (working_dir "${CMAKE_CURRENT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/PythonCompilerVersion.dir")
-  file (WRITE "${working_dir}/version.py" "import sys; sys.stdout.write('.'.join([str(x) for x in sys.version_info[:3]])); sys.stdout.flush()\n")
+  file (WRITE "${working_dir}/version.py" [==[
+import sys
+sys.stdout.write('.'.join([str(x) for x in sys.version_info[:3]]))
+sys.stdout.flush()
+]==])
   execute_process (COMMAND ${launcher} "${_${_PYTHON_PREFIX}_COMPILER}"
                            ${_${_PYTHON_PREFIX}_IRON_PYTHON_COMPILER_ARCH_FLAGS}
                            /target:exe /embed /standalone "${working_dir}/version.py"
@@ -1590,17 +1679,20 @@ else()
       message (AUTHOR_WARNING "Find${_PYTHON_PREFIX}: ${${_PYTHON_PREFIX}_FIND_ABI}: invalid value for '${_PYTHON_PREFIX}_FIND_ABI'. Ignore it")
       unset (_${_PYTHON_PREFIX}_FIND_ABI)
     endif()
-    _python_get_abiflags ("${${_PYTHON_PREFIX}_FIND_ABI}" _${_PYTHON_PREFIX}_ABIFLAGS)
-  else()
+  endif()
+  if (NOT DEFINED _${_PYTHON_PREFIX}_FIND_ABI)
+    # set defaults
     if (WIN32)
-      _python_get_abiflags ("OFF;OFF;OFF;OFF" _${_PYTHON_PREFIX}_ABIFLAGS)
+      set (_${_PYTHON_PREFIX}_FIND_ABI "OFF;OFF;OFF;OFF")
     else()
-      _python_get_abiflags ("ANY;ANY;ANY;OFF" _${_PYTHON_PREFIX}_ABIFLAGS)
+      set (_${_PYTHON_PREFIX}_FIND_ABI "ANY;ANY;ANY;OFF")
     endif()
   endif()
+  _python_get_abiflags ("${_${_PYTHON_PREFIX}_FIND_ABI}" _${_PYTHON_PREFIX}_ABIFLAGS)
 endif()
 unset (${_PYTHON_PREFIX}_SOABI)
 unset (${_PYTHON_PREFIX}_SOSABI)
+unset (${_PYTHON_PREFIX}_FREE_THREADED)
 
 # Windows CPython implementation may be requiring a postfix in debug mode
 unset (${_PYTHON_PREFIX}_DEBUG_POSTFIX)
@@ -1621,6 +1713,35 @@ if (DEFINED ${_PYTHON_PREFIX}_FIND_STRATEGY)
   endif()
 endif()
 
+# Define what is the current architecture
+unset(_${_PYTHON_PREFIX}_ARCHITECTURE_ID)
+block (SCOPE_FOR VARIABLES PROPAGATE _${_PYTHON_PREFIX}_ARCHITECTURE_ID)
+  while(TRUE)
+    ## First, try to use the variables CMAKE_<LANG>_COMPILER_ARCHITECTURE_ID which is
+    ## the most reliable way, especially on Windows, to get the current architecture
+    get_property(languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+    foreach (lang IN LISTS languages)
+      if (CMAKE_${lang}_COMPILER_ARCHITECTURE_ID)
+        list(GET CMAKE_${lang}_COMPILER_ARCHITECTURE_ID 0 _${_PYTHON_PREFIX}_ARCHITECTURE_ID)
+        break()
+      endif()
+    endforeach()
+    if (_${_PYTHON_PREFIX}_ARCHITECTURE_ID)
+      break()
+    endif()
+    ## Second, try to use the CMAKE_VS_PLATFORM_NAME for Visual Studio generators
+    if (CMAKE_GENERATOR MATCHES "Visual Studio")
+      set (_${_PYTHON_PREFIX}_ARCHITECTURE_ID "${CMAKE_VS_PLATFORM_NAME}")
+      if (_${_PYTHON_PREFIX}_ARCHITECTURE_ID)
+        break()
+      endif()
+    endif()
+    ## Finally, use the CMAKE_SYSTEM_PROCESSOR variable
+    set (_${_PYTHON_PREFIX}_ARCHITECTURE_ID "${CMAKE_SYSTEM_PROCESSOR}")
+    break()
+  endwhile()
+endblock()
+
 # Python and Anaconda distributions: define which architectures can be used
 unset (_${_PYTHON_PREFIX}_REGISTRY_VIEW)
 if (CMAKE_SIZEOF_VOID_P)
@@ -1630,8 +1751,7 @@ if (CMAKE_SIZEOF_VOID_P)
       OR "Development.Embed" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS)
     # In this case, search only for 64bit or 32bit
     set (_${_PYTHON_PREFIX}_REGISTRY_VIEW REGISTRY_VIEW ${_${_PYTHON_PREFIX}_ARCH})
-    if (WIN32 AND (NOT CMAKE_GENERATOR_PLATFORM AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM"
-                   OR CMAKE_GENERATOR_PLATFORM MATCHES "ARM"))
+    if (WIN32 AND _${_PYTHON_PREFIX}_ARCHITECTURE_ID MATCHES "ARM")
       # search exclusively ARM architecture: 64bit or 32bit
       if (_${_PYTHON_PREFIX}_ARCH EQUAL 64)
         set (_${_PYTHON_PREFIX}_ARCH ARM64)
@@ -1641,13 +1761,13 @@ if (CMAKE_SIZEOF_VOID_P)
     endif()
   else()
     if (_${_PYTHON_PREFIX}_ARCH EQUAL "32")
-      if (CMAKE_SYSTEM_PROCESSOR MATCHES "ARM")
+      if (_${_PYTHON_PREFIX}_ARCHITECTURE_ID MATCHES "ARM")
         # search first ARM architectures: 32bit and then 64bit
         list (PREPEND _${_PYTHON_PREFIX}_ARCH ARM ARM64)
       endif()
       list (APPEND _${_PYTHON_PREFIX}_ARCH 64)
     else()
-      if (CMAKE_SYSTEM_PROCESSOR MATCHES "ARM")
+      if (_${_PYTHON_PREFIX}_ARCHITECTURE_ID MATCHES "ARM")
         # search first ARM architectures: 64bit and then 32bit
         list (PREPEND _${_PYTHON_PREFIX}_ARCH ARM64 ARM)
       endif()
@@ -1657,7 +1777,7 @@ if (CMAKE_SIZEOF_VOID_P)
 else()
   # architecture unknown, search for both 64bit and 32bit
   set (_${_PYTHON_PREFIX}_ARCH 64 32)
-  if (CMAKE_SYSTEM_PROCESSOR MATCHES "ARM")
+  if (_${_PYTHON_PREFIX}_ARCHITECTURE_ID MATCHES "ARM")
     list (PREPEND _${_PYTHON_PREFIX}_ARCH ARM64 ARM)
   endif()
 endif()
@@ -2394,11 +2514,32 @@ if ("Interpreter" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS)
 
         # retrieve various package installation directories
         execute_process (COMMAND ${_${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c
-                                 "import sys\nif sys.version_info >= (3,10):\n   import sysconfig\n   sys.stdout.write(';'.join([sysconfig.get_path('stdlib'),sysconfig.get_path('platstdlib'),sysconfig.get_path('purelib'),sysconfig.get_path('platlib')]))\nelse:\n   from distutils import sysconfig\n   sys.stdout.write(';'.join([sysconfig.get_python_lib(plat_specific=False,standard_lib=True),sysconfig.get_python_lib(plat_specific=True,standard_lib=True),sysconfig.get_python_lib(plat_specific=False,standard_lib=False),sysconfig.get_python_lib(plat_specific=True,standard_lib=False)]))"
+                                 [==[
+import sys
+if sys.version_info >= (3, 10):
+    import sysconfig
+    sys.stdout.write(';'.join([
+        sysconfig.get_path('stdlib'),
+        sysconfig.get_path('platstdlib'),
+        sysconfig.get_path('purelib'),
+        sysconfig.get_path('platlib'),
+    ]))
+else:
+    from distutils import sysconfig
+    sys.stdout.write(';'.join([
+        sysconfig.get_python_lib(plat_specific=False, standard_lib=True),
+        sysconfig.get_python_lib(plat_specific=True, standard_lib=True),
+        sysconfig.get_python_lib(plat_specific=False, standard_lib=False),
+        sysconfig.get_python_lib(plat_specific=True, standard_lib=False),
+    ]))
+]==]
                          RESULT_VARIABLE _${_PYTHON_PREFIX}_RESULT
                          OUTPUT_VARIABLE _${_PYTHON_PREFIX}_LIBPATHS
                          ERROR_QUIET)
         if (NOT _${_PYTHON_PREFIX}_RESULT)
+          if (WIN32)
+            cmake_path (CONVERT "${_${_PYTHON_PREFIX}_LIBPATHS}" TO_CMAKE_PATH_LIST _${_PYTHON_PREFIX}_LIBPATHS)
+          endif()
           list (GET _${_PYTHON_PREFIX}_LIBPATHS 0 ${_PYTHON_PREFIX}_STDLIB)
           list (GET _${_PYTHON_PREFIX}_LIBPATHS 1 ${_PYTHON_PREFIX}_STDARCH)
           list (GET _${_PYTHON_PREFIX}_LIBPATHS 2 ${_PYTHON_PREFIX}_SITELIB)
@@ -2408,6 +2549,13 @@ if ("Interpreter" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS)
           unset (${_PYTHON_PREFIX}_STDARCH)
           unset (${_PYTHON_PREFIX}_SITELIB)
           unset (${_PYTHON_PREFIX}_SITEARCH)
+        endif()
+
+        # Identify if the python interpreter is free threaded or not
+        if (_${_PYTHON_PREFIX}_ABIFLAGS MATCHES "t")
+          set (${_PYTHON_PREFIX}_FREE_THREADED ON)
+        else()
+          set (${_PYTHON_PREFIX}_FREE_THREADED OFF)
         endif()
 
         _python_get_config_var (${_PYTHON_PREFIX}_SOABI SOABI)
@@ -2740,7 +2888,11 @@ if ("Compiler" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS)
     # retrieve python environment version from compiler
     _python_get_launcher (_${_PYTHON_PREFIX}_COMPILER_LAUNCHER COMPILER)
     set (_${_PYTHON_PREFIX}_VERSION_DIR "${CMAKE_CURRENT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/PythonCompilerVersion.dir")
-    file (WRITE "${_${_PYTHON_PREFIX}_VERSION_DIR}/version.py" "import sys; sys.stdout.write('.'.join([str(x) for x in sys.version_info[:3]])); sys.stdout.flush()\n")
+    file (WRITE "${_${_PYTHON_PREFIX}_VERSION_DIR}/version.py" [==[
+import sys
+sys.stdout.write('.'.join([str(x) for x in sys.version_info[:3]]))
+sys.stdout.flush()
+]==])
     execute_process (COMMAND ${_${_PYTHON_PREFIX}_COMPILER_LAUNCHER} "${_${_PYTHON_PREFIX}_COMPILER}"
                              ${_${_PYTHON_PREFIX}_IRON_PYTHON_COMPILER_ARCH_FLAGS}
                              /target:exe /embed /standalone "${_${_PYTHON_PREFIX}_VERSION_DIR}/version.py"
@@ -3004,7 +3156,7 @@ if (("Development.Module" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS
                            OUTPUT_VARIABLE __${_PYTHON_PREFIX}_ABIFLAGS
                            ERROR_QUIET
                            OUTPUT_STRIP_TRAILING_WHITESPACE)
-          if (_${_PYTHON_PREFIX}_RESULT OR NOT __${_PYTHON_PREFIX}_ABIFLAGS )
+          if (_${_PYTHON_PREFIX}_RESULT OR NOT __${_PYTHON_PREFIX}_ABIFLAGS)
             # assume ABI is not supported or not used
             set (__${_PYTHON_PREFIX}_ABIFLAGS "<none>")
           endif()
@@ -3131,7 +3283,7 @@ if (("Development.Module" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS
                            OUTPUT_VARIABLE __${_PYTHON_PREFIX}_ABIFLAGS
                            ERROR_QUIET
                            OUTPUT_STRIP_TRAILING_WHITESPACE)
-          if (_${_PYTHON_PREFIX}_RESULT)
+          if (_${_PYTHON_PREFIX}_RESULT OR NOT __${_PYTHON_PREFIX}_ABIFLAGS)
             # assume ABI is not supported
             set (__${_PYTHON_PREFIX}_ABIFLAGS "<none>")
           endif()
@@ -3367,6 +3519,14 @@ if (("Development.Module" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS
         set (_${_PYTHON_PREFIX}_VERSION_MAJOR ${${_PYTHON_PREFIX}_VERSION_MAJOR})
         set (_${_PYTHON_PREFIX}_VERSION_MINOR ${${_PYTHON_PREFIX}_VERSION_MINOR})
         set (_${_PYTHON_PREFIX}_VERSION_PATCH ${${_PYTHON_PREFIX}_VERSION_PATCH})
+      endif()
+    endif()
+
+    if (_${_PYTHON_PREFIX}_LIBRARY_RELEASE AND NOT DEFINED ${_PYTHON_PREFIX}_FREE_THREADED)
+      if (_${_PYTHON_PREFIX}_ABI MATCHES "t")
+        set (${_PYTHON_PREFIX}_FREE_THREADED ON)
+      else()
+        set (${_PYTHON_PREFIX}_FREE_THREADED OFF)
       endif()
     endif()
 
@@ -3633,6 +3793,14 @@ if (("Development.Module" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS
       _python_get_version (SABI_LIBRARY PREFIX _${_PYTHON_PREFIX}_)
     endif()
 
+    if (_${_PYTHON_PREFIX}_SABI_LIBRARY_RELEASE AND NOT DEFINED ${_PYTHON_PREFIX}_FREE_THREADED)
+      if (_${_PYTHON_PREFIX}_ABI MATCHES "t")
+        set (${_PYTHON_PREFIX}_FREE_THREADED ON)
+      else()
+        set (${_PYTHON_PREFIX}_FREE_THREADED OFF)
+      endif()
+    endif()
+
     set (${_PYTHON_PREFIX}_SABI_LIBRARY_RELEASE "${_${_PYTHON_PREFIX}_SABI_LIBRARY_RELEASE}")
 
     if (_${_PYTHON_PREFIX}_SABI_LIBRARY_RELEASE AND NOT EXISTS "${_${_PYTHON_PREFIX}_SABI_LIBRARY_RELEASE}")
@@ -3849,6 +4017,14 @@ if (("Development.Module" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS
         set (_${_PYTHON_PREFIX}_VERSION_MINOR ${_${_PYTHON_PREFIX}_INC_VERSION_MINOR})
         set (_${_PYTHON_PREFIX}_VERSION_PATCH ${_${_PYTHON_PREFIX}_INC_VERSION_PATCH})
       endif()
+
+      if (NOT DEFINED ${_PYTHON_PREFIX}_FREE_THREADED)
+        if (_${_PYTHON_PREFIX}_INC_ABI MATCHES "t")
+          set (${_PYTHON_PREFIX}_FREE_THREADED ON)
+        else()
+          set (${_PYTHON_PREFIX}_FREE_THREADED OFF)
+        endif()
+      endif()
     endif()
   endif()
 
@@ -3888,14 +4064,6 @@ if (("Development.Module" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS
                                 _${_PYTHON_PREFIX}_RUNTIME_LIBRARY_RELEASE
                                 _${_PYTHON_PREFIX}_RUNTIME_LIBRARY_DEBUG)
     endif()
-
-    if (WIN32 AND _${_PYTHON_PREFIX}_LIBRARY_RELEASE MATCHES "t${CMAKE_IMPORT_LIBRARY_SUFFIX}$")
-      # On windows, header file is shared between the different implementations
-      # So Py_GIL_DISABLED should be set explicitly
-      set (${_PYTHON_PREFIX}_DEFINITIONS Py_GIL_DISABLED=1)
-    else()
-      unset (${_PYTHON_PREFIX}_DEFINITIONS)
-    endif()
   endif()
 
   if ("SABI_LIBRARY" IN_LIST _${_PYTHON_PREFIX}_FIND_DEVELOPMENT_ARTIFACTS)
@@ -3925,14 +4093,14 @@ if (("Development.Module" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS
                                 _${_PYTHON_PREFIX}_RUNTIME_SABI_LIBRARY_RELEASE
                                 _${_PYTHON_PREFIX}_RUNTIME_SABI_LIBRARY_DEBUG)
     endif()
+  endif()
 
-    if (WIN32 AND _${_PYTHON_PREFIX}_SABI_LIBRARY_RELEASE MATCHES "t${CMAKE_IMPORT_LIBRARY_SUFFIX}$")
-      # On windows, header file is shared between the different implementations
-      # So Py_GIL_DISABLED should be set explicitly
-      set (${_PYTHON_PREFIX}_DEFINITIONS Py_GIL_DISABLED=1)
-    else()
-      unset (${_PYTHON_PREFIX}_DEFINITIONS)
-    endif()
+  if (WIN32 AND ${_PYTHON_PREFIX}_FREE_THREADED)
+    # On windows, header file is shared between the different implementations
+    # So Py_GIL_DISABLED should be set explicitly
+    set (${_PYTHON_PREFIX}_DEFINITIONS Py_GIL_DISABLED=1)
+  else()
+    unset (${_PYTHON_PREFIX}_DEFINITIONS)
   endif()
 
   if (_${_PYTHON_PREFIX}_LIBRARY_RELEASE OR _${_PYTHON_PREFIX}_SABI_LIBRARY_RELEASE OR _${_PYTHON_PREFIX}_INCLUDE_DIR)
@@ -3951,13 +4119,20 @@ if (("Development.Module" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS
       _python_set_development_module_found (Embed)
     endif()
     if (DEFINED _${_PYTHON_PREFIX}_FIND_ABI)
-      if ((_${_PYTHON_PREFIX}_LIBRARY_RELEASE OR _${_PYTHON_PREFIX}_SABI_LIBRARY_RELEASE)
+      if (((("LIBRARY" IN_LIST _${_PYTHON_PREFIX}_FIND_DEVELOPMENT_MODULE_ARTIFACTS
+              OR "LIBRARY" IN_LIST _${_PYTHON_PREFIX}_FIND_DEVELOPMENT_EMBED_ARTIFACTS)
+            AND _${_PYTHON_PREFIX}_LIBRARY_RELEASE)
+          OR ("SABI_LIBRARY" IN_LIST _${_PYTHON_PREFIX}_FIND_DEVELOPMENT_SABIMODULE_ARTIFACTS
+            AND _${_PYTHON_PREFIX}_SABI_LIBRARY_RELEASE))
           AND NOT _${_PYTHON_PREFIX}_ABI IN_LIST _${_PYTHON_PREFIX}_ABIFLAGS)
         set (${_PYTHON_PREFIX}_Development.Module_FOUND FALSE)
         set (${_PYTHON_PREFIX}_Development.SABIModule_FOUND FALSE)
         set (${_PYTHON_PREFIX}_Development.Embed_FOUND FALSE)
       endif()
-      if (_${_PYTHON_PREFIX}_INCLUDE_DIR AND
+      if ((("INCLUDE_DIR" IN_LIST _${_PYTHON_PREFIX}_FIND_DEVELOPMENT_MODULE_ARTIFACTS
+              OR "INCLUDE_DIR" IN_LIST _${_PYTHON_PREFIX}_FIND_DEVELOPMENT_SABIMODULE_ARTIFACTS
+              OR "INCLUDE_DIR" IN_LIST _${_PYTHON_PREFIX}_FIND_DEVELOPMENT_EMBED_ARTIFACTS)
+            AND _${_PYTHON_PREFIX}_INCLUDE_DIR) AND
           NOT WIN32 AND NOT _${_PYTHON_PREFIX}_INC_ABI IN_LIST _${_PYTHON_PREFIX}_ABIFLAGS)
         set (${_PYTHON_PREFIX}_Development.Module_FOUND FALSE)
         set (${_PYTHON_PREFIX}_Development.SABIModule_FOUND FALSE)
@@ -4077,18 +4252,25 @@ if ("NumPy" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS AND ${_PYTHON_PREFIX}_Interp
     endif()
   endif()
 
-  # Workaround Intel MKL library outputting a message in stdout, which cause
-  # incorrect detection of numpy.get_include() and numpy.__version__
-  # See https://github.com/numpy/numpy/issues/23775 and
-  # https://gitlab.kitware.com/cmake/cmake/-/issues/26240
-  if(NOT DEFINED ENV{MKL_ENABLE_INSTRUCTIONS})
-    set(_${_PYTHON_PREFIX}_UNSET_ENV_VAR_MKL_ENABLE_INSTRUCTIONS YES)
-    set(ENV{MKL_ENABLE_INSTRUCTIONS} "SSE4_2")
+  # Work around Intel MKL message to stdout on macOS:
+  #   https://github.com/numpy/numpy/issues/23775
+  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    if(NOT DEFINED ENV{MKL_ENABLE_INSTRUCTIONS})
+      set(_${_PYTHON_PREFIX}_UNSET_ENV_VAR_MKL_ENABLE_INSTRUCTIONS YES)
+      set(ENV{MKL_ENABLE_INSTRUCTIONS} "SSE4_2")
+    endif()
   endif()
 
   if (NOT _${_PYTHON_PREFIX}_NumPy_INCLUDE_DIR)
     execute_process(COMMAND ${${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c
-                            "import sys\ntry: import numpy; sys.stdout.write(numpy.get_include())\nexcept:pass\n"
+                            [==[
+import sys
+try:
+    import numpy
+    sys.stdout.write(numpy.get_include())
+except Exception:
+    pass
+]==]
                     RESULT_VARIABLE _${_PYTHON_PREFIX}_RESULT
                     OUTPUT_VARIABLE _${_PYTHON_PREFIX}_NumPy_PATH
                     ERROR_QUIET
@@ -4111,7 +4293,14 @@ if ("NumPy" IN_LIST ${_PYTHON_BASE}_FIND_COMPONENTS AND ${_PYTHON_PREFIX}_Interp
 
   if (_${_PYTHON_PREFIX}_NumPy_INCLUDE_DIR)
     execute_process (COMMAND ${${_PYTHON_PREFIX}_INTERPRETER_LAUNCHER} "${_${_PYTHON_PREFIX}_EXECUTABLE}" -c
-                             "import sys\ntry: import numpy; sys.stdout.write(numpy.__version__)\nexcept:pass\n"
+                             [==[
+import sys
+try:
+    import numpy
+    sys.stdout.write(numpy.__version__)
+except Exception:
+    pass
+]==]
                      RESULT_VARIABLE _${_PYTHON_PREFIX}_RESULT
                      OUTPUT_VARIABLE _${_PYTHON_PREFIX}_NumPy_VERSION)
     if (NOT _${_PYTHON_PREFIX}_RESULT)
@@ -4442,7 +4631,12 @@ if(_${_PYTHON_PREFIX}_CMAKE_ROLE STREQUAL "PROJECT")
 
       if (type STREQUAL "MODULE_LIBRARY")
         if (PYTHON_ADD_LIBRARY_USE_SABI)
-          target_compile_definitions (${name} PRIVATE Py_LIMITED_API=${Py_LIMITED_API})
+          if (${prefix}_FREE_THREADED AND
+              "${major_version}.${minor_version}" VERSION_GREATER_EQUAL "3.15")
+            target_compile_definitions (${name} PRIVATE Py_TARGET_ABI3T=${Py_LIMITED_API})
+          else()
+            target_compile_definitions (${name} PRIVATE Py_LIMITED_API=${Py_LIMITED_API})
+          endif()
           target_link_libraries (${name} PRIVATE ${prefix}::SABIModule)
         else()
           target_link_libraries (${name} PRIVATE ${prefix}::Module)

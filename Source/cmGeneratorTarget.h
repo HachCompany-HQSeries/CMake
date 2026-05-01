@@ -27,6 +27,7 @@
 #include "cmSourceFile.h"
 #include "cmStandardLevel.h"
 #include "cmStateTypes.h"
+#include "cmTargetPropertyEntry.h"
 #include "cmValue.h"
 
 namespace cm {
@@ -36,12 +37,11 @@ struct Evaluation;
 }
 }
 
-class cmake;
 enum class cmBuildStep;
-class cmCompiledGeneratorExpression;
 class cmComputeLinkInformation;
 class cmCustomCommand;
-class cmFileSet;
+class cmGeneratorFileSets;
+class cmGeneratorFileSet;
 class cmGlobalGenerator;
 class cmLocalGenerator;
 class cmMakefile;
@@ -53,6 +53,8 @@ struct cmGeneratorExpressionDAGChecker;
 class cmGeneratorTarget
 {
 public:
+  using TargetPropertyEntry = cm::TargetPropertyEntry;
+
   cmGeneratorTarget(cmTarget*, cmLocalGenerator* lg);
   ~cmGeneratorTarget();
 
@@ -143,6 +145,7 @@ public:
     SourceKindCustomCommand,
     SourceKindExternalObject,
     SourceKindCxxModuleSource,
+    SourceKindRustMainCrateRoot,
     SourceKindExtra,
     SourceKindHeader,
     SourceKindIDL,
@@ -221,6 +224,9 @@ public:
                          std::string const& config) const;
   void GetManifests(std::vector<cmSourceFile const*>&,
                     std::string const& config) const;
+
+  void GetRustMainCrateRoot(std::vector<cmSourceFile const*>&,
+                            std::string const& config) const;
 
   std::set<cmLinkItem> const& GetUtilityItems() const;
 
@@ -311,9 +317,16 @@ public:
       its object file directory for the build.  */
   void GetTargetObjectNames(std::string const& config,
                             std::vector<std::string>& objects) const;
+  void GetTargetObjectNames(std::string const& config,
+                            std::function<bool(cmSourceFile const&)> filter,
+                            std::vector<std::string>& objects) const;
   /** Get the build and install locations of objects for a given context. */
   void GetTargetObjectLocations(
     std::string const& config,
+    std::function<void(cmObjectLocation const&, cmObjectLocation const&)> cb)
+    const;
+  void GetTargetObjectLocations(
+    std::string const& config, std::function<bool(cmSourceFile const&)> filter,
     std::function<void(cmObjectLocation const&, cmObjectLocation const&)> cb)
     const;
 
@@ -613,6 +626,10 @@ public:
 
   void AddISPCTargetFlags(std::string& flags) const;
 
+  void AddRustTargetFlags(std::string& flags) const;
+
+  void AddSwiftTargetFlags(std::string& flags) const;
+
   std::string GetFeatureSpecificLinkRuleVariable(
     std::string const& var, std::string const& lang,
     std::string const& config) const;
@@ -622,6 +639,9 @@ public:
                                     std::string const& config) const;
 
   std::string GetClangTidyExportFixesDirectory(std::string const& lang) const;
+
+  /** Return the Swift package name for this target. */
+  std::string GetSwiftPackageName() const;
 
   /** Return the swift module name for this target. */
   std::string GetSwiftModuleName() const;
@@ -1014,8 +1034,6 @@ public:
                             std::string const& report,
                             std::string const& compatibilityType) const;
 
-  class TargetPropertyEntry;
-
   std::string EvaluateInterfaceProperty(
     std::string const& prop, cm::GenEx::Evaluation* eval,
     cmGeneratorExpressionDAGChecker* dagCheckerParent, UseTo usage) const;
@@ -1102,23 +1120,38 @@ public:
   std::vector<std::string> GetGeneratedISPCHeaders(
     std::string const& config) const;
 
-  void AddISPCGeneratedObject(std::vector<std::string>&& objs,
-                              std::string const& config);
-  std::vector<std::string> GetGeneratedISPCObjects(
-    std::string const& config) const;
+  void AddISPCGeneratedObject(
+    std::vector<std::pair<cmSourceFile const*, std::string>>&& objs,
+    std::string const& config);
+  std::vector<std::pair<cmSourceFile const*, std::string>>
+  GetGeneratedISPCObjects(std::string const& config) const;
 
   void AddSystemIncludeDirectory(std::string const& inc,
                                  std::string const& lang);
   bool AddHeaderSetVerification();
-  std::string GenerateHeaderSetVerificationFile(
+  cm::optional<std::string> GenerateHeaderSetVerificationFile(
     cmSourceFile& source, std::string const& dir,
-    cm::optional<std::set<std::string>>& languages) const;
+    std::string const& verifyTargetName,
+    cm::optional<cm::optional<std::string>>& defaultLanguage) const;
+
+  cm::optional<std::string> ResolveHeaderLanguage(
+    cmSourceFile& source,
+    cm::optional<cm::optional<std::string>>& defaultLanguage) const;
+
+  cm::optional<std::string> GenerateStubForLanguage(
+    std::string const& language, std::string const& headerFilename,
+    std::string const& verifyTargetName, cmSourceFile& source) const;
 
   std::string GetImportedXcFrameworkPath(std::string const& config) const;
 
   bool ApplyCXXStdTargets();
-  bool DiscoverSyntheticTargets(cmSyntheticTargetCache& cache,
-                                std::string const& config);
+  bool DiscoverSyntheticTargets(
+    cmSyntheticTargetCache& cache, std::string const& config,
+    cmGeneratorTarget const* bmiConsumer = nullptr);
+
+  using SyntheticDepsMap =
+    std::map<cmGeneratorTarget const*, std::vector<cmGeneratorTarget const*>>;
+  SyntheticDepsMap const& GetSyntheticDeps(std::string const& config) const;
 
   class CustomTransitiveProperty : public TransitiveProperty
   {
@@ -1325,6 +1358,9 @@ private:
   mutable std::vector<AllConfigSource> AllConfigSources;
   void ComputeAllConfigSources() const;
 
+  mutable std::set<std::string> AllConfigCompileLanguages;
+  void ComputeAllConfigCompileLanguages() const;
+
   mutable std::unordered_map<std::string, bool> MaybeInterfacePropertyExists;
   bool MaybeHaveInterfaceProperty(std::string const& prop,
                                   cm::GenEx::Evaluation* eval,
@@ -1353,7 +1389,8 @@ private:
 
   std::unordered_map<std::string, std::vector<std::string>>
     ISPCGeneratedHeaders;
-  std::unordered_map<std::string, std::vector<std::string>>
+  std::unordered_map<std::string,
+                     std::vector<std::pair<cmSourceFile const*, std::string>>>
     ISPCGeneratedObjects;
 
   enum class LinkInterfaceField
@@ -1490,6 +1527,22 @@ public:
   bool HaveFortranSources() const;
   bool HaveFortranSources(std::string const& config) const;
 
+  // File sets support queries
+
+  bool HasFileSets() const;
+  cmGeneratorFileSets const* GetGeneratorFileSets() const
+  {
+    return this->FileSets.get();
+  }
+  std::vector<cmGeneratorFileSet const*> const& GetAllFileSets() const;
+  std::vector<cmGeneratorFileSet const*> const& GetFileSets(
+    cm::string_view type) const;
+  std::vector<cmGeneratorFileSet const*> const& GetInterfaceFileSets(
+    cm::string_view type) const;
+  cmGeneratorFileSet const* GetFileSet(std::string const& name) const;
+  cmGeneratorFileSet const* GetFileSetForSource(std::string const& config,
+                                                cmSourceFile const* sf) const;
+
   // C++20 module support queries.
 
   /**
@@ -1497,11 +1550,9 @@ public:
    *
    * This will inspect the target itself to see if C++20 module
    * support is expected to work based on its sources.
-   *
-   * If `errorMessage` is given a non-`nullptr`, any error message will be
-   * stored in it, otherwise the error will be reported directly.
    */
-  bool HaveCxx20ModuleSources(std::string* errorMessage = nullptr) const;
+  bool HaveInterfaceCxx20ModuleSources() const;
+  bool HaveCxx20ModuleSources() const;
 
   enum class Cxx20SupportLevel
   {
@@ -1514,6 +1565,7 @@ public:
     // C++20 modules are available and working.
     Supported,
   };
+
   /**
    * Query whether the target has C++20 module support available (regardless of
    * whether it is required or not).
@@ -1526,8 +1578,6 @@ public:
   bool NeedCxxModuleSupport(std::string const& lang,
                             std::string const& config) const;
   bool NeedDyndep(std::string const& lang, std::string const& config) const;
-  cmFileSet const* GetFileSetForSource(std::string const& config,
-                                       cmSourceFile const* sf) const;
   bool NeedDyndepForSource(std::string const& lang, std::string const& config,
                            cmSourceFile const* sf) const;
   enum class CxxModuleSupport
@@ -1553,45 +1603,15 @@ public:
   static MsvcCharSet GetMsvcCharSet(std::string const& singleDefine);
 
 private:
-  void BuildFileSetInfoCache(std::string const& config) const;
   struct InfoByConfig
   {
-    bool BuiltFileSetCache = false;
-    std::map<std::string, cmFileSet const*> FileSetCache;
     std::map<cmGeneratorTarget const*, std::vector<cmGeneratorTarget const*>>
       SyntheticDeps;
     std::map<cmSourceFile const*, ClassifiedFlags> SourceFlags;
   };
   mutable std::map<std::string, InfoByConfig> Configs;
+  std::unique_ptr<cmGeneratorFileSets> FileSets;
   bool PchReused = false;
   mutable bool ComputingPchReuse = false;
   mutable bool PchReuseCycleDetected = false;
-};
-
-class cmGeneratorTarget::TargetPropertyEntry
-{
-protected:
-  static cmLinkItem NoLinkItem;
-
-public:
-  TargetPropertyEntry(cmLinkItem const& item);
-  virtual ~TargetPropertyEntry() = default;
-
-  static std::unique_ptr<TargetPropertyEntry> Create(
-    cmake& cmakeInstance, const BT<std::string>& propertyValue,
-    bool evaluateForBuildsystem = false);
-  static std::unique_ptr<TargetPropertyEntry> CreateFileSet(
-    std::vector<std::string> dirs, bool contextSensitiveDirs,
-    std::unique_ptr<cmCompiledGeneratorExpression> entryCge,
-    cmFileSet const* fileSet, cmLinkItem const& item = NoLinkItem);
-
-  virtual std::string const& Evaluate(
-    cm::GenEx::Context const& context, cmGeneratorTarget const* headTarget,
-    cmGeneratorExpressionDAGChecker* dagChecker) const = 0;
-
-  virtual cmListFileBacktrace GetBacktrace() const = 0;
-  virtual std::string const& GetInput() const = 0;
-  virtual bool GetHadContextSensitiveCondition() const;
-
-  cmLinkItem const& LinkItem;
 };

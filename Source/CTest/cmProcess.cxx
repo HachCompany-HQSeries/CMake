@@ -35,19 +35,24 @@ cmProcess::cmProcess(std::unique_ptr<cmCTestRunTest> runner)
 
 cmProcess::~cmProcess() = default;
 
-void cmProcess::SetCommand(std::string const& command)
+void cmProcess::SetCommand(std::string command)
 {
-  this->Command = command;
+  this->Command = std::move(command);
 }
 
-void cmProcess::SetCommandArguments(std::vector<std::string> const& args)
+void cmProcess::SetCommandArguments(std::vector<std::string> args)
 {
-  this->Arguments = args;
+  this->Arguments = std::move(args);
 }
 
-void cmProcess::SetWorkingDirectory(std::string const& dir)
+void cmProcess::SetEnvironment(std::vector<std::string> env)
 {
-  this->WorkingDirectory = dir;
+  this->Environment = std::move(env);
+}
+
+void cmProcess::SetWorkingDirectory(std::string dir)
+{
+  this->WorkingDirectory = std::move(dir);
 }
 
 bool cmProcess::StartProcess(uv_loop_t& loop, std::vector<size_t>* affinity)
@@ -128,6 +133,15 @@ bool cmProcess::StartProcess(uv_loop_t& loop, std::vector<size_t>* affinity)
 #else
   static_cast<void>(affinity);
 #endif
+  if (!this->Environment.empty()) {
+    this->Env.clear();
+    this->Env.reserve(this->Environment.size() + 1);
+    for (auto const& var : this->Environment) {
+      this->Env.push_back(var.c_str());
+    }
+    this->Env.push_back(nullptr);
+    options.env = const_cast<char**>(this->Env.data());
+  }
 
   status =
     uv_read_start(pipe_reader, &cmProcess::OnAllocateCB, &cmProcess::OnReadCB);
@@ -158,9 +172,10 @@ bool cmProcess::StartProcess(uv_loop_t& loop, std::vector<size_t>* affinity)
 
 void cmProcess::StartTimer()
 {
-  if (this->Timeout) {
-    auto msec =
-      std::chrono::duration_cast<std::chrono::milliseconds>(*this->Timeout);
+  if (auto ctimeout = this->GetComputedTimeout()) {
+    this->TimeoutReason_ = ctimeout->Reason;
+    auto msec = std::chrono::duration_cast<std::chrono::milliseconds>(
+      ctimeout->Duration);
     this->Timer.start(&cmProcess::OnTimeoutCB,
                       static_cast<uint64_t>(msec.count()), 0,
                       cm::uv_update_time::no);
@@ -359,7 +374,7 @@ void cmProcess::OnExit(int64_t exit_status, int term_signal)
 void cmProcess::Finish()
 {
   this->TotalTime = std::chrono::steady_clock::now() - this->StartTime;
-  // Because of a processor clock scew the runtime may become slightly
+  // Because of a processor clock skew the runtime may become slightly
   // negative. If someone changed the system clock while the process was
   // running this may be even more. Make sure not to report a negative
   // duration here.
@@ -372,6 +387,24 @@ void cmProcess::Finish()
 cmProcess::State cmProcess::GetProcessStatus()
 {
   return this->ProcessState;
+}
+
+cm::optional<cmProcess::ComputedTimeout> cmProcess::GetComputedTimeout() const
+{
+  if (this->StopTimeout && this->Timeout) {
+    if (*this->StopTimeout < *this->Timeout) {
+      return ComputedTimeout{ TimeoutReason::StopTime, *this->StopTimeout };
+    }
+    return ComputedTimeout{ TimeoutReason::Normal, *this->Timeout };
+  }
+  if (this->StopTimeout) {
+    return ComputedTimeout{ TimeoutReason::StopTime, *this->StopTimeout };
+  }
+  if (this->Timeout) {
+    return ComputedTimeout{ TimeoutReason::Normal, *this->Timeout };
+  }
+
+  return cm::nullopt;
 }
 
 void cmProcess::ChangeTimeout(cmDuration t)

@@ -25,6 +25,7 @@
 
 #include "cmAlgorithms.h"
 #include "cmCustomCommand.h"
+#include "cmDiagnostics.h"
 #include "cmFindPackageStack.h"
 #include "cmFunctionBlocker.h"
 #include "cmListFileCache.h"
@@ -39,6 +40,10 @@
 // IWYU does not see that 'std::unordered_map<std::string, cmTarget>'
 // will not compile without the complete type.
 #include "cmTarget.h" // IWYU pragma: keep
+
+#if !defined(CMAKE_BOOTSTRAP)
+#  include "cmSourceGroup.h"
+#endif
 
 enum class cmCustomCommandType;
 enum class cmObjectLibraryCommands;
@@ -60,9 +65,19 @@ class cmTestGenerator;
 class cmVariableWatch;
 class cmake;
 
-#if !defined(CMAKE_BOOTSTRAP)
-class cmSourceGroup;
-#endif
+namespace cm {
+enum class PolicyScope : bool
+{
+  None,
+  Local,
+};
+
+enum class DiagnosticScope : bool
+{
+  None,
+  Local,
+};
+}
 
 /** A type-safe wrapper for a string representing a directory id.  */
 class cmDirectoryId
@@ -108,8 +123,10 @@ public:
   bool ReadListFileAsString(std::string const& content,
                             std::string const& virtualFileName);
 
-  bool ReadDependentFile(std::string const& filename,
-                         bool noPolicyScope = true);
+  bool ReadDependentFile(
+    std::string const& filename,
+    cm::PolicyScope policyScope = cm::PolicyScope::None,
+    cm::DiagnosticScope DiagnosticScope = cm::DiagnosticScope::None);
 
   /**
    * Add a function blocker to this makefile
@@ -391,6 +408,20 @@ public:
   void RecordPolicies(cmPolicies::PolicyMap& pm) const;
   //@}
 
+  //@{
+  /**
+   * Set, Push, Pop diagnostics for CMake.
+   */
+  bool SetDiagnostic(cmDiagnosticCategory category, cmDiagnosticAction action,
+                     bool recursive = false);
+  bool PromoteDiagnostic(cmDiagnosticCategory category,
+                         cmDiagnosticAction action, bool recursive = false);
+  bool DemoteDiagnostic(cmDiagnosticCategory category,
+                        cmDiagnosticAction action, bool recursive = false);
+  cmDiagnosticAction GetDiagnosticAction(cmDiagnosticCategory category) const;
+  void RecordDiagnostics(cmDiagnostics::DiagnosticMap& dm) const;
+  //@}
+
   /** Update CMAKE_PARENT_LIST_FILE based on CMP0198 policy status.  */
   void UpdateParentListFileVariable();
 
@@ -408,6 +439,21 @@ public:
     cmMakefile* Makefile;
   };
   friend class PolicyPushPop;
+
+  /** Helper class to push and pop diagnostics automatically.  */
+  class DiagnosticPushPop
+  {
+  public:
+    DiagnosticPushPop(cmMakefile* m);
+    ~DiagnosticPushPop();
+
+    DiagnosticPushPop(DiagnosticPushPop const&) = delete;
+    DiagnosticPushPop& operator=(DiagnosticPushPop const&) = delete;
+
+  private:
+    cmMakefile* Makefile;
+  };
+  friend class DiagnosticPushPop;
 
   /** Helper class to push and pop variables scopes automatically. */
   class VariablePushPop
@@ -612,10 +658,16 @@ public:
   bool CanIWriteThisFile(std::string const& fileName) const;
 
 #if !defined(CMAKE_BOOTSTRAP)
+
+  /**
+   * Resolve source group genex.
+   */
+  void ResolveSourceGroupGenex(cmLocalGenerator* lg);
+
   /**
    * Get the vector source groups.
    */
-  std::vector<cmSourceGroup> const& GetSourceGroups() const
+  SourceGroupVector const& GetSourceGroups() const
   {
     return this->SourceGroups;
   }
@@ -648,12 +700,6 @@ public:
    * The name will be tokenized.
    */
   cmSourceGroup* GetOrCreateSourceGroup(std::string const& name);
-
-  /**
-   * find what source group this source is in
-   */
-  cmSourceGroup* FindSourceGroup(std::string const& source,
-                                 std::vector<cmSourceGroup>& groups) const;
 #endif
 
   /**
@@ -854,6 +900,9 @@ public:
   //! Initialize a makefile from its parent
   void InitializeFromParent(cmMakefile* parent);
 
+  bool ExplicitlyGeneratesSbom() const;
+  void SetExplicitlyGeneratesSbom(bool status = true);
+
   void AddInstallGenerator(std::unique_ptr<cmInstallGenerator> g);
 
   std::vector<std::unique_ptr<cmInstallGenerator>>& GetInstallGenerators()
@@ -878,7 +927,8 @@ public:
   {
   public:
     FunctionPushPop(cmMakefile* mf, std::string const& fileName,
-                    cmPolicies::PolicyMap const& pm);
+                    cmPolicies::PolicyMap const& pm,
+                    cmDiagnostics::DiagnosticMap dm);
     ~FunctionPushPop();
 
     FunctionPushPop(FunctionPushPop const&) = delete;
@@ -895,7 +945,8 @@ public:
   {
   public:
     MacroPushPop(cmMakefile* mf, std::string const& fileName,
-                 cmPolicies::PolicyMap const& pm);
+                 cmPolicies::PolicyMap const& pm,
+                 cmDiagnostics::DiagnosticMap dm);
     ~MacroPushPop();
 
     MacroPushPop(MacroPushPop const&) = delete;
@@ -909,10 +960,12 @@ public:
   };
 
   void PushFunctionScope(std::string const& fileName,
-                         cmPolicies::PolicyMap const& pm);
+                         cmPolicies::PolicyMap const& pm,
+                         cmDiagnostics::DiagnosticMap dm);
   void PopFunctionScope(bool reportError);
   void PushMacroScope(std::string const& fileName,
-                      cmPolicies::PolicyMap const& pm);
+                      cmPolicies::PolicyMap const& pm,
+                      cmDiagnostics::DiagnosticMap dm);
   void PopMacroScope(bool reportError);
   void PushScope();
   void PopScope();
@@ -984,7 +1037,20 @@ public:
     cmMakefile* Makefile;
   };
 
-  void IssueMessage(MessageType t, std::string const& text) const;
+  void IssueMessage(MessageType t, std::string const& text) const
+  {
+    this->IssueMessage(t, text, this->Backtrace);
+  }
+  void IssueMessage(MessageType t, std::string const& text,
+                    cmListFileBacktrace const& bt) const;
+
+  void IssueDiagnostic(cmDiagnosticCategory category,
+                       std::string const& text) const
+  {
+    this->IssueDiagnostic(category, text, this->Backtrace);
+  }
+  void IssueDiagnostic(cmDiagnosticCategory category, std::string const& text,
+                       cmListFileBacktrace const& bt) const;
   Message::LogLevel GetCurrentLogLevel() const;
 
   /** Set whether or not to report a CMP0000 violation.  */
@@ -1034,7 +1100,21 @@ public:
   // searches
   std::deque<std::vector<std::string>> FindPackageRootPathStack;
 
-  friend class cmFindPackageStackRAII;
+  /**
+   * RAII type to manage the find_package call stack.
+   */
+  class FindPackageStackRAII
+  {
+    cmMakefile* Makefile;
+
+  public:
+    FindPackageStackRAII(cmMakefile* mf, std::string const& pkg,
+                         std::shared_ptr<cmPackageInformation const> pkgInfo);
+    ~FindPackageStackRAII();
+
+    FindPackageStackRAII(FindPackageStackRAII const&) = delete;
+    FindPackageStackRAII& operator=(FindPackageStackRAII const&) = delete;
+  };
 
   class DebugFindPkgRAII
   {
@@ -1131,7 +1211,7 @@ protected:
   std::string DefineFlags;
 
 #if !defined(CMAKE_BOOTSTRAP)
-  std::vector<cmSourceGroup> SourceGroups;
+  SourceGroupVector SourceGroups;
   size_t ObjectLibrariesSourceGroupIndex;
 #endif
 
@@ -1202,12 +1282,19 @@ private:
   TargetMap ImportedTargets;
 
   // Internal policy stack management.
-  void PushPolicy(bool weak = false,
-                  cmPolicies::PolicyMap const& pm = cmPolicies::PolicyMap());
+  void PushPolicy(bool weak = false, cmPolicies::PolicyMap const& pm = {});
   void PopPolicy();
-  void PopSnapshot(bool reportError = true);
   friend bool cmCMakePolicyCommand(std::vector<std::string> const& args,
                                    cmExecutionStatus& status);
+
+  // Internal diagnostic stack management.
+  void PushDiagnostic(bool weak = false, cmDiagnostics::DiagnosticMap dm = {});
+  void PopDiagnostic();
+  friend bool cmCMakeDiagnosticCommand(std::vector<std::string> const& args,
+                                       cmExecutionStatus& status);
+
+  void PopSnapshot(bool reportError = true);
+
   class IncludeScope;
   friend class IncludeScope;
 
@@ -1239,6 +1326,7 @@ private:
   cmFindPackageStack FindPackageStack;
   unsigned int FindPackageStackNextIndex = 0;
 
+  bool ExplicitSbomGenerator = false;
   bool DebugFindPkg = false;
 
   bool CheckSystemVars;

@@ -80,6 +80,11 @@ endif()
 configure_file(${CMake_SOURCE_DIR}/Tests/EnforceConfig.cmake.in
                ${CMake_BINARY_DIR}/Tests/EnforceConfig.cmake @ONLY)
 
+# Fuzzing targets (outside BUILD_TESTING for OSS-Fuzz compatibility)
+if(CMake_BUILD_FUZZING AND NOT CMake_TEST_EXTERNAL_CMAKE)
+  add_subdirectory(Fuzzing)
+endif()
+
 # Testing
 if(BUILD_TESTING)
   set(CMake_TEST_DEVENV "")
@@ -126,7 +131,9 @@ if(BUILD_TESTING)
     set(CMake_TEST_RESOURCES TRUE)
   endif()
   # For some Windows toolchains there is no resource support.
-  if(WATCOM OR BORLAND OR CMAKE_C_COMPILER_ID STREQUAL "OrangeC")
+  if(WATCOM OR BORLAND
+      OR (CMAKE_C_COMPILER_ID STREQUAL "OrangeC" AND
+          CMAKE_C_COMPILER_VERSION VERSION_LESS "7.0"))
     set(CMake_TEST_RESOURCES FALSE)
   endif()
 
@@ -157,24 +164,38 @@ if(BUILD_TESTING)
   # Look for git to use for tests.
   find_program(GIT_EXECUTABLE NAMES git)
 
-  # Look for rpmbuild to use for tests.
-  # The tool does not work with spaces in the path.
-  if(NOT CMAKE_CURRENT_BINARY_DIR MATCHES " ")
-    find_program(RPMBUILD_EXECUTABLE NAMES rpmbuild)
-  else()
-    set(RPMBUILD_EXECUTABLE "RPMBUILD_EXECUTABLE-NOTFOUND")
+  if(NOT DEFINED CMake_TEST_CPACK_RPM)
+    # Look for rpmbuild to use for tests.
+    # The tool does not work with spaces in the path.
+    if(NOT CMAKE_CURRENT_BINARY_DIR MATCHES " ")
+      find_program(RPMBUILD_EXECUTABLE NAMES rpmbuild)
+    else()
+      set(RPMBUILD_EXECUTABLE "RPMBUILD_EXECUTABLE-NOTFOUND")
+    endif()
+    if(RPMBUILD_EXECUTABLE)
+      set(CMake_TEST_CPACK_RPM 1)
+    else()
+      set(CMake_TEST_CPACK_RPM 0)
+    endif()
   endif()
 
-  if(RPMBUILD_EXECUTABLE)
+  if(CMake_TEST_CPACK_RPM)
     set(CPACK_BINARY_RPM ON)
   else()
     set(CPACK_BINARY_RPM OFF)
   endif()
 
-  # Look for dpkg to use for tests.
-  find_program(DPKG_EXECUTABLE NAMES dpkg)
+  if(NOT DEFINED CMake_TEST_CPACK_DEB)
+    # Look for dpkg to use for tests.
+    find_program(DPKG_EXECUTABLE NAMES dpkg)
+    if(DPKG_EXECUTABLE)
+      set(CMake_TEST_CPACK_DEB 1)
+    else()
+      set(CMake_TEST_CPACK_DEB 0)
+    endif()
+  endif()
 
-  if(DPKG_EXECUTABLE)
+  if(CMake_TEST_CPACK_DEB)
     set(CPACK_BINARY_DEB ON)
   else()
     set(CPACK_BINARY_DEB OFF)
@@ -241,6 +262,10 @@ if(BUILD_TESTING)
     unset(_sysctl_result)
     unset(_sysctl_stderr)
     unset(_sysctl_stdout)
+  endif()
+
+  if(CMake_TEST_CUDA AND NOT CMake_TEST_CUDA MATCHES "^(NVIDIA|Clang)$")
+    message(FATAL_ERROR "CMake_TEST_CUDA should be \"NVIDIA\" or \"Clang\", got \"${CMake_TEST_CUDA}\"")
   endif()
 
   #---------------------------------------------------------------------------
@@ -405,6 +430,7 @@ if(BUILD_TESTING)
   string(REPLACE ";" "$<SEMICOLON>" TEST_STDS_CUDA "${CMake_TEST_CUDA_STANDARDS}")
   string(REPLACE ";" "$<SEMICOLON>" TEST_STDS_HIP "${CMake_TEST_HIP_STANDARDS}")
   set(CompileFeatures_BUILD_OPTIONS
+    -DCMake_TEST_CXX=${CMake_TEST_CXX}
     -DCMake_TEST_C_STANDARDS=${TEST_STDS_C}
     -DCMake_TEST_CXX_STANDARDS=${TEST_STDS_CXX}
     -DCMake_TEST_CUDA=${CMake_TEST_CUDA}
@@ -414,11 +440,13 @@ if(BUILD_TESTING)
     )
   ADD_TEST_MACRO(CompileFeatures CompileFeatures)
   set_property(TEST CompileFeatures APPEND PROPERTY LABELS "CUDA" "HIP")
+  set_property(TEST CompileFeatures APPEND PROPERTY LABELS "PellesC")
 
   ADD_TEST_MACRO(CMakeCommands.target_compile_features)
 
   if(CMake_TEST_RESOURCES)
     ADD_TEST_MACRO(VSResource VSResource)
+    set_property(TEST VSResource APPEND PROPERTY LABELS "PellesC")
     if(CMAKE_GENERATOR MATCHES "Ninja")
       add_test_macro(VSResourceNinjaForceRSP VSResourceNinjaForceRSP)
     endif()
@@ -441,6 +469,11 @@ if(BUILD_TESTING)
     if(CMAKE_Swift_COMPILER_VERSION VERSION_GREATER_EQUAL 5.1)
       ADD_TEST_MACRO(SwiftMixLib Swifty)
     endif()
+  endif()
+  if(CMake_TEST_Rust)
+    ADD_TEST_MACRO(RustOnly RustOnly)
+    ADD_TEST_MACRO(RustMix RustMix)
+    ADD_TEST_MACRO(RustPie RustPie)
   endif()
   if(CMAKE_Fortran_COMPILER)
     ADD_TEST_MACRO(FortranOnly FortranOnly)
@@ -500,6 +533,7 @@ if(BUILD_TESTING)
   endif()
 
   ADD_TEST_MACRO(COnly COnly)
+  set_property(TEST COnly APPEND PROPERTY LABELS "PellesC")
   ADD_TEST_MACRO(CxxOnly CxxOnly)
   ADD_TEST_MACRO(CxxSubdirC CxxSubdirC)
   ADD_TEST_MACRO(OutDir runtime/OutDir)
@@ -746,44 +780,6 @@ if(BUILD_TESTING)
       "${CMake_BINARY_DIR}/Tests/Visibility"
     )
   endif()
-
-  add_test(LinkFlags-prepare
-    ${CMAKE_CTEST_COMMAND} -C \${CTEST_CONFIGURATION_TYPE}
-    --build-and-test
-    "${CMake_SOURCE_DIR}/Tests/LinkFlags"
-    "${CMake_BINARY_DIR}/Tests/LinkFlags"
-    ${build_generator_args}
-    --build-project LinkFlags
-    --build-target LinkFlags
-    --build-options
-      -DTEST_CONFIG=\${CTEST_CONFIGURATION_TYPE}
-    )
-  list(APPEND TEST_BUILD_DIRS "${CMake_BINARY_DIR}/Tests/LinkFlags")
-
-  macro(ADD_LINK_FLAGS_TEST name depends)
-    add_test(LinkFlags-${name}
-      ${CMAKE_CMAKE_COMMAND} --build "${CMake_BINARY_DIR}/Tests/LinkFlags"
-      --target LinkFlags_${name} --config \${CTEST_CONFIGURATION_TYPE}
-      )
-    set_tests_properties(LinkFlags-${name} PROPERTIES
-      PASS_REGULAR_EXPRESSION "BADFLAG" DEPENDS LinkFlags-${depends})
-  endmacro()
-  ADD_LINK_FLAGS_TEST(lib prepare)
-  ADD_LINK_FLAGS_TEST(dll lib)
-  ADD_LINK_FLAGS_TEST(mod dll)
-  ADD_LINK_FLAGS_TEST(exe mod)
-  ADD_LINK_FLAGS_TEST(lib_config exe)
-  ADD_LINK_FLAGS_TEST(dll_config lib_config)
-  ADD_LINK_FLAGS_TEST(mod_config dll_config)
-  ADD_LINK_FLAGS_TEST(exe_config mod_config)
-  ADD_LINK_FLAGS_TEST(lib_flags exe_config)
-  ADD_LINK_FLAGS_TEST(dll_flags lib_flags)
-  ADD_LINK_FLAGS_TEST(mod_flags dll_flags)
-  ADD_LINK_FLAGS_TEST(exe_flags mod_flags)
-  ADD_LINK_FLAGS_TEST(lib_flags_config exe_flags)
-  ADD_LINK_FLAGS_TEST(dll_flags_config lib_flags_config)
-  ADD_LINK_FLAGS_TEST(mod_flags_config dll_flags_config)
-  ADD_LINK_FLAGS_TEST(exe_flags_config mod_flags_config)
 
   # test for correct sub-project generation
   # not implemented in Xcode or Ninja
@@ -1205,7 +1201,7 @@ if(BUILD_TESTING)
     endforeach()
 
     # debian specific
-    if(DPKG_EXECUTABLE)
+    if(CMake_TEST_CPACK_DEB)
       unset(CPackRun_CPackDEBConfiguration_ALL_CONFIGS)
       set(DEB_TEST_NAMES "CPackComponentsDEB")
       set(DEB_CONFIGURATIONS_TO_TEST "components-lintian-dpkgdeb-checks"
@@ -1564,10 +1560,6 @@ if(BUILD_TESTING)
 
   if(CMake_TEST_UseSWIG)
     add_subdirectory(UseSWIG)
-  endif()
-
-  if(CMake_TEST_FindRuby)
-    add_subdirectory(FindRuby)
   endif()
 
   add_subdirectory(FindThreads)
@@ -2103,9 +2095,10 @@ if(BUILD_TESTING)
       set_property(TEST MSVCRuntimeLibrary.Fortran APPEND PROPERTY LABELS "Fortran")
     endif()
   endif()
-  if(MSVC OR
+  if(MSVC OR CMAKE_C_COMPILER_ID MATCHES "PellesC" OR
       "${CMAKE_GENERATOR}" MATCHES "(MSYS|MinGW) Makefiles")
     ADD_TEST_MACRO(ModuleDefinition example_exe)
+    set_property(TEST ModuleDefinition APPEND PROPERTY LABELS "PellesC")
   endif()
 
   if(CMAKE_C_COMPILER_ID MATCHES "Watcom" AND WIN32)
@@ -2150,6 +2143,11 @@ if(BUILD_TESTING)
      AND (NOT CMAKE_C_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
       )
     ADD_TEST_MACRO(VSMASM VSMASM)
+  endif()
+
+  if(CMAKE_C_COMPILER_ID STREQUAL "PellesC")
+    ADD_TEST_MACRO(PellesASM PellesASM)
+    set_property(TEST PellesASM APPEND PROPERTY LABELS "PellesC")
   endif()
 
   if(CMAKE_GENERATOR MATCHES "Visual Studio")
@@ -2476,7 +2474,7 @@ if(BUILD_TESTING)
     --build-options
       "-DUNUSED_CLI_VARIABLE=Unused")
   set_tests_properties(WarnUnusedCliUnused PROPERTIES
-    PASS_REGULAR_EXPRESSION "CMake Warning:.*Manually-specified variables were not used by the project:.*  UNUSED_CLI_VARIABLE")
+    PASS_REGULAR_EXPRESSION "CMake Warning \\(unused-cli\\):.*Manually-specified variables were not used by the project:.*  UNUSED_CLI_VARIABLE")
   list(APPEND TEST_BUILD_DIRS "${CMake_BINARY_DIR}/Tests/WarnUnusedCliUnused")
 
   add_test(WarnUnusedCliUsed ${CMAKE_CTEST_COMMAND}
@@ -3033,26 +3031,7 @@ if(BUILD_TESTING)
     )
   #make sure all 3 subdirs were added
   set_tests_properties(CTestTestSubdir PROPERTIES
-    PASS_REGULAR_EXPRESSION "0 tests failed out of 3")
-
-  configure_file(
-    "${CMake_SOURCE_DIR}/Tests/CTestTestTimeout/test.cmake.in"
-    "${CMake_BINARY_DIR}/Tests/CTestTestTimeout/test.cmake"
-    @ONLY ESCAPE_QUOTES)
-  add_test(CTestTestTimeout ${CMAKE_CTEST_COMMAND}
-    -C "\${CTestTest_CONFIG}"
-    -S "${CMake_BINARY_DIR}/Tests/CTestTestTimeout/test.cmake" -V
-    --output-log "${CMake_BINARY_DIR}/Tests/CTestTestTimeout/testOutput.log"
-    )
-  set_tests_properties(CTestTestTimeout PROPERTIES
-    PASS_REGULAR_EXPRESSION "TestTimeout *\\.+ *\\*\\*\\*Timeout.*TestSleep *\\.+ *Passed.*timeout correctly killed child")
-
-  add_test(
-    NAME CTestTestRerunFailed
-    COMMAND ${CMAKE_CTEST_COMMAND} --rerun-failed)
-  set_tests_properties(CTestTestRerunFailed PROPERTIES
-    PASS_REGULAR_EXPRESSION "1/1 Test #1: TestTimeout" DEPENDS CTestTestTimeout
-    WORKING_DIRECTORY ${CMake_BINARY_DIR}/Tests/CTestTestTimeout)
+    PASS_REGULAR_EXPRESSION "100% tests passed out of 3")
 
   configure_file(
     "${CMake_SOURCE_DIR}/Tests/CTestTestDepends/test.cmake.in"
@@ -3356,75 +3335,6 @@ if(BUILD_TESTING)
         endif()
       endif()
     endif()
-  endif()
-
-  # add some cross compiler tests, for now only with makefile based generators
-  if(CMAKE_GENERATOR MATCHES "Makefiles")
-
-    # if sdcc is found, build the SimpleCOnly project with sdcc
-    find_program(SDCC_EXECUTABLE sdcc)
-    mark_as_advanced(SDCC_EXECUTABLE)
-    if(SDCC_EXECUTABLE)
-      add_test(SimpleCOnly_sdcc ${CMAKE_CTEST_COMMAND}
-        --build-and-test
-        "${CMake_SOURCE_DIR}/Tests/SimpleCOnly"
-        "${CMake_BINARY_DIR}/Tests/SimpleCOnly_sdcc"
-        ${build_generator_args}
-        --build-project SimpleC
-        --build-options
-          "-DCMAKE_SYSTEM_NAME=Generic"
-          "-DCMAKE_C_COMPILER=${SDCC_EXECUTABLE}")
-      list(APPEND TEST_BUILD_DIRS "${CMake_BINARY_DIR}/Tests/SimpleCOnly_sdcc")
-    endif()
-
-    # If a Linux -> MinGW cross compiler is found then try it
-    find_program(MINGW_CC_LINUX2WIN_EXECUTABLE i586-mingw32msvc-gcc)
-    find_program(MINGW_CXX_LINUX2WIN_EXECUTABLE i586-mingw32msvc-g++)
-    find_program(MINGW_RC_LINUX2WIN_EXECUTABLE i586-mingw32msvc-windres)
-    mark_as_advanced(MINGW_CC_LINUX2WIN_EXECUTABLE MINGW_CXX_LINUX2WIN_EXECUTABLE MINGW_RC_LINUX2WIN_EXECUTABLE)
-    if(MINGW_CC_LINUX2WIN_EXECUTABLE AND MINGW_CXX_LINUX2WIN_EXECUTABLE AND MINGW_RC_LINUX2WIN_EXECUTABLE)
-      add_test(Simple_Mingw_Linux2Win ${CMAKE_CTEST_COMMAND}
-        --build-and-test
-        "${CMake_SOURCE_DIR}/Tests/Simple"
-        "${CMake_BINARY_DIR}/Tests/Simple_Mingw_Linux2Win"
-        ${build_generator_args}
-        --build-project Simple
-        --build-options
-          "-DCMAKE_SYSTEM_NAME=Windows"
-          "-DCMAKE_C_COMPILER=${MINGW_CC_LINUX2WIN_EXECUTABLE}"
-          "-DCMAKE_CXX_COMPILER=${MINGW_CXX_LINUX2WIN_EXECUTABLE}"
-          "-DCMAKE_RC_COMPILER=${MINGW_RC_LINUX2WIN_EXECUTABLE}"
-        )
-      list(APPEND TEST_BUILD_DIRS "${CMake_BINARY_DIR}/Tests/Simple_Mingw_Linux2Win")
-    endif()
-  endif()
-
-  if(CMAKE_TEST_PROJECT_CSE_DIR)
-    set(script "${CMAKE_TEST_PROJECT_CSE_DIR}/BuildProjectCSE.cmake")
-    if(NOT EXISTS "${script}")
-      set(script "${CMAKE_TEST_PROJECT_CSE_DIR}/cse_build.cmake")
-    endif()
-    if(NOT EXISTS "${script}")
-      message("warning: CMAKE_TEST_PROJECT_CSE_DIR set, but no build script found...")
-    endif()
-
-    add_test(BuildCSE ${CMAKE_CTEST_COMMAND} -V -S "${script}")
-    set_tests_properties(BuildCSE PROPERTIES TIMEOUT 5400)
-  endif()
-
-  if(CMAKE_TEST_PLPLOT_DIR)
-    add_test(plplot ${CMAKE_CTEST_COMMAND} -V -S ${CMAKE_TEST_PLPLOT_DIR}/../../EasyDashboardScripts/plplot.cmake)
-    set_tests_properties ( plplot PROPERTIES TIMEOUT 5400)
-  endif()
-
-  if(CMAKE_TEST_CHICKEN_DIR)
-    add_test(Chicken ${CMAKE_CTEST_COMMAND} -V -S ${CMAKE_TEST_CHICKEN_DIR}/../../EasyDashboardScripts/Chicken.cmake)
-    set_tests_properties(Chicken PROPERTIES TIMEOUT 5400)
-  endif()
-
-  if(CMAKE_TEST_KDELIBS_ALPHA_1_DIR)
-    add_test(KDELibsAlpha1 ${CMAKE_CTEST_COMMAND} -V -S ${CMAKE_TEST_KDELIBS_ALPHA_1_DIR}/../../EasyDashboardScripts/kdelibs.cmake)
-    set_tests_properties(KDELibsAlpha1 PROPERTIES TIMEOUT 5400)
   endif()
 
   # Define a set of "contract" tests, each activated by a cache entry

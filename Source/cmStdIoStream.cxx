@@ -43,7 +43,7 @@ namespace {
 #else
 // List of known `TERM` names that support VT100 escape sequences.
 // Order by `LC_COLLATE=C sort` to search using `std::lower_bound`.
-std::array<cm::string_view, 56> const kVT100Names{ {
+std::array<cm::string_view, 57> const kVT100Names{ {
   "Eterm"_s,
   "alacritty"_s,
   "alacritty-direct"_s,
@@ -98,6 +98,7 @@ std::array<cm::string_view, 56> const kVT100Names{ {
   "xterm-88color"_s,
   "xterm-color"_s,
   "xterm-debian"_s,
+  "xterm-ghostty"_s,
   "xterm-kitty"_s,
   "xterm-termite"_s,
 } };
@@ -146,9 +147,15 @@ Stream::Stream(std::ios& s, FILE* file, Direction direction)
 #ifdef _WIN32
 Stream::~Stream()
 {
+  this->Destroy();
+}
+
+void Stream::Destroy()
+{
   if (this->Console_) {
     this->IOS_.rdbuf()->pubsync();
     SetConsoleMode(this->Console_, this->ConsoleOrigMode_);
+    this->Console_ = nullptr;
   }
 }
 #else

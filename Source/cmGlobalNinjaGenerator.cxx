@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cctype>
 #include <cstdio>
 #include <functional>
 #include <iterator>
@@ -23,9 +22,11 @@
 #include <cm3p/json/writer.h>
 
 #include "cmsys/FStream.hxx"
+#include "cmsys/String.h"
 
 #include "cmCustomCommand.h"
 #include "cmCxxModuleMapper.h"
+#include "cmDiagnostics.h"
 #include "cmDyndepCollation.h"
 #include "cmFortranParser.h"
 #include "cmGeneratedFileStream.h"
@@ -43,6 +44,7 @@
 #include "cmOutputConverter.h"
 #include "cmRange.h"
 #include "cmScanDepFormat.h"
+#include "cmScriptGenerator.h"
 #include "cmSourceFile.h"
 #include "cmState.h"
 #include "cmStateDirectory.h"
@@ -172,7 +174,7 @@ std::string cmGlobalNinjaGenerator::EncodeRuleName(std::string const& name)
   // "." and all invalid characters as hexadecimal.
   std::string encoded;
   for (char i : name) {
-    if (isalnum(i) || i == '_' || i == '-') {
+    if (cmsysString_isalnum(i) || i == '_' || i == '-') {
       encoded += i;
     } else {
       char buf[16];
@@ -1382,17 +1384,18 @@ void cmGlobalNinjaGenerator::AppendTargetDepends(
                                  std::string const& targetConfig) {
       if (depTarget->CanCompileSources()) {
         auto headers = depTarget->GetGeneratedISPCHeaders(targetConfig);
+        auto const mapToNinjaPath = gg->MapToNinjaPath();
         if (!headers.empty()) {
           std::transform(headers.begin(), headers.end(), headers.begin(),
-                         gg->MapToNinjaPath());
+                         mapToNinjaPath);
           outputDeps.insert(outputDeps.end(), headers.begin(), headers.end());
         }
         auto objs = depTarget->GetGeneratedISPCObjects(targetConfig);
-        if (!objs.empty()) {
-          std::transform(objs.begin(), objs.end(), objs.begin(),
-                         gg->MapToNinjaPath());
-          outputDeps.insert(outputDeps.end(), objs.begin(), objs.end());
-        }
+        std::transform(
+          objs.begin(), objs.end(), std::back_inserter(outputDeps),
+          [&mapToNinjaPath](
+            std::pair<cmSourceFile const*, std::string> const& obj)
+            -> std::string { return mapToNinjaPath(obj.second); });
       }
     };
 
@@ -1925,8 +1928,8 @@ void cmGlobalNinjaGenerator::WriteTargetRebuildManifest(std::ostream& os)
         << "\n";
     msg << "Any pre-check scripts, such as those generated for file(GLOB "
            "CONFIGURE_DEPENDS), will not be run by Ninja.";
-    this->GetCMakeInstance()->IssueMessage(MessageType::AUTHOR_WARNING,
-                                           msg.str());
+    this->GetCMakeInstance()->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR,
+                                              msg.str());
   }
 
   std::sort(reBuild.ImplicitDeps.begin(), reBuild.ImplicitDeps.end());
@@ -2030,8 +2033,7 @@ bool cmGlobalNinjaGenerator::WriteTargetCleanAdditional(std::ostream& os)
         fout << "  file(REMOVE_RECURSE\n";
         for (std::string const& acf : it->second.AdditionalCleanFiles) {
           fout << "  "
-               << cmOutputConverter::EscapeForCMake(
-                    this->ConvertToNinjaPath(acf))
+               << cmScriptGenerator::Quote(this->ConvertToNinjaPath(acf))
                << '\n';
         }
         fout << "  )\n";
@@ -2587,8 +2589,8 @@ bool cmGlobalNinjaGenerator::WriteDyndepFile(
   std::string const& module_dir,
   std::vector<std::string> const& linked_target_dirs,
   std::vector<std::string> const& forward_modules_from_target_dirs,
-  std::string const& arg_lang, std::string const& arg_modmapfmt,
-  cmCxxModuleExportInfo const& export_info)
+  std::string const& native_target_dir, std::string const& arg_lang,
+  std::string const& arg_modmapfmt, cmCxxModuleExportInfo const& export_info)
 {
   // Setup path conversions.
   {
@@ -2745,6 +2747,47 @@ bool cmGlobalNinjaGenerator::WriteDyndepFile(
       module_info["bmi"] = mod;
       module_info["is-private"] =
         cmDyndepCollation::IsObjectPrivate(object.PrimaryOutput, export_info);
+    }
+  }
+
+  // If this is a synthetic target for a non-imported target, read PRIVATE
+  // module info from the native target
+  if (!native_target_dir.empty()) {
+    std::string const modules_info_path =
+      cmStrCat(native_target_dir, '/', arg_lang, "Modules.json");
+    Json::Value native_modules_info;
+    cmsys::ifstream modules_file(modules_info_path.c_str(),
+                                 std::ios::in | std::ios::binary);
+    if (!modules_file) {
+      cmSystemTools::Error(cmStrCat("-E cmake_ninja_dyndep failed to open ",
+                                    modules_info_path,
+                                    " for module information"));
+      return false;
+    }
+    Json::Reader reader;
+    if (!reader.parse(modules_file, native_modules_info, false)) {
+      cmSystemTools::Error(cmStrCat("-E cmake_ninja_dyndep failed to parse ",
+                                    modules_info_path,
+                                    reader.getFormattedErrorMessages()));
+      return false;
+    }
+    if (native_modules_info.isObject()) {
+      Json::Value const& native_target_modules =
+        native_modules_info["modules"];
+      if (native_target_modules.isObject()) {
+        for (auto i = native_target_modules.begin();
+             i != native_target_modules.end(); ++i) {
+          Json::Value const& visible_module = *i;
+          if (visible_module.isObject()) {
+            auto is_private = visible_module["is-private"].asBool();
+            // Only add private modules since others are discovered by the
+            // synthetic target's own scan rules
+            if (is_private) {
+              target_modules[i.key().asString()] = visible_module;
+            }
+          }
+        }
+      }
     }
   }
 
@@ -3041,6 +3084,7 @@ int cmcmd_cmake_ninja_dyndep(std::vector<std::string>::const_iterator argBeg,
         tdi_forward_modules_from_target_dir.asString());
     }
   }
+  std::string const native_target_dir = tdi["native-target-dir"].asString();
   std::string const compilerId = tdi["compiler-id"].asString();
   std::string const simulateId = tdi["compiler-simulate-id"].asString();
   std::string const compilerFrontendVariant =
@@ -3064,8 +3108,9 @@ int cmcmd_cmake_ninja_dyndep(std::vector<std::string>::const_iterator argBeg,
 #  endif
   return gg.WriteDyndepFile(dir_top_src, dir_top_bld, dir_cur_src, dir_cur_bld,
                             arg_dd, arg_ddis, module_dir, linked_target_dirs,
-                            forward_modules_from_target_dirs, arg_lang,
-                            arg_modmapfmt, *export_info)
+                            forward_modules_from_target_dirs,
+                            native_target_dir, arg_lang, arg_modmapfmt,
+                            *export_info)
     ? 0
     : 1;
 }

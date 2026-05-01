@@ -19,8 +19,6 @@
 #include "cmsys/RegularExpression.hxx"
 
 #include "cmCryptoHash.h"
-#include "cmDocumentationEntry.h"
-#include "cmExperimental.h"
 #include "cmGeneratorTarget.h"
 #include "cmGlobalGenerator.h"
 #include "cmGlobalVisualStudio7Generator.h"
@@ -1263,8 +1261,8 @@ std::string cmGlobalVisualStudio10Generator::GenerateRuleFile(
   std::string ruleDir = cmStrCat(
     this->GetCMakeInstance()->GetHomeOutputDirectory(), "/CMakeFiles/",
     hasher.HashString(cmSystemTools::GetFilenamePath(output)));
-  std::string ruleFile =
-    cmStrCat(ruleDir, '/', cmSystemTools::GetFilenameName(output), ".rule");
+  std::string ruleFile = cmStrCat(
+    ruleDir, '/', cmSystemTools::GetFilenameNameView(output), ".rule");
   return ruleFile;
 }
 

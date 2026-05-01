@@ -23,11 +23,11 @@
  * SPDX-License-Identifier: curl
  *
  ***************************************************************************/
+#include "curl_setup.h"
 
-#include <curl/curl.h>
-
-#include "../bufref.h"
-#include "../curlx/dynbuf.h"
+#include "bufref.h"
+#include "curlx/dynbuf.h"
+#include "urldata.h"
 
 struct Curl_easy;
 struct connectdata;
@@ -49,7 +49,7 @@ struct gsasldata;
 #endif
 
 #ifdef USE_WINDOWS_SSPI
-#include "../curl_sspi.h"
+#include "curl_sspi.h"
 #define GSS_ERROR(status) ((status) & 0x80000000)
 #endif
 
@@ -110,13 +110,14 @@ CURLcode Curl_auth_create_digest_http_message(struct Curl_easy *data,
                                               const char *userp,
                                               const char *passwdp,
                                               const unsigned char *request,
-                                              const unsigned char *uri,
+                                              const unsigned char *uripath,
                                               struct digestdata *digest,
                                               char **outptr, size_t *outlen);
 
 /* This is used to clean up the digest specific data */
 void Curl_auth_digest_cleanup(struct digestdata *digest);
 #else
+#define Curl_auth_digest_cleanup(x)
 #define Curl_auth_is_digest_supported()       FALSE
 #endif /* !CURL_DISABLE_DIGEST_AUTH */
 
@@ -150,7 +151,7 @@ CURLcode Curl_auth_gsasl_token(struct Curl_easy *data,
                                struct bufref *out);
 
 /* This is used to clean up the gsasl specific data */
-void Curl_auth_gsasl_cleanup(struct gsasldata *digest);
+void Curl_auth_gsasl_cleanup(struct gsasldata *gsasl);
 #endif
 
 #ifdef USE_NTLM
@@ -205,7 +206,7 @@ CURLcode Curl_auth_create_ntlm_type1_message(struct Curl_easy *data,
 
 /* This is used to decode a base64 encoded NTLM type-2 message */
 CURLcode Curl_auth_decode_ntlm_type2_message(struct Curl_easy *data,
-                                             const struct bufref *type2,
+                                             const struct bufref *type2ref,
                                              struct ntlmdata *ntlm);
 
 /* This is used to generate a base64 encoded NTLM type-3 message */
@@ -232,14 +233,6 @@ CURLcode Curl_auth_create_xoauth_bearer_message(const char *user,
                                                 struct bufref *out);
 
 #ifdef USE_KERBEROS5
-
-#ifdef HAVE_GSSAPI
-# ifdef HAVE_GSSGNU
-#  include <gss.h>
-# else
-#  include <gssapi/gssapi.h>
-# endif
-#endif
 
 /* meta key for storing KRB5 meta at connection */
 #define CURL_META_KRB5_CONN   "meta:auth:krb5:conn"
@@ -271,7 +264,7 @@ CURLcode Curl_auth_create_gssapi_user_message(struct Curl_easy *data,
                                               const char *passwdp,
                                               const char *service,
                                               const char *host,
-                                              const bool mutual,
+                                              const bool mutual_auth,
                                               const struct bufref *chlg,
                                               struct kerberos5data *krb5,
                                               struct bufref *out);
@@ -306,7 +299,7 @@ struct negotiatedata {
   gss_ctx_id_t context;
   gss_name_t spn;
   gss_buffer_desc output_token;
-#ifdef CURL_GSSAPI_HAS_CHANNEL_BINDING
+#ifdef GSS_C_CHANNEL_BOUND_FLAG
   struct dynbuf channel_binding_data;
 #endif
 #else

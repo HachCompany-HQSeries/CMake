@@ -1,13 +1,33 @@
 # Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 # file LICENSE.rst or https://cmake.org/licensing for details.
 
-cmake_minimum_required(VERSION 3.13...4.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.13...4.2 FATAL_ERROR)
+
+if(CMake_TEST_HOST_CMAKE)
+  get_filename_component(CMake_TEST_EXTERNAL_CMAKE "${CMAKE_COMMAND}" DIRECTORY)
+endif()
+
+set(CMake_LANGUAGES "")
+if(CMake_TEST_EXTERNAL_CMAKE)
+  foreach(lang C CXX)
+    if(NOT DEFINED CMake_TEST_${lang})
+      set(CMake_TEST_${lang} 1)
+    endif()
+    if(CMake_TEST_${lang})
+      list(APPEND CMake_LANGUAGES ${lang})
+    endif()
+  endforeach()
+else()
+  set(CMake_TEST_C 1)
+  set(CMake_TEST_CXX 1)
+  list(APPEND CMake_LANGUAGES C CXX)
+endif()
 set(CMAKE_USER_MAKE_RULES_OVERRIDE_C ${CMAKE_CURRENT_SOURCE_DIR}/Source/Modules/OverrideC.cmake)
 set(CMAKE_USER_MAKE_RULES_OVERRIDE_CXX ${CMAKE_CURRENT_SOURCE_DIR}/Source/Modules/OverrideCXX.cmake)
-
-project(CMake)
+project(CMake LANGUAGES ${CMake_LANGUAGES})
 unset(CMAKE_USER_MAKE_RULES_OVERRIDE_CXX)
 unset(CMAKE_USER_MAKE_RULES_OVERRIDE_C)
+unset(CMake_LANGUAGES)
 
 # FIXME: This block should go away after a transition period.
 if(MSVC AND NOT CMAKE_VERSION VERSION_LESS 3.15)
@@ -30,10 +50,6 @@ if(CMAKE_BOOTSTRAP)
   unset(CMAKE_BOOTSTRAP CACHE)
 endif()
 
-if(CMake_TEST_HOST_CMAKE)
-  get_filename_component(CMake_TEST_EXTERNAL_CMAKE "${CMAKE_COMMAND}" DIRECTORY)
-endif()
-
 if(NOT CMake_TEST_EXTERNAL_CMAKE)
   if(CMAKE_SYSTEM_NAME STREQUAL "HP-UX")
     message(FATAL_ERROR
@@ -44,121 +60,7 @@ if(NOT CMake_TEST_EXTERNAL_CMAKE)
   endif()
 
   set(CMake_BIN_DIR ${CMake_BINARY_DIR}/bin)
-endif()
 
-if(CMake_GUI_DISTRIBUTE_WITH_Qt_LGPL)
-  if(CMake_GUI_DISTRIBUTE_WITH_Qt_LGPL MATCHES "^3|2\\.1$")
-    set(USE_LGPL "${CMake_GUI_DISTRIBUTE_WITH_Qt_LGPL}")
-  else()
-    set(USE_LGPL "2.1")
-  endif()
-else()
-  set(USE_LGPL "")
-endif()
-
-# Use most-recent available language dialects with GNU and Clang
-if(NOT DEFINED CMAKE_C_STANDARD AND NOT CMake_NO_C_STANDARD)
-  include(${CMake_SOURCE_DIR}/Source/Checks/cm_c11_thread_local.cmake)
-  if(NOT CMake_C11_THREAD_LOCAL_BROKEN)
-    set(CMAKE_C_STANDARD 11)
-  else()
-    set(CMAKE_C_STANDARD 99)
-  endif()
-endif()
-if(NOT DEFINED CMAKE_CXX_STANDARD AND NOT CMake_NO_CXX_STANDARD)
-  if(CMAKE_CXX_COMPILER_ID STREQUAL SunPro AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 5.14)
-    set(CMAKE_CXX_STANDARD 98)
-  else()
-    include(${CMake_SOURCE_DIR}/Source/Checks/cm_cxx17_check.cmake)
-    if(NOT CMake_CXX17_BROKEN)
-      set(CMAKE_CXX_STANDARD 17)
-    else()
-      include(${CMake_SOURCE_DIR}/Source/Checks/cm_cxx14_check.cmake)
-      if(NOT CMake_CXX14_BROKEN)
-        set(CMAKE_CXX_STANDARD 14)
-      else()
-        set(CMAKE_CXX_STANDARD 11)
-      endif()
-    endif()
-  endif()
-endif()
-if(NOT CMake_TEST_EXTERNAL_CMAKE)
-  # include special compile flags for some compilers
-  include(CompileFlags.cmake)
-
-  # check for available C++ features
-  include(${CMake_SOURCE_DIR}/Source/Checks/cm_cxx_features.cmake)
-
-  if(NOT CMake_HAVE_CXX_UNIQUE_PTR)
-    message(FATAL_ERROR "The C++ compiler does not support C++11 (e.g. std::unique_ptr).")
-  endif()
-endif()
-
-# Inform STL library header wrappers whether to use system versions.
-configure_file(Utilities/std/cmSTL.hxx.in Utilities/cmSTL.hxx @ONLY)
-
-# set the internal encoding of CMake to UTF-8
-set(KWSYS_ENCODING_DEFAULT_CODEPAGE CP_UTF8)
-
-# enable parallel install
-set_property(GLOBAL PROPERTY INSTALL_PARALLEL ON)
-
-# option to use COMPONENT with install command
-option(CMake_INSTALL_COMPONENTS "Using components when installing" OFF)
-mark_as_advanced(CMake_INSTALL_COMPONENTS)
-macro(CMake_OPTIONAL_COMPONENT NAME)
-  if(CMake_INSTALL_COMPONENTS)
-    set(COMPONENT COMPONENT ${NAME})
-  else()
-    set(COMPONENT)
-  endif()
-endmacro()
-
-# option to disable installing 3rd-party dependencies
-option(CMake_INSTALL_DEPENDENCIES
-  "Whether to install 3rd-party runtime dependencies" OFF)
-mark_as_advanced(CMake_INSTALL_DEPENDENCIES)
-
-# option to build reference for CMake developers
-option(CMake_BUILD_DEVELOPER_REFERENCE
-  "Build CMake Developer Reference" OFF)
-mark_as_advanced(CMake_BUILD_DEVELOPER_REFERENCE)
-
-# option to build using interprocedural optimizations (IPO/LTO)
-option(CMake_BUILD_LTO "Compile CMake with link-time optimization if supported" OFF)
-if(CMake_BUILD_LTO)
-  include(CheckIPOSupported)
-  check_ipo_supported(RESULT HAVE_IPO)
-  if(HAVE_IPO)
-    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
-  endif()
-endif()
-
-option(CMake_BUILD_PCH "Compile CMake with precompiled headers" OFF)
-
-# Check whether to build support for the debugger mode.
-if(NOT CMake_TEST_EXTERNAL_CMAKE)
-  if(NOT DEFINED CMake_ENABLE_DEBUGGER)
-    # The debugger uses cppdap, which does not compile everywhere.
-    if(CMAKE_SYSTEM_NAME MATCHES "Windows|Darwin|Linux|BSD|DragonFly|CYGWIN|MSYS"
-        AND NOT (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19.16)
-        AND NOT (CMAKE_CXX_COMPILER_ID STREQUAL "XLClang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16.1)
-        AND NOT (CMAKE_CXX_COMPILER_ID STREQUAL "LCC" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 1.23)
-        )
-      set(CMake_ENABLE_DEBUGGER 1)
-    else()
-      set(CMake_ENABLE_DEBUGGER 0)
-    endif()
-  endif()
-else()
-  set(CMake_ENABLE_DEBUGGER 0)
-endif()
-
-#-----------------------------------------------------------------------
-# a macro to deal with system libraries, implemented as a macro
-# simply to improve readability of the main script
-#-----------------------------------------------------------------------
-macro(CMAKE_HANDLE_SYSTEM_LIBRARIES)
   include(CMakeDependentOption)
 
   # Allow the user to enable/disable all system utility library options by
@@ -225,16 +127,154 @@ macro(CMAKE_HANDLE_SYSTEM_LIBRARIES)
     # Avoid messaging about curl-only dependencies.
     list(REMOVE_ITEM UTILITIES NGHTTP2)
   endif()
+
+  set(DEPS_SYSTEM "")
+  set(DEPS_BUNDLED "")
   foreach(util IN LISTS UTILITIES ITEMS KWIML)
     if(CMAKE_USE_SYSTEM_${util})
-      message(STATUS "Using system-installed ${util}")
+      string(APPEND DEPS_SYSTEM " ${util}")
+    else()
+      string(APPEND DEPS_BUNDLED " ${util}")
     endif()
   endforeach()
 
+  # OpenSSL is not included in the UTILITIES list,
+  # but it is a system dependency, if used
+  if(CMAKE_USE_OPENSSL)
+    string(APPEND DEPS_SYSTEM " OPENSSL")
+  endif()
+
+  if(DEPS_SYSTEM)
+    message(STATUS "Using system-installed:${DEPS_SYSTEM}")
+  endif()
+  if(DEPS_BUNDLED)
+    message(STATUS "Using bundled:${DEPS_BUNDLED}")
+  endif()
+  unset(DEPS_SYSTEM)
+  unset(DEPS_BUNDLED)
+
   # Inform utility library header wrappers whether to use system versions.
   configure_file(Utilities/cmThirdParty.h.in Utilities/cmThirdParty.h @ONLY)
+endif()
 
+if(CMake_GUI_DISTRIBUTE_WITH_Qt_LGPL)
+  if(CMake_GUI_DISTRIBUTE_WITH_Qt_LGPL MATCHES "^3|2\\.1$")
+    set(USE_LGPL "${CMake_GUI_DISTRIBUTE_WITH_Qt_LGPL}")
+  else()
+    set(USE_LGPL "2.1")
+  endif()
+else()
+  set(USE_LGPL "")
+endif()
+
+# Use most-recent available language dialects with GNU and Clang
+if(NOT DEFINED CMAKE_C_STANDARD AND NOT CMake_NO_C_STANDARD)
+  include(${CMake_SOURCE_DIR}/Source/Checks/cm_c11_thread_local.cmake)
+  if(NOT CMake_C11_THREAD_LOCAL_BROKEN)
+    set(CMAKE_C_STANDARD 11)
+  else()
+    set(CMAKE_C_STANDARD 99)
+  endif()
+endif()
+if(NOT DEFINED CMAKE_CXX_STANDARD AND NOT CMake_NO_CXX_STANDARD)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL SunPro AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 5.14)
+    set(CMAKE_CXX_STANDARD 98)
+  else()
+    include(${CMake_SOURCE_DIR}/Source/Checks/cm_cxx17_check.cmake)
+    if(NOT CMake_CXX17_BROKEN)
+      set(CMAKE_CXX_STANDARD 17)
+    else()
+      include(${CMake_SOURCE_DIR}/Source/Checks/cm_cxx14_check.cmake)
+      if(NOT CMake_CXX14_BROKEN)
+        set(CMAKE_CXX_STANDARD 14)
+      else()
+        set(CMAKE_CXX_STANDARD 11)
+      endif()
+    endif()
+  endif()
+endif()
+if(NOT CMake_TEST_EXTERNAL_CMAKE)
+  # include special compile flags for some compilers
+  include(CompileFlags.cmake)
+
+  # check for available C++ features
+  include(${CMake_SOURCE_DIR}/Source/Checks/cm_cxx_features.cmake)
+
+  if(NOT CMake_HAVE_CXX_UNIQUE_PTR)
+    message(FATAL_ERROR "The C++ compiler does not support C++11 (e.g. std::unique_ptr).")
+  endif()
+
+  if(CMake_ENABLE_INSTRUMENTATION)
+    cmake_instrumentation(
+        API_VERSION 1
+        DATA_VERSION 1
+        OPTIONS cdashSubmit cdashVerbose trace
+    )
+  endif()
+endif()
+
+# Inform STL library header wrappers whether to use system versions.
+configure_file(Utilities/std/cmSTL.hxx.in Utilities/cmSTL.hxx @ONLY)
+
+# set the internal encoding of CMake to UTF-8
+set(KWSYS_ENCODING_DEFAULT_CODEPAGE CP_UTF8)
+
+# enable parallel install
+set_property(GLOBAL PROPERTY INSTALL_PARALLEL ON)
+
+# option to use COMPONENT with install command
+option(CMake_INSTALL_COMPONENTS "Using components when installing" OFF)
+mark_as_advanced(CMake_INSTALL_COMPONENTS)
+macro(CMake_OPTIONAL_COMPONENT NAME)
+  if(CMake_INSTALL_COMPONENTS)
+    set(COMPONENT COMPONENT ${NAME})
+  else()
+    set(COMPONENT)
+  endif()
 endmacro()
+
+# option to disable installing 3rd-party dependencies
+option(CMake_INSTALL_DEPENDENCIES
+  "Whether to install 3rd-party runtime dependencies" OFF)
+mark_as_advanced(CMake_INSTALL_DEPENDENCIES)
+
+# option to build reference for CMake developers
+option(CMake_BUILD_DEVELOPER_REFERENCE
+  "Build CMake Developer Reference" OFF)
+mark_as_advanced(CMake_BUILD_DEVELOPER_REFERENCE)
+
+# option to build using interprocedural optimizations (IPO/LTO)
+option(CMake_BUILD_LTO "Compile CMake with link-time optimization if supported" OFF)
+if(CMake_BUILD_LTO)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT HAVE_IPO)
+  if(HAVE_IPO)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+  endif()
+endif()
+
+option(CMake_BUILD_PCH "Compile CMake with precompiled headers" OFF)
+
+option(CMake_BUILD_FUZZING "Build fuzz testing targets" OFF)
+mark_as_advanced(CMake_BUILD_FUZZING)
+
+# Check whether to build support for the debugger mode.
+if(NOT CMake_TEST_EXTERNAL_CMAKE)
+  if(NOT DEFINED CMake_ENABLE_DEBUGGER)
+    # The debugger uses cppdap, which does not compile everywhere.
+    if(CMAKE_SYSTEM_NAME MATCHES "Windows|Darwin|Linux|BSD|DragonFly|CYGWIN|MSYS"
+        AND NOT (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19.16)
+        AND NOT (CMAKE_CXX_COMPILER_ID STREQUAL "XLClang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16.1)
+        AND NOT (CMAKE_CXX_COMPILER_ID STREQUAL "LCC" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 1.23)
+        )
+      set(CMake_ENABLE_DEBUGGER 1)
+    else()
+      set(CMake_ENABLE_DEBUGGER 0)
+    endif()
+  endif()
+else()
+  set(CMake_ENABLE_DEBUGGER 0)
+endif()
 
 #-----------------------------------------------------------------------
 # a macro to determine the generator and ctest executable to use
@@ -351,6 +391,22 @@ if(CMake_RUN_IWYU)
   list(APPEND CMAKE_CXX_INCLUDE_WHAT_YOU_USE ${CMake_IWYU_OPTIONS})
 endif()
 
+option(CMake_RUN_PVS_STUDIO "Run pvs-studio-analyzer with the compiler." OFF)
+if(CMake_RUN_PVS_STUDIO)
+  if(CMake_SOURCE_DIR STREQUAL CMake_BINARY_DIR)
+    message(FATAL_ERROR "CMake_RUN_PVS_STUDIO requires an out-of-source build!")
+  endif()
+  find_program(PVS_STUDIO_COMMAND NAMES pvs-studio-analyzer)
+  if(NOT PVS_STUDIO_COMMAND)
+    message(FATAL_ERROR "CMake_RUN_PVS_STUDIO is ON but pvs-studio-analyzer is not found!")
+  endif()
+  set(CMAKE_CXX_PVS_STUDIO
+    "${PVS_STUDIO_COMMAND}" analyze
+      -a GA
+      --apply-pvs-configs
+      --project-root "${CMAKE_SOURCE_DIR}"
+  )
+endif()
 
 #-----------------------------------------------------------------------
 # a macro that only sets the FOLDER target property if it's
@@ -442,6 +498,7 @@ endif()
 
 if(CMake_TEST_EXTERNAL_CMAKE)
   set(KWIML_TEST_ENABLE 1)
+  set(KWIML_TEST_LABELS "PellesC")
   add_subdirectory(Utilities/KWIML)
 endif()
 

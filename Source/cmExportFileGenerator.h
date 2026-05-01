@@ -12,10 +12,13 @@
 
 #include <cm/string_view>
 
+#include "cmDiagnostics.h"
 #include "cmGeneratorExpression.h"
+#include "cmMessageType.h"
 
 class cmExportSet;
 class cmGeneratorTarget;
+class cmGeneratorFileSet;
 class cmLocalGenerator;
 
 /** \class cmExportFileGenerator
@@ -46,6 +49,7 @@ public:
 
 protected:
   using ImportPropertyMap = std::map<std::string, std::string>;
+  using ImportFileSetPropertyMap = std::map<std::string, ImportPropertyMap>;
 
   // Collect properties with detailed information about targets beyond
   // their location on disk.
@@ -110,6 +114,10 @@ protected:
                                  cmGeneratorTarget const* target,
                                  cmGeneratorExpression::PreprocessContext,
                                  ImportPropertyMap& properties);
+  void PopulateFileSetInterfaceProperty(
+    std::string const& propName, cmGeneratorTarget const* target,
+    cmGeneratorFileSet const* fileSet,
+    cmGeneratorExpression::PreprocessContext, ImportPropertyMap& properties);
   bool PopulateInterfaceLinkLibrariesProperty(
     cmGeneratorTarget const* target, cmGeneratorExpression::PreprocessContext,
     ImportPropertyMap& properties);
@@ -120,7 +128,20 @@ protected:
     cmGeneratorExpression::PreprocessContext preprocessRule,
     ImportPropertyMap& properties);
 
-  virtual void ReportError(std::string const& errorMessage) const = 0;
+  bool PopulateFileSetInterfaceProperties(
+    cmGeneratorTarget const* target, cmGeneratorFileSet const* fileSet,
+    cmGeneratorExpression::PreprocessContext preprocessRule,
+    ImportPropertyMap& properties);
+
+  virtual void IssueMessage(MessageType type,
+                            std::string const& message) const = 0;
+  virtual void IssueDiagnostic(cmDiagnosticCategory category,
+                               std::string const& message) const = 0;
+
+  void ReportError(std::string const& errorMessage) const
+  {
+    this->IssueMessage(MessageType::FATAL_ERROR, errorMessage);
+  }
 
   struct ExportInfo
   {

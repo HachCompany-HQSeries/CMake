@@ -397,17 +397,20 @@ Commands
     FetchContent_Declare(other ...)
     FetchContent_MakeAvailable(uses_other other)
 
-  Note that :variable:`CMAKE_VERIFY_INTERFACE_HEADER_SETS` is explicitly set
-  to false upon entry to ``FetchContent_MakeAvailable()``, and is restored to
-  its original value before the command returns.  Developers typically only
+  Note that :variable:`CMAKE_VERIFY_INTERFACE_HEADER_SETS` and
+  :variable:`CMAKE_VERIFY_PRIVATE_HEADER_SETS` are explicitly set to false
+  upon entry to ``FetchContent_MakeAvailable()``, and are restored to their
+  original values before the command returns.  Developers typically only
   want to verify header sets from the main project, not those from any
   dependencies.  This local manipulation of the
-  :variable:`CMAKE_VERIFY_INTERFACE_HEADER_SETS` variable provides that
+  :variable:`CMAKE_VERIFY_INTERFACE_HEADER_SETS` and
+  :variable:`CMAKE_VERIFY_PRIVATE_HEADER_SETS` variables provides that
   intuitive behavior.  You can use variables like
   :variable:`CMAKE_PROJECT_INCLUDE` or
   :variable:`CMAKE_PROJECT_<PROJECT-NAME>_INCLUDE` to turn verification back
   on for all or some dependencies.  You can also set the
-  :prop_tgt:`VERIFY_INTERFACE_HEADER_SETS` property of individual targets.
+  :prop_tgt:`VERIFY_INTERFACE_HEADER_SETS` and
+  :prop_tgt:`VERIFY_PRIVATE_HEADER_SETS` properties of individual targets.
 
 .. command:: FetchContent_Populate
 
@@ -1863,6 +1866,8 @@ ExternalProject_Add_Step(${contentName}-populate copyfile
   set(__FETCHCONTENT_CACHED_INFO "")
   set(__passthrough_vars
     CMAKE_EP_GIT_REMOTE_UPDATE_STRATEGY
+    CMAKE_EP_GIT_CLONE_RETRY_COUNT
+    CMAKE_EP_GIT_CLONE_RETRY_DELAY
     CMAKE_TLS_VERSION
     CMAKE_TLS_VERIFY
     CMAKE_TLS_CAINFO
@@ -2240,12 +2245,14 @@ endfunction()
 # calls will be available to the caller.
 macro(FetchContent_MakeAvailable)
 
-  # We must append an item, even if the variable is unset, so prefix its value.
-  # We will strip that prefix when we pop the value at the end of the macro.
+  # We must append these, even if the variables are unset, so prefix the values.
+  # We will strip that prefix when we pop the values at the end of the macro.
   list(APPEND __cmake_fcCurrentVarsStack
     "__fcprefix__${CMAKE_VERIFY_INTERFACE_HEADER_SETS}"
+    "__fcprefix__${CMAKE_VERIFY_PRIVATE_HEADER_SETS}"
   )
   set(CMAKE_VERIFY_INTERFACE_HEADER_SETS FALSE)
+  set(CMAKE_VERIFY_PRIVATE_HEADER_SETS FALSE)
 
   get_property(__cmake_providerCommand GLOBAL PROPERTY
     __FETCHCONTENT_MAKEAVAILABLE_SERIAL_PROVIDER
@@ -2453,18 +2460,30 @@ macro(FetchContent_MakeAvailable)
   endforeach()
 
   # Prefix will be "__fcprefix__"
-  list(POP_BACK __cmake_fcCurrentVarsStack __cmake_original_verify_setting)
-  string(SUBSTRING "${__cmake_original_verify_setting}"
-    12 -1 __cmake_original_verify_setting
+  list(POP_BACK __cmake_fcCurrentVarsStack
+    __cmake_original_verify_private_setting
+    __cmake_original_verify_interface_setting
   )
-  set(CMAKE_VERIFY_INTERFACE_HEADER_SETS ${__cmake_original_verify_setting})
+  string(SUBSTRING "${__cmake_original_verify_private_setting}"
+    12 -1 __cmake_original_verify_private_setting
+  )
+  string(SUBSTRING "${__cmake_original_verify_interface_setting}"
+    12 -1 __cmake_original_verify_interface_setting
+  )
+  set(CMAKE_VERIFY_PRIVATE_HEADER_SETS
+    ${__cmake_original_verify_private_setting}
+  )
+  set(CMAKE_VERIFY_INTERFACE_HEADER_SETS
+    ${__cmake_original_verify_interface_setting}
+  )
 
   # clear local variables to prevent leaking into the caller's scope
   unset(__cmake_contentName)
   unset(__cmake_contentNameLower)
   unset(__cmake_contentNameUpper)
   unset(__cmake_providerCommand)
-  unset(__cmake_original_verify_setting)
+  unset(__cmake_original_verify_interface_setting)
+  unset(__cmake_original_verify_private_setting)
 
 endmacro()
 

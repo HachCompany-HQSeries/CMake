@@ -10,6 +10,7 @@
 #include <cmext/algorithm>
 #include <cmext/string_view>
 
+#include "cmDiagnostics.h"
 #include "cmExecutionStatus.h"
 #include "cmFunctionBlocker.h"
 #include "cmList.h"
@@ -18,6 +19,7 @@
 #include "cmPolicies.h"
 #include "cmRange.h"
 #include "cmState.h"
+#include "cmStateTypes.h"
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
 
@@ -47,6 +49,7 @@ public:
   std::vector<std::string> Args;
   std::vector<cmListFileFunction> Functions;
   cmPolicies::PolicyMap Policies;
+  cmDiagnostics::DiagnosticMap Diagnostics;
   std::string FilePath;
   long Line;
 };
@@ -72,7 +75,7 @@ bool cmFunctionHelperCommand::operator()(
   }
 
   cmMakefile::FunctionPushPop functionScope(&makefile, this->FilePath,
-                                            this->Policies);
+                                            this->Policies, this->Diagnostics);
 
   // set the value of argc
   makefile.AddDefinition(ARGC, std::to_string(expandedArgs.size()));
@@ -171,8 +174,9 @@ bool cmFunctionFunctionBlocker::Replay(
   f.FilePath = this->GetStartingContext().FilePath;
   f.Line = this->GetStartingContext().Line;
   mf.RecordPolicies(f.Policies);
+  mf.RecordDiagnostics(f.Diagnostics);
   return mf.GetState()->AddScriptedCommand(
-    this->Args.front(),
+    this->Args.front(), cmStateEnums::CommandType::Function,
     BT<cmState::Command>(std::move(f),
                          mf.GetBacktrace().Push(this->GetStartingContext())),
     mf);

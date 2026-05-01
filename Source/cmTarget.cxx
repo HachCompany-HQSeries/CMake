@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <set>
@@ -20,7 +21,9 @@
 
 #include "cmAlgorithms.h"
 #include "cmCustomCommand.h"
+#include "cmDiagnostics.h"
 #include "cmFileSet.h"
+#include "cmFileSetMetadata.h"
 #include "cmFindPackageStack.h"
 #include "cmGeneratorExpression.h"
 #include "cmGlobalGenerator.h"
@@ -98,18 +101,18 @@ cmValue cmTargetPropertyComputer::GetSources<cmTarget>(cmTarget const* tgt)
 namespace {
 struct FileSetEntries
 {
-  FileSetEntries(cm::static_string_view propertyName)
+  FileSetEntries(cm::string_view propertyName)
     : PropertyName(propertyName)
   {
   }
 
-  cm::static_string_view const PropertyName;
+  cm::string_view const PropertyName;
   std::vector<BT<std::string>> Entries;
 };
 
 struct FileSetType
 {
-  FileSetType(cm::static_string_view typeName,
+  FileSetType(cm::string_view typeName,
               cm::static_string_view defaultDirectoryProperty,
               cm::static_string_view defaultPathProperty,
               cm::static_string_view directoryPrefix,
@@ -131,7 +134,7 @@ struct FileSetType
   {
   }
 
-  cm::static_string_view const TypeName;
+  cm::string_view const TypeName;
   cm::static_string_view const DefaultDirectoryProperty;
   cm::static_string_view const DefaultPathProperty;
   cm::static_string_view const DirectoryPrefix;
@@ -157,7 +160,7 @@ struct FileSetType
                                           cmTargetInternals const* impl,
                                           std::string const& prop) const;
 
-  void AddFileSet(std::string const& name, cmFileSetVisibility vis,
+  void AddFileSet(std::string const& name, cm::FileSetMetadata::Visibility vis,
                   cmListFileBacktrace bt);
 };
 
@@ -378,6 +381,10 @@ TargetProperty const StaticTargetProperties[] = {
   { "Swift_LANGUAGE_VERSION"_s, IC::CanCompileSources },
   { "Swift_MODULE_DIRECTORY"_s, IC::CanCompileSources },
   { "Swift_COMPILATION_MODE"_s, IC::CanCompileSources },
+  { "Swift_SEPARATE_MODULE_EMISSION"_s, IC::CanCompileSources },
+  // ---- Rust
+  { "Rust_EDITION"_s, IC::CanCompileSources },
+  { "Rust_MAIN_CRATE_ROOT"_s, IC::CanCompileSources },
   // ---- moc
   { "AUTOMOC"_s, IC::CanCompileSources },
   { "AUTOMOC_COMPILER_PREDEFINES"_s, IC::CanCompileSources },
@@ -473,6 +480,7 @@ TargetProperty const StaticTargetProperties[] = {
   { "C_CPPCHECK"_s, IC::CanCompileSources },
   { "C_ICSTAT"_s, IC::CanCompileSources },
   { "C_INCLUDE_WHAT_YOU_USE"_s, IC::CanCompileSources },
+  { "C_PVS_STUDIO"_s, IC::CanCompileSources },
   // -- C++
   { "CXX_CLANG_TIDY"_s, IC::CanCompileSources },
   { "CXX_CLANG_TIDY_EXPORT_FIXES_DIR"_s, IC::CanCompileSources },
@@ -480,6 +488,7 @@ TargetProperty const StaticTargetProperties[] = {
   { "CXX_CPPCHECK"_s, IC::CanCompileSources },
   { "CXX_ICSTAT"_s, IC::CanCompileSources },
   { "CXX_INCLUDE_WHAT_YOU_USE"_s, IC::CanCompileSources },
+  { "CXX_PVS_STUDIO"_s, IC::CanCompileSources },
   // -- Objective C
   { "OBJC_CLANG_TIDY"_s, IC::CanCompileSources },
   { "OBJC_CLANG_TIDY_EXPORT_FIXES_DIR"_s, IC::CanCompileSources },
@@ -498,6 +507,7 @@ TargetProperty const StaticTargetProperties[] = {
   { "UNITY_BUILD_RELOCATABLE"_s, IC::CanCompileSources },
   { "OPTIMIZE_DEPENDENCIES"_s, IC::CanCompileSources },
   { "VERIFY_INTERFACE_HEADER_SETS"_s },
+  { "VERIFY_PRIVATE_HEADER_SETS"_s },
   // -- Android
   { "ANDROID_ANT_ADDITIONAL_OPTIONS"_s, IC::CanCompileSources },
   { "ANDROID_PROCESS_MAX"_s, IC::CanCompileSources },
@@ -609,6 +619,7 @@ public:
   bool BuildInterfaceIncludesAppended;
   bool PerConfig;
   bool IsSymbolic;
+  bool IsForTryCompile{ false };
   cmTarget::Visibility TargetVisibility;
   std::set<BT<std::pair<std::string, bool>>> Utilities;
   std::set<std::string> CodegenDependencies;
@@ -645,8 +656,7 @@ public:
   UsageRequirementProperty ImportedCxxModulesCompileOptions;
   UsageRequirementProperty ImportedCxxModulesLinkLibraries;
 
-  FileSetType HeadersFileSets;
-  FileSetType CxxModulesFileSets;
+  std::unordered_map<cm::string_view, FileSetType> FileSetTypes;
 
   cmTargetInternals();
 
@@ -700,17 +710,25 @@ cmTargetInternals::cmTargetInternals()
       "IMPORTED_CXX_MODULES_COMPILE_FEATURES"_s)
   , ImportedCxxModulesCompileOptions("IMPORTED_CXX_MODULES_COMPILE_OPTIONS"_s)
   , ImportedCxxModulesLinkLibraries("IMPORTED_CXX_MODULES_LINK_LIBRARIES"_s)
-  , HeadersFileSets("HEADERS"_s, "HEADER_DIRS"_s, "HEADER_SET"_s,
-                    "HEADER_DIRS_"_s, "HEADER_SET_"_s, "Header"_s,
-                    "The default header set"_s, "Header set"_s,
-                    FileSetEntries("HEADER_SETS"_s),
-                    FileSetEntries("INTERFACE_HEADER_SETS"_s))
-  , CxxModulesFileSets("CXX_MODULES"_s, "CXX_MODULE_DIRS"_s,
-                       "CXX_MODULE_SET"_s, "CXX_MODULE_DIRS_"_s,
-                       "CXX_MODULE_SET_"_s, "C++ module"_s,
-                       "The default C++ module set"_s, "C++ module set"_s,
-                       FileSetEntries("CXX_MODULE_SETS"_s),
-                       FileSetEntries("INTERFACE_CXX_MODULE_SETS"_s))
+  , FileSetTypes{ { cm::FileSetMetadata::HEADERS,
+                    { cm::FileSetMetadata::HEADERS, "HEADER_DIRS"_s,
+                      "HEADER_SET"_s, "HEADER_DIRS_"_s, "HEADER_SET_"_s,
+                      "Header"_s, "The default header set"_s, "Header set"_s,
+                      FileSetEntries{ "HEADER_SETS"_s },
+                      FileSetEntries{ "INTERFACE_HEADER_SETS"_s } } },
+                  { cm::FileSetMetadata::SOURCES,
+                    { cm::FileSetMetadata::SOURCES, "SOURCE_DIRS"_s,
+                      "SOURCE_SET"_s, "SOURCE_DIRS_"_s, "SOURCE_SET_"_s,
+                      "Source"_s, "The default source set"_s, "Source set"_s,
+                      FileSetEntries{ "SOURCE_SETS"_s },
+                      FileSetEntries{ "INTERFACE_SOURCE_SETS"_s } } },
+                  { cm::FileSetMetadata::CXX_MODULES,
+                    { cm::FileSetMetadata::CXX_MODULES, "CXX_MODULE_DIRS"_s,
+                      "CXX_MODULE_SET"_s, "CXX_MODULE_DIRS_"_s,
+                      "CXX_MODULE_SET_"_s, "C++ module"_s,
+                      "The default C++ module set"_s, "C++ module set"_s,
+                      FileSetEntries{ "CXX_MODULE_SETS"_s },
+                      FileSetEntries{ "INTERFACE_CXX_MODULE_SETS"_s } } } }
 {
 }
 
@@ -799,13 +817,14 @@ std::pair<bool, cmValue> FileSetType::ReadProperties(
   return { did_read, value };
 }
 
-void FileSetType::AddFileSet(std::string const& name, cmFileSetVisibility vis,
+void FileSetType::AddFileSet(std::string const& name,
+                             cm::FileSetMetadata::Visibility vis,
                              cmListFileBacktrace bt)
 {
-  if (cmFileSetVisibilityIsForSelf(vis)) {
+  if (cm::FileSetMetadata::VisibilityIsForSelf(vis)) {
     this->SelfEntries.Entries.emplace_back(name, bt);
   }
-  if (cmFileSetVisibilityIsForInterface(vis)) {
+  if (cm::FileSetMetadata::VisibilityIsForInterface(vis)) {
     this->InterfaceEntries.Entries.emplace_back(name, std::move(bt));
   }
 }
@@ -1098,11 +1117,13 @@ cmTarget::cmTarget(std::string const& name, cmStateEnums::TargetType type,
   }
 
   for (auto const& prop : mf->GetState()->GetPropertyDefinitions().GetMap()) {
-    if (prop.first.second == cmProperty::TARGET &&
-        !prop.second.GetInitializeFromVariable().empty()) {
-      if (auto value =
-            mf->GetDefinition(prop.second.GetInitializeFromVariable())) {
-        this->SetProperty(prop.first.first, value);
+    auto iter = prop.second.find(cmProperty::TARGET);
+    if (iter != prop.second.end()) {
+      if (!iter->second.GetInitializeFromVariable().empty()) {
+        if (auto value =
+              mf->GetDefinition(iter->second.GetInitializeFromVariable())) {
+          this->SetProperty(prop.first, value);
+        }
       }
     }
   }
@@ -1715,53 +1736,70 @@ void cmTarget::CopyPolicyStatuses(cmTarget const* tgt)
   assert(!this->IsNormal());
   // Imported targets cannot be the target of a copy.
   assert(!this->IsImported());
-  // Only imported targets can be the source of a copy.
-  assert(tgt->IsImported());
+
+  // Only imported or normal targets can be the source of a copy.
+  assert(tgt->IsImported() || tgt->IsNormal());
 
   this->impl->PolicyMap = tgt->impl->PolicyMap;
   this->impl->TemplateTarget = tgt;
 }
 
-void cmTarget::CopyImportedCxxModulesEntries(cmTarget const* tgt)
+void cmTarget::CopyCxxModulesEntries(cmTarget const* tgt)
 {
   // Normal targets cannot be the target of a copy.
   assert(!this->IsNormal());
   // Imported targets cannot be the target of a copy.
   assert(!this->IsImported());
-  // Only imported targets can be the source of a copy.
-  assert(tgt->IsImported());
+  // Only imported or normal targets can be the source of a copy.
+  assert(tgt->IsImported() || tgt->IsNormal());
 
   this->impl->IncludeDirectories.Entries.clear();
-  this->impl->IncludeDirectories.CopyFromEntries(
-    cmMakeRange(tgt->impl->ImportedCxxModulesIncludeDirectories.Entries));
   this->impl->CompileDefinitions.Entries.clear();
-  this->impl->CompileDefinitions.CopyFromEntries(
-    cmMakeRange(tgt->impl->ImportedCxxModulesCompileDefinitions.Entries));
   this->impl->CompileFeatures.Entries.clear();
-  this->impl->CompileFeatures.CopyFromEntries(
-    cmMakeRange(tgt->impl->ImportedCxxModulesCompileFeatures.Entries));
   this->impl->CompileOptions.Entries.clear();
-  this->impl->CompileOptions.CopyFromEntries(
-    cmMakeRange(tgt->impl->ImportedCxxModulesCompileOptions.Entries));
   this->impl->LinkLibraries.Entries.clear();
-  this->impl->LinkLibraries.CopyFromEntries(
-    cmMakeRange(tgt->impl->ImportedCxxModulesLinkLibraries.Entries));
+
+  if (tgt->IsImported()) {
+    this->impl->IncludeDirectories.CopyFromEntries(
+      cmMakeRange(tgt->impl->ImportedCxxModulesIncludeDirectories.Entries));
+    this->impl->CompileDefinitions.CopyFromEntries(
+      cmMakeRange(tgt->impl->ImportedCxxModulesCompileDefinitions.Entries));
+    this->impl->CompileFeatures.CopyFromEntries(
+      cmMakeRange(tgt->impl->ImportedCxxModulesCompileFeatures.Entries));
+    this->impl->CompileOptions.CopyFromEntries(
+      cmMakeRange(tgt->impl->ImportedCxxModulesCompileOptions.Entries));
+    this->impl->LinkLibraries.CopyFromEntries(
+      cmMakeRange(tgt->impl->ImportedCxxModulesLinkLibraries.Entries));
+  } else {
+    this->impl->IncludeDirectories.CopyFromEntries(
+      cmMakeRange(tgt->impl->IncludeDirectories.Entries));
+    this->impl->CompileDefinitions.CopyFromEntries(
+      cmMakeRange(tgt->impl->CompileDefinitions.Entries));
+    this->impl->CompileFeatures.CopyFromEntries(
+      cmMakeRange(tgt->impl->CompileFeatures.Entries));
+    this->impl->CompileOptions.CopyFromEntries(
+      cmMakeRange(tgt->impl->CompileOptions.Entries));
+    this->impl->LinkLibraries.CopyFromEntries(
+      cmMakeRange(tgt->impl->LinkLibraries.Entries));
+  }
 
   // Copy the C++ module fileset entries from `tgt`'s `INTERFACE` to this
   // target's `PRIVATE`.
-  this->impl->CxxModulesFileSets.SelfEntries.Entries.clear();
-  this->impl->CxxModulesFileSets.SelfEntries.Entries =
-    tgt->impl->CxxModulesFileSets.InterfaceEntries.Entries;
+  auto& entries = this->impl->FileSetTypes.at(cm::FileSetMetadata::CXX_MODULES)
+                    .SelfEntries.Entries;
+  entries.clear();
+  entries = tgt->impl->FileSetTypes.at(cm::FileSetMetadata::CXX_MODULES)
+              .InterfaceEntries.Entries;
 }
 
-void cmTarget::CopyImportedCxxModulesProperties(cmTarget const* tgt)
+void cmTarget::CopyCxxModulesProperties(cmTarget const* tgt)
 {
   // Normal targets cannot be the target of a copy.
   assert(!this->IsNormal());
   // Imported targets cannot be the target of a copy.
   assert(!this->IsImported());
-  // Only imported targets can be the source of a copy.
-  assert(tgt->IsImported());
+  // Only imported or normal targets can be the source of a copy.
+  assert(tgt->IsImported() || tgt->IsNormal());
 
   // The list of properties that are relevant here include:
   // - compilation-specific properties for any language or platform
@@ -1808,6 +1846,7 @@ void cmTarget::CopyImportedCxxModulesProperties(cmTarget const* tgt)
     "CXX_CPPCHECK",
     "CXX_ICSTAT",
     "CXX_INCLUDE_WHAT_YOU_USE",
+    "CXX_PVS_STUDIO",
     "SKIP_LINTING",
 
     // Build graph properties
@@ -1898,24 +1937,26 @@ void cmTarget::CopyImportedCxxModulesProperties(cmTarget const* tgt)
   }
 }
 
-cmBTStringRange cmTarget::GetHeaderSetsEntries() const
-{
-  return cmMakeRange(this->impl->HeadersFileSets.SelfEntries.Entries);
+namespace {
+std::vector<BT<std::string>> EmptyEntries;
 }
 
-cmBTStringRange cmTarget::GetCxxModuleSetsEntries() const
+cmBTStringRange cmTarget::GetFileSetsEntries(cm::string_view type) const
 {
-  return cmMakeRange(this->impl->CxxModulesFileSets.SelfEntries.Entries);
+  if (cm::contains(this->impl->FileSetTypes, type)) {
+    return cmMakeRange(this->impl->FileSetTypes.at(type).SelfEntries.Entries);
+  }
+  return cmMakeRange(EmptyEntries);
 }
 
-cmBTStringRange cmTarget::GetInterfaceHeaderSetsEntries() const
+cmBTStringRange cmTarget::GetInterfaceFileSetsEntries(
+  cm::string_view type) const
 {
-  return cmMakeRange(this->impl->HeadersFileSets.InterfaceEntries.Entries);
-}
-
-cmBTStringRange cmTarget::GetInterfaceCxxModuleSetsEntries() const
-{
-  return cmMakeRange(this->impl->CxxModulesFileSets.InterfaceEntries.Entries);
+  if (cm::contains(this->impl->FileSetTypes, type)) {
+    return cmMakeRange(
+      this->impl->FileSetTypes.at(type).InterfaceEntries.Entries);
+  }
+  return cmMakeRange(EmptyEntries);
 }
 
 namespace {
@@ -2020,8 +2061,8 @@ struct ReadOnlyProperty
     } else {
       switch (target->GetPolicyStatus(*this->Policy)) {
         case cmPolicies::WARN:
-          context->IssueMessage(
-            MessageType::AUTHOR_WARNING,
+          context->IssueDiagnostic(
+            cmDiagnostics::CMD_AUTHOR,
             cmPolicies::GetPolicyWarning(cmPolicies::CMP0160) + "\n" +
               this->message(prop, target));
           CM_FALLTHROUGH;
@@ -2109,14 +2150,9 @@ void cmTarget::SetProperty(std::string const& prop, cmValue value)
     }
   }
 
-  FileSetType* fileSetTypes[] = {
-    &this->impl->HeadersFileSets,
-    &this->impl->CxxModulesFileSets,
-  };
-
-  for (auto* fileSetType : fileSetTypes) {
-    if (fileSetType->WriteProperties(this, this->impl.get(), prop, value,
-                                     FileSetType::Action::Set)) {
+  for (auto& fileSetType : this->impl->FileSetTypes) {
+    if (fileSetType.second.WriteProperties(this, this->impl.get(), prop, value,
+                                           FileSetType::Action::Set)) {
       return;
     }
   }
@@ -2229,14 +2265,9 @@ void cmTarget::AppendProperty(std::string const& prop,
     }
   }
 
-  FileSetType* fileSetTypes[] = {
-    &this->impl->HeadersFileSets,
-    &this->impl->CxxModulesFileSets,
-  };
-
-  for (auto* fileSetType : fileSetTypes) {
-    if (fileSetType->WriteProperties(this, this->impl.get(), prop, value,
-                                     FileSetType::Action::Append)) {
+  for (auto& fileSetType : this->impl->FileSetTypes) {
+    if (fileSetType.second.WriteProperties(this, this->impl.get(), prop, value,
+                                           FileSetType::Action::Append)) {
       return;
     }
   }
@@ -2712,13 +2743,9 @@ cmValue cmTarget::GetProperty(std::string const& prop) const
 
   // Check fileset properties.
   {
-    FileSetType* fileSetTypes[] = {
-      &this->impl->HeadersFileSets,
-      &this->impl->CxxModulesFileSets,
-    };
-
-    for (auto* fileSetType : fileSetTypes) {
-      auto value = fileSetType->ReadProperties(this, this->impl.get(), prop);
+    for (auto const& fileSetType : this->impl->FileSetTypes) {
+      auto value =
+        fileSetType.second.ReadProperties(this, this->impl.get(), prop);
       if (value.first) {
         return value.second;
       }
@@ -2906,6 +2933,16 @@ bool cmTarget::CanCompileSources() const
   return false;
 }
 
+void cmTarget::SetIsForTryCompile()
+{
+  this->impl->IsForTryCompile = true;
+}
+
+bool cmTarget::IsForTryCompile() const
+{
+  return this->impl->IsForTryCompile;
+}
+
 char const* cmTarget::GetSuffixVariableInternal(
   cmStateEnums::ArtifactType artifact) const
 {
@@ -2993,7 +3030,8 @@ char const* cmTarget::GetPrefixVariableInternal(
 }
 
 std::string cmTarget::ImportedGetFullPath(
-  std::string const& config, cmStateEnums::ArtifactType artifact) const
+  std::string const& config, cmStateEnums::ArtifactType artifact,
+  ImportArtifactMissingOk missingOk) const
 {
   assert(this->IsImported());
 
@@ -3074,7 +3112,7 @@ std::string cmTarget::ImportedGetFullPath(
     }
   }
 
-  if (result.empty()) {
+  if (result.empty() && missingOk != ImportArtifactMissingOk::Yes) {
     if (this->GetType() != cmStateEnums::INTERFACE_LIBRARY) {
       auto message = [&]() -> std::string {
         std::string unset;
@@ -3099,8 +3137,8 @@ std::string cmTarget::ImportedGetFullPath(
 
       switch (this->GetPolicyStatus(cmPolicies::CMP0111)) {
         case cmPolicies::WARN:
-          this->impl->Makefile->IssueMessage(
-            MessageType::AUTHOR_WARNING,
+          this->impl->Makefile->IssueDiagnostic(
+            cmDiagnostics::CMD_AUTHOR,
             cmPolicies::GetPolicyWarning(cmPolicies::CMP0111) + "\n" +
               message());
           CM_FALLTHROUGH;
@@ -3130,40 +3168,37 @@ cmFileSet* cmTarget::GetFileSet(std::string const& name)
 }
 
 std::pair<cmFileSet*, bool> cmTarget::GetOrCreateFileSet(
-  std::string const& name, std::string const& type, cmFileSetVisibility vis)
+  std::string const& name, std::string const& type,
+  cm::FileSetMetadata::Visibility vis)
 {
   auto result = this->impl->FileSets.emplace(
-    name,
-    cmFileSet(*this->GetMakefile()->GetCMakeInstance(), name, type, vis));
+    name, cmFileSet(this->GetMakefile(), this, name, type, vis));
   if (result.second) {
     auto bt = this->impl->Makefile->GetBacktrace();
-    if (type == this->impl->HeadersFileSets.TypeName) {
-      this->impl->HeadersFileSets.AddFileSet(name, vis, std::move(bt));
-    } else if (type == this->impl->CxxModulesFileSets.TypeName) {
-      this->impl->CxxModulesFileSets.AddFileSet(name, vis, std::move(bt));
+    if (cm::contains(this->impl->FileSetTypes, type)) {
+      this->impl->FileSetTypes.at(type).AddFileSet(name, vis, std::move(bt));
     }
   }
   return std::make_pair(&result.first->second, result.second);
 }
 
-std::string cmTarget::GetFileSetsPropertyName(std::string const& type)
+std::string cmTarget::GetFileSetsPropertyName(std::string const& type) const
 {
-  if (type == "HEADERS") {
-    return "HEADER_SETS";
-  }
-  if (type == "CXX_MODULES") {
-    return "CXX_MODULE_SETS";
+  if (cm::contains(this->impl->FileSetTypes, type)) {
+    return std::string{
+      this->impl->FileSetTypes.at(type).SelfEntries.PropertyName
+    };
   }
   return "";
 }
 
-std::string cmTarget::GetInterfaceFileSetsPropertyName(std::string const& type)
+std::string cmTarget::GetInterfaceFileSetsPropertyName(
+  std::string const& type) const
 {
-  if (type == "HEADERS") {
-    return "INTERFACE_HEADER_SETS";
-  }
-  if (type == "CXX_MODULES") {
-    return "INTERFACE_CXX_MODULE_SETS";
+  if (cm::contains(this->impl->FileSetTypes, type)) {
+    return std::string{
+      this->impl->FileSetTypes.at(type).InterfaceEntries.PropertyName
+    };
   }
   return "";
 }
@@ -3179,7 +3214,12 @@ std::vector<std::string> cmTarget::GetAllFileSetNames() const
   return result;
 }
 
-std::vector<std::string> cmTarget::GetAllInterfaceFileSets() const
+namespace {
+std::vector<std::string> RetrieveFileSetNames(
+  std::unordered_map<cm::string_view, FileSetType> const& fileSetTypes,
+  std::function<
+    std::vector<BT<std::string>> const&(FileSetType const& fileSetType)>
+    GetFileSets)
 {
   std::vector<std::string> result;
   auto inserter = std::back_inserter(result);
@@ -3191,10 +3231,30 @@ std::vector<std::string> cmTarget::GetAllInterfaceFileSets() const
     }
   };
 
-  appendEntries(this->impl->HeadersFileSets.InterfaceEntries.Entries);
-  appendEntries(this->impl->CxxModulesFileSets.InterfaceEntries.Entries);
+  for (auto const& fileSetType : fileSetTypes) {
+    appendEntries(GetFileSets(fileSetType.second));
+  }
 
   return result;
+}
+}
+
+std::vector<std::string> cmTarget::GetAllPrivateFileSets() const
+{
+  return RetrieveFileSetNames(
+    this->impl->FileSetTypes,
+    [](FileSetType const& fileSetType) -> std::vector<BT<std::string>> const& {
+      return fileSetType.SelfEntries.Entries;
+    });
+}
+
+std::vector<std::string> cmTarget::GetAllInterfaceFileSets() const
+{
+  return RetrieveFileSetNames(
+    this->impl->FileSetTypes,
+    [](FileSetType const& fileSetType) -> std::vector<BT<std::string>> const& {
+      return fileSetType.InterfaceEntries.Entries;
+    });
 }
 
 bool cmTarget::HasFileSets() const
@@ -3268,7 +3328,7 @@ bool cmTarget::GetMappedConfig(std::string const& desiredConfig, cmValue& loc,
         "\nConfiguration selection for imported target \"", this->GetName(),
         "\" failed, but would select configuration \"", newConfig,
         "\" under the NEW policy.\n");
-      this->GetMakefile()->IssueMessage(MessageType::AUTHOR_WARNING, err);
+      this->GetMakefile()->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, err);
     }
 
     return false;
@@ -3282,7 +3342,7 @@ bool cmTarget::GetMappedConfig(std::string const& desiredConfig, cmValue& loc,
                "\nConfiguration selection for imported target \"",
                this->GetName(), "\" selected configuration \"", oldConfig,
                "\", but would fail under the NEW policy.\n");
-    this->GetMakefile()->IssueMessage(MessageType::AUTHOR_WARNING, err);
+    this->GetMakefile()->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, err);
   } else if (suffix != newSuffix) {
     // OLD and NEW policies found different configurations.
     cm::string_view newConfig = configFromSuffix(newSuffix);
@@ -3292,7 +3352,7 @@ bool cmTarget::GetMappedConfig(std::string const& desiredConfig, cmValue& loc,
                this->GetName(), "\" selected configuration \"", oldConfig,
                "\", but would select configuration \"", newConfig,
                "\" under the NEW policy.\n");
-    this->GetMakefile()->IssueMessage(MessageType::AUTHOR_WARNING, err);
+    this->GetMakefile()->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, err);
   }
 
   return true;

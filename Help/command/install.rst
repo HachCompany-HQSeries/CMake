@@ -21,6 +21,7 @@ Synopsis
   install(`EXPORT`_ <export-name> [...])
   install(`PACKAGE_INFO`_ <package-name> [...])
   install(`RUNTIME_DEPENDENCY_SET`_ <set-name> [...])
+  install(`SBOM`_ <sbom-name> [...])
 
 Introduction
 ^^^^^^^^^^^^
@@ -58,6 +59,11 @@ signatures that specify them.  The common options are:
   Specify the directory on disk to which a file will be installed.
   ``<dir>`` should be a relative path.  An absolute path is allowed,
   but not recommended.
+
+  .. versionadded:: 4.4
+    The :ref:`CMD_INSTALL_ABSOLUTE_DESTINATION <CMD_INSTALL_ABSOLUTE_DESTINATION>`
+    diagnostic can be enabled to warn or error out when an absolute destination
+    is provided.
 
   When a relative path is given, it is interpreted relative to the value
   of the :variable:`CMAKE_INSTALL_PREFIX` variable.
@@ -200,6 +206,8 @@ Signatures
       - DLLs (these go to ``RUNTIME``, see below),
       - on macOS when marked as ``FRAMEWORK`` (see below).
 
+    * *Module libraries*
+
   ``RUNTIME``
     Target artifacts of this kind include:
 
@@ -242,7 +250,10 @@ Signatures
 
     File sets are defined by the :command:`target_sources(FILE_SET)` command.
     If the file set ``<set-name>`` exists and is ``PUBLIC`` or ``INTERFACE``,
-    any files in the set are installed under the destination (see below).
+    any files in the set of type ``HEADERS`` are installed under
+    the destination (see below). Other types do not have any default
+    destination, so ``DESTINATION`` option must be specified for each
+    ``FILE_SET``.
     The directory structure relative to the file set's base directories is
     preserved. For example, a file added to the file set as
     ``/blah/include/myproj/here.h`` with a base directory ``/blah/include``
@@ -262,12 +273,13 @@ Signatures
   ``DESTINATION`` is omitted, a default destination will be taken from the
   appropriate variable from :module:`GNUInstallDirs`, or set to a built-in
   default value if that variable is not defined.  The same is true for file
-  sets, and the public and private headers associated with the installed
-  targets through the :prop_tgt:`PUBLIC_HEADER` and :prop_tgt:`PRIVATE_HEADER`
-  target properties. A destination must always be provided for module libraries,
-  Apple bundles and frameworks.  A destination can be omitted for interface and
-  object libraries, but they are handled differently (see the discussion of this
-  topic toward the end of this section).
+  sets of type ``HEADERS``, and the public and private headers associated with
+  the installed targets through the :prop_tgt:`PUBLIC_HEADER` and
+  :prop_tgt:`PRIVATE_HEADER` target properties. A destination must always be
+  provided for module libraries, Apple bundles and frameworks.  A destination
+  can be omitted for interface and object libraries, but they are handled
+  differently (see the discussion of this topic toward the end of this
+  section).
 
   For shared libraries on DLL platforms, if neither ``RUNTIME`` nor ``ARCHIVE``
   destinations are specified, both the ``RUNTIME`` and ``ARCHIVE`` components are
@@ -497,7 +509,7 @@ Signatures
              [CONFIGURATIONS <config>...]
              [COMPONENT <component>]
              [OPTIONAL] [EXCLUDE_FROM_ALL]
-            ] [...]
+            ]...
             )
 
   The ``IMPORTED_RUNTIME_ARTIFACTS`` form specifies rules for installing the
@@ -550,7 +562,7 @@ Signatures
   programs that are not targets, such as shell scripts.  Use the ``TARGETS``
   form to install targets built within the project.
 
-  The list of ``files...`` given to ``FILES`` or ``PROGRAMS`` may use
+  The list of files given to ``FILES`` or ``PROGRAMS`` may use
   "generator expressions" with the syntax ``$<...>``.  See the
   :manual:`cmake-generator-expressions(7)` manual for available expressions.
   However, if any item begins in a generator expression it must evaluate
@@ -791,7 +803,7 @@ Signatures
       Exclude the matched file or directory from installation.
 
     ``PERMISSIONS <permission>...``
-      Ovrerride the permissions setting for the matched file or directory.
+      Override the permissions setting for the matched file or directory.
 
     For example, the code
 
@@ -818,7 +830,7 @@ Signatures
 
     install([[SCRIPT <file>] [CODE <code>]]
             [ALL_COMPONENTS | COMPONENT <component>]
-            [EXCLUDE_FROM_ALL] [...])
+            [EXCLUDE_FROM_ALL])
 
   The ``SCRIPT`` form will invoke the given CMake script files during
   installation.  If the script file name is a relative path it will be
@@ -974,10 +986,7 @@ Signatures
 .. signature::
   install(PACKAGE_INFO <package-name> [...])
 
-  .. versionadded:: 3.31
-  .. note::
-
-    Experimental. Gated by ``CMAKE_EXPERIMENTAL_EXPORT_PACKAGE_INFO``.
+  .. versionadded:: 4.3
 
   Installs a |CPS|_ ("CPS") file exporting targets for dependent projects:
 
@@ -999,6 +1008,7 @@ Signatures
             [HOMEPAGE_URL <url-string>]
             [PERMISSIONS <permission>...]
             [CONFIGURATIONS <config>...]
+            [CXX_MODULES_DIRECTORY <directory>]
             [COMPONENT <component>]
             [EXCLUDE_FROM_ALL])
 
@@ -1136,7 +1146,7 @@ Signatures
              [COMPONENT <component>]
              [NAMELINK_COMPONENT <component>]
              [OPTIONAL] [EXCLUDE_FROM_ALL]
-            ] [...]
+            ]...
             [PRE_INCLUDE_REGEXES <regex>...]
             [PRE_EXCLUDE_REGEXES <regex>...]
             [POST_INCLUDE_REGEXES <regex>...]
@@ -1191,6 +1201,92 @@ Signatures
   those generated by :command:`install_targets`,
   :command:`install_files`, and :command:`install_programs` commands
   is not defined.
+
+.. signature::
+  install(SBOM <sbom-name> [...])
+
+  .. versionadded:: 4.3
+  .. note::
+
+    Experimental. Gated by ``CMAKE_EXPERIMENTAL_GENERATE_SBOM``.
+
+  Installs a |SBOM| or "SBOM" which describes the project:
+
+  .. code-block:: cmake
+
+    install(SBOM <sbom-name> EXPORT <export-name>
+            [PROJECT <project-name>|NO_PROJECT_METADATA]
+            [DESTINATION <dir>]
+            [VERSION <major>[.<minor>[.<patch>[.<tweak>]]]]
+            [LICENSE <license-string>]
+            [DESCRIPTION <description-string>]
+            [HOMEPAGE_URL <url-string>]
+            [PACKAGE_URL <url-string>]
+            [FORMAT <string>])
+
+  The ``SBOM`` form generates a |SBOM| or "SBOM" file for a given project
+  and installs it as part of the project installation.  A |SBOM| is a
+  machine-readable description of the project's targets, linked libraries,
+  and related metadata, such as versions and license information.  CMake
+  currently generates SBOM files using the |SPDX|_ 3.0 specification in
+  its JSON-LD representation, as selected by the ``FORMAT`` option, but
+  the interface is designed to allow additional SBOM formats or schema
+  versions to be supported in future CMake releases.
+
+  Target installations are associated with the export ``<export-name>``
+  using the ``EXPORT`` option of the :command:`install(TARGETS)` signature
+  documented above. If ``DESTINATION`` is not specified, a platform-specific
+  default is used.
+
+  Several options may be used to specify package metadata:
+
+  ``VERSION <version>``
+    The package version, specified as a series of non-negative  integer components,
+    i.e. <major>[.<minor>[.<patch>[.<tweak>]]].  See :command:`project(VERSION)` for
+    more information.
+
+  ``FORMAT <string>``
+    The format in which the SBOM should be exported, which must be an expression of
+    the form ``<format>[-<version>][+<representation>]``.  CMake currently supports
+    the JSON-LD serialization of |SPDX|_ v3.0.1 (``spdx`` or ``spdx-3.0.1+json``),
+    which is also the default if ``FORMAT`` is not specified.
+
+  ``HOMEPAGE_URL <url-string>``
+
+    An informational canonical home URL for the project.
+
+  ``PACKAGE_URL <url-string>``
+
+    An informational canonical package URL for the project.
+
+  ``LICENSE <license-string>``
+
+    A |SPDX|_ (SPDX) `License Expression`_ that describes the license(s) of the
+    project as a whole, including documentation, resources, or other materials
+    distributed with the project, in addition to software artifacts.  See the
+    SPDX `License List`_ for a list of commonly used licenses and their
+    identifiers.
+
+    The license of individual components is taken from the
+    :prop_tgt:`SPDX_LICENSE` property of their respective targets.
+
+  ``DESCRIPTION <description-string>``
+
+    An informational description of the project.  It is recommended that this
+    description is a relatively short string, usually no more than a few words.
+
+  By default, if the specified ``<sbom-name>`` matches the current CMake
+  :variable:`PROJECT_NAME`, sbom metadata will be inherited from the
+  project.  The ``PROJECT <project-name>`` option may be used to specify a
+  different project from which to inherit metadata.  If ``NO_PROJECT_METADATA``
+  is specified, automatic inheritance of sbom metadata will be disabled.
+  In any case, any metadata values specified in the ``install`` command will
+  take precedence.
+
+  Note that an SBOM file cannot be generated for targets with generator
+  expressions contained in their :prop_tgt:`LINK_LIBRARIES` or
+  :prop_tgt:`INTERFACE_LINK_LIBRARIES` properties, unless the generator
+  expressions are guarded by :genex:`LINK_ONLY`.
 
 Examples
 ^^^^^^^^
@@ -1323,3 +1419,5 @@ and by CPack. You can also invoke this script manually with
 
 .. _License Expression: https://spdx.github.io/spdx-spec/v3.0.1/annexes/spdx-license-expressions/
 .. _License List: https://spdx.org/licenses/
+
+.. |SBOM| replace:: Software Bill of Material

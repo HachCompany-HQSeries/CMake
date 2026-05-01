@@ -7,9 +7,9 @@
 
 #include <cm/memory>
 
+#include "cmDiagnostics.h"
 #include "cmFindCommon.h"
 #include "cmMakefile.h"
-#include "cmMessageType.h"
 #include "cmPolicies.h"
 #include "cmStateTypes.h"
 #include "cmStringAlgorithms.h"
@@ -143,8 +143,8 @@ struct cmFindProgramHelper
       return isExeNew;
     }
     if (isExeNew) {
-      this->Makefile->IssueMessage(
-        MessageType::AUTHOR_WARNING,
+      this->Makefile->IssueDiagnostic(
+        cmDiagnostics::CMD_AUTHOR,
         cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0109),
                  "\n"
                  "The file\n"
@@ -154,8 +154,8 @@ struct cmFindProgramHelper
                  "is executable but not readable.  "
                  "CMake is ignoring it for compatibility."));
     } else {
-      this->Makefile->IssueMessage(
-        MessageType::AUTHOR_WARNING,
+      this->Makefile->IssueDiagnostic(
+        cmDiagnostics::CMD_AUTHOR,
         cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0109),
                  "\n"
                  "The file\n"
@@ -338,8 +338,8 @@ std::string cmFindProgramCommand::GetBundleExecutable(
 
     if (CFURLGetFileSystemRepresentation(executableURL, false, buffer,
                                          MAX_OSX_PATH_SIZE)) {
-      executable = bundlePath + "/Contents/MacOS/" +
-        std::string(reinterpret_cast<char*>(buffer));
+      executable = cmStrCat(bundlePath, "/Contents/MacOS/",
+                            reinterpret_cast<char const*>(buffer));
     }
     // Only release CFURLRef if it's not null
     CFRelease(executableURL);

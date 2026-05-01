@@ -5,6 +5,7 @@
 
 #include "cmStringCommand.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -928,6 +929,56 @@ std::string WriteJson(Json::Value const& value)
   return Json::writeString(writer, value);
 }
 
+bool JsonPartialMatch(Json::Value const& pattern, Json::Value const& actual)
+{
+  if (pattern.type() != actual.type()) {
+    return false;
+  }
+  switch (pattern.type()) {
+    case Json::nullValue:
+    case Json::intValue:
+    case Json::uintValue:
+    case Json::realValue:
+    case Json::stringValue:
+    case Json::booleanValue:
+      return pattern == actual;
+
+    case Json::objectValue: {
+      std::vector<std::string> const keys = pattern.getMemberNames();
+      return std::all_of(keys.begin(), keys.end(),
+                         [&](std::string const& key) {
+                           return actual.isMember(key) &&
+                             JsonPartialMatch(pattern[key], actual[key]);
+                         });
+    }
+
+    case Json::arrayValue: {
+      if (actual.size() < pattern.size()) {
+        return false;
+      }
+      std::vector<bool> matched(actual.size(), false);
+      for (Json::Value const& p : pattern) {
+        bool found = false;
+        for (Json::ArrayIndex j = 0; j < actual.size(); ++j) {
+          if (matched[j]) {
+            continue;
+          }
+          if (JsonPartialMatch(p, actual[j])) {
+            matched[j] = true;
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 #endif
 
 bool HandleJSONCommand(std::vector<std::string> const& arguments,
@@ -952,111 +1003,129 @@ bool HandleJSONCommand(std::vector<std::string> const& arguments,
     }
 
     auto const& mode = args.PopFront("missing mode argument"_s);
-    if (mode != "GET"_s && mode != "TYPE"_s && mode != "MEMBER"_s &&
-        mode != "LENGTH"_s && mode != "REMOVE"_s && mode != "SET"_s &&
-        mode != "EQUAL"_s) {
-      throw json_error(
-        cmStrCat("got an invalid mode '"_s, mode,
-                 "', expected one of GET, TYPE, MEMBER, LENGTH, REMOVE, SET, "
-                 " EQUAL"_s));
+    if (mode != "GET"_s && mode != "GET_RAW"_s && mode != "TYPE"_s &&
+        mode != "MEMBER"_s && mode != "LENGTH"_s && mode != "REMOVE"_s &&
+        mode != "SET"_s && mode != "EQUAL"_s && mode != "STRING_ENCODE"_s &&
+        mode != "PARTIAL_EQUAL"_s) {
+      throw json_error(cmStrCat(
+        "got an invalid mode '"_s, mode,
+        "', expected one of GET, GET_RAW, TYPE, MEMBER, LENGTH, REMOVE, SET, "
+        " EQUAL, PARTIAL_EQUAL, STRING_ENCODE"_s));
     }
 
     auto const& jsonstr = args.PopFront("missing json string argument"_s);
-    Json::Value json = ReadJson(jsonstr);
 
-    if (mode == "GET"_s) {
-      auto const& value = ResolvePath(json, args);
-      if (value.isObject() || value.isArray()) {
-        makefile.AddDefinition(*outputVariable, WriteJson(value));
-      } else if (value.isBool()) {
-        makefile.AddDefinitionBool(*outputVariable, value.asBool());
-      } else {
-        makefile.AddDefinition(*outputVariable, value.asString());
-      }
-
-    } else if (mode == "TYPE"_s) {
-      auto const& value = ResolvePath(json, args);
-      makefile.AddDefinition(*outputVariable, JsonTypeToString(value.type()));
-
-    } else if (mode == "MEMBER"_s) {
-      auto const& indexStr = args.PopBack("missing member index"_s);
-      auto const& value = ResolvePath(json, args);
-      if (!value.isObject()) {
-        throw json_error(
-          cmStrCat("MEMBER needs to be called with an element of "
-                   "type OBJECT, got "_s,
-                   JsonTypeToString(value.type())),
-          args);
-      }
-      auto const index = ParseIndex(
-        indexStr, Args{ args.begin(), args.end() + 1 }, value.size());
-      auto const memIt = std::next(value.begin(), index);
-      makefile.AddDefinition(*outputVariable, memIt.name());
-
-    } else if (mode == "LENGTH"_s) {
-      auto const& value = ResolvePath(json, args);
-      if (!value.isArray() && !value.isObject()) {
-        throw json_error(cmStrCat("LENGTH needs to be called with an "
-                                  "element of type ARRAY or OBJECT, got "_s,
-                                  JsonTypeToString(value.type())),
-                         args);
-      }
-
-      cmAlphaNum sizeStr{ value.size() };
-      makefile.AddDefinition(*outputVariable, sizeStr.View());
-
-    } else if (mode == "REMOVE"_s) {
-      auto const& toRemove =
-        args.PopBack("missing member or index to remove"_s);
-      auto& value = ResolvePath(json, args);
-
-      if (value.isArray()) {
-        auto const index = ParseIndex(
-          toRemove, Args{ args.begin(), args.end() + 1 }, value.size());
-        Json::Value removed;
-        value.removeIndex(index, &removed);
-
-      } else if (value.isObject()) {
-        Json::Value removed;
-        value.removeMember(toRemove, &removed);
-
-      } else {
-        throw json_error(cmStrCat("REMOVE needs to be called with an "
-                                  "element of type ARRAY or OBJECT, got "_s,
-                                  JsonTypeToString(value.type())),
-                         args);
-      }
+    if (mode == "STRING_ENCODE"_s) {
+      Json::Value json(jsonstr);
       makefile.AddDefinition(*outputVariable, WriteJson(json));
+    } else {
+      Json::Value json = ReadJson(jsonstr);
 
-    } else if (mode == "SET"_s) {
-      auto const& newValueStr = args.PopBack("missing new value remove"_s);
-      auto const& toAdd = args.PopBack("missing member name to add"_s);
-      auto& value = ResolvePath(json, args);
-
-      Json::Value newValue = ReadJson(newValueStr);
-      if (value.isObject()) {
-        value[toAdd] = newValue;
-      } else if (value.isArray()) {
-        auto const index =
-          ParseIndex(toAdd, Args{ args.begin(), args.end() + 1 });
-        if (value.isValidIndex(index)) {
-          value[static_cast<int>(index)] = newValue;
+      if (mode == "GET"_s) {
+        auto const& value = ResolvePath(json, args);
+        if (value.isObject() || value.isArray()) {
+          makefile.AddDefinition(*outputVariable, WriteJson(value));
+        } else if (value.isBool()) {
+          makefile.AddDefinitionBool(*outputVariable, value.asBool());
         } else {
-          value.append(newValue);
+          makefile.AddDefinition(*outputVariable, value.asString());
         }
-      } else {
-        throw json_error(cmStrCat("SET needs to be called with an "
-                                  "element of type OBJECT or ARRAY, got "_s,
-                                  JsonTypeToString(value.type())));
+
+      } else if (mode == "GET_RAW"_s) {
+        auto const& value = ResolvePath(json, args);
+        makefile.AddDefinition(*outputVariable, WriteJson(value));
+
+      } else if (mode == "TYPE"_s) {
+        auto const& value = ResolvePath(json, args);
+        makefile.AddDefinition(*outputVariable,
+                               JsonTypeToString(value.type()));
+
+      } else if (mode == "MEMBER"_s) {
+        auto const& indexStr = args.PopBack("missing member index"_s);
+        auto const& value = ResolvePath(json, args);
+        if (!value.isObject()) {
+          throw json_error(
+            cmStrCat("MEMBER needs to be called with an element of "
+                     "type OBJECT, got "_s,
+                     JsonTypeToString(value.type())),
+            args);
+        }
+        auto const index = ParseIndex(
+          indexStr, Args{ args.begin(), args.end() + 1 }, value.size());
+        auto const memIt = std::next(value.begin(), index);
+        makefile.AddDefinition(*outputVariable, memIt.name());
+
+      } else if (mode == "LENGTH"_s) {
+        auto const& value = ResolvePath(json, args);
+        if (!value.isArray() && !value.isObject()) {
+          throw json_error(cmStrCat("LENGTH needs to be called with an "
+                                    "element of type ARRAY or OBJECT, got "_s,
+                                    JsonTypeToString(value.type())),
+                           args);
+        }
+
+        cmAlphaNum sizeStr{ value.size() };
+        makefile.AddDefinition(*outputVariable, sizeStr.View());
+
+      } else if (mode == "REMOVE"_s) {
+        auto const& toRemove =
+          args.PopBack("missing member or index to remove"_s);
+        auto& value = ResolvePath(json, args);
+
+        if (value.isArray()) {
+          auto const index = ParseIndex(
+            toRemove, Args{ args.begin(), args.end() + 1 }, value.size());
+          Json::Value removed;
+          value.removeIndex(index, &removed);
+
+        } else if (value.isObject()) {
+          Json::Value removed;
+          value.removeMember(toRemove, &removed);
+
+        } else {
+          throw json_error(cmStrCat("REMOVE needs to be called with an "
+                                    "element of type ARRAY or OBJECT, got "_s,
+                                    JsonTypeToString(value.type())),
+                           args);
+        }
+        makefile.AddDefinition(*outputVariable, WriteJson(json));
+
+      } else if (mode == "SET"_s) {
+        auto const& newValueStr = args.PopBack("missing new value remove"_s);
+        auto const& toAdd = args.PopBack("missing member name to add"_s);
+        auto& value = ResolvePath(json, args);
+
+        Json::Value newValue = ReadJson(newValueStr);
+        if (value.isObject()) {
+          value[toAdd] = newValue;
+        } else if (value.isArray()) {
+          auto const index =
+            ParseIndex(toAdd, Args{ args.begin(), args.end() + 1 });
+          if (value.isValidIndex(index)) {
+            value[static_cast<int>(index)] = newValue;
+          } else {
+            value.append(newValue);
+          }
+        } else {
+          throw json_error(cmStrCat("SET needs to be called with an "
+                                    "element of type OBJECT or ARRAY, got "_s,
+                                    JsonTypeToString(value.type())));
+        }
+
+        makefile.AddDefinition(*outputVariable, WriteJson(json));
+
+      } else if (mode == "EQUAL"_s) {
+        auto const& jsonstr2 =
+          args.PopFront("missing second json string argument"_s);
+        Json::Value json2 = ReadJson(jsonstr2);
+        makefile.AddDefinitionBool(*outputVariable, json == json2);
+      } else if (mode == "PARTIAL_EQUAL"_s) {
+        auto const& jsonstr2 =
+          args.PopFront("missing second json string argument"_s);
+        Json::Value json2 = ReadJson(jsonstr2);
+        makefile.AddDefinitionBool(*outputVariable,
+                                   JsonPartialMatch(json, json2));
       }
-
-      makefile.AddDefinition(*outputVariable, WriteJson(json));
-
-    } else if (mode == "EQUAL"_s) {
-      auto const& jsonstr2 =
-        args.PopFront("missing second json string argument"_s);
-      Json::Value json2 = ReadJson(jsonstr2);
-      makefile.AddDefinitionBool(*outputVariable, json == json2);
     }
 
   } catch (json_error const& e) {

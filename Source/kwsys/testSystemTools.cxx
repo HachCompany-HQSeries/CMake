@@ -445,29 +445,6 @@ static bool CheckFileOperations()
     res = false;
   }
 
-  std::string const testBadSymlink(testNewDir + "/badSymlink.txt");
-  std::string const testBadSymlinkTgt(testNewDir + "/missing/symlinkTgt.txt");
-  kwsys::Status const symlinkStatus =
-    kwsys::SystemTools::CreateSymlink(testBadSymlinkTgt, testBadSymlink);
-#if defined(_WIN32)
-  // Under Windows, the user may not have enough privileges to create symlinks
-  if (symlinkStatus.GetWindows() != ERROR_PRIVILEGE_NOT_HELD)
-#endif
-  {
-    if (!symlinkStatus.IsSuccess()) {
-      std::cerr << "CreateSymlink for: " << testBadSymlink << " -> "
-                << testBadSymlinkTgt
-                << " failed: " << symlinkStatus.GetString() << std::endl;
-      res = false;
-    }
-
-    if (!kwsys::SystemTools::Touch(testBadSymlink, false)) {
-      std::cerr << "Problem with Touch (no create) for: " << testBadSymlink
-                << std::endl;
-      res = false;
-    }
-  }
-
   if (!kwsys::SystemTools::Touch(testNewDir, false)) {
     std::cerr << "Problem with Touch (no create) for: " << testNewDir
               << std::endl;
@@ -533,6 +510,21 @@ static bool CheckFileOperations()
 static bool CheckStringOperations()
 {
   bool res = true;
+
+  // Case conversion should only affect ASCII bytes.
+  // Test using a UTF-8 Copyright Symbol because its leading byte
+  // is transformed by MSVC's tolower in a US-ASCII locale.
+  static std::string const sampleUTF8 = "y\xC2\xA9Z"; // Copyright Symbol
+  if (kwsys::SystemTools::LowerCase(sampleUTF8) != "y\xC2\xA9z") {
+    std::cerr << "Problem with LowerCase " << '"' << sampleUTF8 << '"'
+              << std::endl;
+    res = false;
+  }
+  if (kwsys::SystemTools::UpperCase(sampleUTF8) != "Y\xC2\xA9Z") {
+    std::cerr << "Problem with UpperCase " << '"' << sampleUTF8 << '"'
+              << std::endl;
+    res = false;
+  }
 
   std::string test = "mary had a little lamb.";
   if (kwsys::SystemTools::CapitalizedWords(test) !=

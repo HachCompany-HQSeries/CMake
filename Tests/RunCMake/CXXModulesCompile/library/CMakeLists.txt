@@ -18,8 +18,17 @@ target_sources(library
       BASE_DIRS
         "${CMAKE_CURRENT_SOURCE_DIR}"
       FILES
-        importable.cxx)
+        importable.ixx
+  PRIVATE
+    importable.cxx)
 target_compile_features(library PUBLIC cxx_std_20)
+
+if(WITH_FILE_SET_SOURCES)
+  target_sources(library
+    PUBLIC
+      FILE_SET SOURCES
+      FILES src.cpp)
+endif()
 
 add_executable(exe)
 target_link_libraries(exe PRIVATE library)

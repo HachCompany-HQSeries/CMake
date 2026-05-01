@@ -46,7 +46,10 @@ Synopsis
 
   `JSON`_
     string(JSON <out-var> [ERROR_VARIABLE <error-var>]
-           {`GET <JSON-GET_>`__ | `TYPE <JSON-TYPE_>`__ | `LENGTH <JSON-LENGTH_>`__ | `REMOVE <JSON-REMOVE_>`__}
+           {`GET <JSON-GET_>`__ | `GET_RAW <JSON-GET-RAW_>`__ | `TYPE <JSON-TYPE_>`__ | `LENGTH <JSON-LENGTH_>`__}
+           <json-string> [<member|index> ...])
+    string(JSON <out-var> [ERROR_VARIABLE <error-var>]
+           `REMOVE <JSON-REMOVE_>`__
            <json-string> <member|index> [<member|index> ...])
     string(JSON <out-var> [ERROR_VARIABLE <error-var>]
            `MEMBER <JSON-MEMBER_>`__ <json-string>
@@ -56,6 +59,10 @@ Synopsis
            <member|index> [<member|index> ...] <value>)
     string(JSON <out-var> [ERROR_VARIABLE <error-var>]
            `EQUAL <JSON-EQUAL_>`__ <json-string1> <json-string2>)
+    string(JSON <out-var> [ERROR_VARIABLE <error-var>]
+           `PARTIAL_EQUAL <JSON-EQUAL_>`__ <json-string1> <json-string2>)
+    string(JSON <out-var> [ERROR_VARIABLE <error-var>]
+           `STRING_ENCODE <STRING-ENCODE_>`__ <string>)
 
 Search and Replace
 ^^^^^^^^^^^^^^^^^^
@@ -549,7 +556,7 @@ string is passed as a single argument even if it contains semicolons.
 
 .. signature::
   string(JSON <out-var> [ERROR_VARIABLE <error-variable>]
-         GET <json-string> <member|index> [<member|index> ...])
+         GET <json-string> [<member|index> ...])
   :target: JSON-GET
 
   Get an element from ``<json-string>`` at the location given
@@ -561,7 +568,19 @@ string is passed as a single argument even if it contains semicolons.
 
 .. signature::
   string(JSON <out-var> [ERROR_VARIABLE <error-variable>]
-         TYPE <json-string> <member|index> [<member|index> ...])
+         GET_RAW <json-string> [<member|index> ...])
+  :target: JSON-GET-RAW
+
+  .. versionadded:: 4.3
+
+  Get an element from ``<json-string>`` at the location given
+  by the list of ``<member|index>`` arguments. Similar to
+  :cref:`GET <JSON-GET_>`, but does not convert number, string,
+  boolean, or null elements.
+
+.. signature::
+  string(JSON <out-var> [ERROR_VARIABLE <error-variable>]
+         TYPE <json-string> [<member|index> ...])
   :target: JSON-TYPE
 
   Get the type of an element in ``<json-string>`` at the location
@@ -619,3 +638,49 @@ string is passed as a single argument even if it contains semicolons.
   and ``<json-string2>`` should be valid JSON.  The ``<out-var>``
   will be set to a true value if the JSON objects are considered equal,
   or a false value otherwise.
+
+.. signature::
+  string(JSON <out-var> [ERROR_VARIABLE <error-var>]
+         PARTIAL_EQUAL <json-pattern> <json-actual>)
+  :target: JSON-PARTIAL_EQUAL
+
+  .. versionadded:: 4.4
+
+  Compare two JSON values using *partial* equality.  The first argument
+  (``<json-pattern>``) is treated as a pattern to match against the second
+  argument (``<json-actual>``), which is treated as the complete JSON value.
+  The contents of ``<json-pattern>`` and ``<json-actual>`` must be valid JSON.
+
+  The ``<out-var>`` will be set to a true value if ``<json-pattern>`` is
+  contained within ``<json-actual>`` according to the rules below, or a false
+  value otherwise.
+
+  Partial equality is not symmetric.  In general,
+  ``PARTIAL_EQUAL(A, B)`` and ``PARTIAL_EQUAL(B, A)`` may produce different
+  results.
+
+  Matching rules:
+
+  * **Scalars** (null, number, string, boolean) must match exactly.
+  * **Objects** match if every member in ``<json-pattern>`` exists in
+    ``<json-actual>`` and the corresponding values also match recursively.
+    Extra members in ``<json-actual>`` are ignored.
+  * **Arrays** match if every element in ``<json-pattern>`` matches a
+    distinct element in ``<json-actual>`` recursively. Once an element in
+    ``<json-actual>`` successfully matches an element in ``<json-pattern>``,
+    it is consumed and cannot be reused to match any subsequent elements.
+    Array element order is not significant.  Extra elements in
+    ``<json-actual>`` are ignored.
+
+  Type differences do not match (for example, an object does not match an
+  array, and a string does not match a number).
+
+.. signature::
+  string(JSON <out-var> [ERROR_VARIABLE <error-var>]
+         STRING_ENCODE <string>)
+  :target: STRING-ENCODE
+
+  .. versionadded:: 4.3
+
+  Turn a raw string into a JSON string surrounded by quotes. Special characters
+  will be properly escaped inside the JSON string.

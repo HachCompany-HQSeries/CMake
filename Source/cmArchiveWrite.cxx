@@ -3,7 +3,6 @@
 #include "cmArchiveWrite.h"
 
 #include <cstdlib>
-#include <cstring>
 #include <ctime>
 #include <iostream>
 #include <limits>
@@ -12,17 +11,19 @@
 #include <thread>
 
 #include <cm/algorithm>
+#include <cm/string_view>
 
 #include <cm3p/archive.h>
 #include <cm3p/archive_entry.h>
 
 #include "cmsys/Directory.hxx"
-#include "cmsys/Encoding.hxx"
+#ifdef _WIN32
+#  include "cmsys/Encoding.hxx"
+#endif
 #include "cmsys/FStream.hxx"
 
 #include "cm_parse_date.h"
 
-#include "cmLocale.h"
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
 
@@ -36,16 +37,32 @@ static std::string cm_archive_error_string(struct archive* a)
   return e ? e : "unknown error";
 }
 
+// Set path to be written to the archive.
 static void cm_archive_entry_copy_pathname(struct archive_entry* e,
-                                           std::string const& dest)
+                                           char const* dest)
 {
-  archive_entry_copy_pathname_w(e, cmsys::Encoding::ToWide(dest).c_str());
+#ifdef _WIN32
+  // libarchive converts our UTF-8 encoding to the archive's encoding.
+  // `archive_entry_update_pathname_utf8` always populates the WCS form too.
+  // It also populates the MBS form if possible, but we ignore conversion
+  // failure because the archive formats support converting directly from
+  // the WCS form to the archive's encoding without using the MBS form.
+  archive_entry_update_pathname_utf8(e, dest);
+#else
+  // libarchive converts our locale's encoding to the archive's encoding.
+  archive_entry_copy_pathname(e, dest);
+#endif
 }
 
+// Set path used for filesystem access.
 static void cm_archive_entry_copy_sourcepath(struct archive_entry* e,
                                              std::string const& file)
 {
+#ifdef _WIN32
   archive_entry_copy_sourcepath_w(e, cmsys::Encoding::ToWide(file).c_str());
+#else
+  archive_entry_copy_sourcepath(e, file.c_str());
+#endif
 }
 
 class cmArchiveWrite::Entry
@@ -79,8 +96,9 @@ struct cmArchiveWrite::Callback
 };
 
 cmArchiveWrite::cmArchiveWrite(std::ostream& os, Compress c,
-                               std::string const& format, int compressionLevel,
-                               int numThreads)
+                               std::string const& format,
+                               std::string const& encoding,
+                               int compressionLevel, int numThreads)
   : Stream(os)
   , Archive(archive_write_new())
   , Disk(archive_read_disk_new())
@@ -88,6 +106,17 @@ cmArchiveWrite::cmArchiveWrite(std::ostream& os, Compress c,
 {
   // Upstream fixed an issue with their integer parsing in 3.4.0
   // which would cause spurious errors to be raised from `strtoull`.
+
+  if (archive_write_set_format_by_name(this->Archive, format.c_str()) !=
+      ARCHIVE_OK) {
+    this->Error = cmStrCat("archive_write_set_format_by_name: ",
+                           cm_archive_error_string(this->Archive));
+    return;
+  }
+
+  bool is7zip = (format == "7zip");
+  bool isZip = (format == "zip");
+  bool isFormatSupportsCompressionNatively = (is7zip || isZip);
 
   if (numThreads < 1) {
     int upperLimit = (numThreads == 0) ? std::numeric_limits<int>::max()
@@ -99,122 +128,242 @@ cmArchiveWrite::cmArchiveWrite(std::ostream& os, Compress c,
 
   std::string sNumThreads = std::to_string(numThreads);
 
-  switch (c) {
-    case CompressNone:
-      if (archive_write_add_filter_none(this->Archive) != ARCHIVE_OK) {
-        this->Error = cmStrCat("archive_write_add_filter_none: ",
-                               cm_archive_error_string(this->Archive));
-        return;
-      }
-      break;
-    case CompressCompress:
-      if (archive_write_add_filter_compress(this->Archive) != ARCHIVE_OK) {
-        this->Error = cmStrCat("archive_write_add_filter_compress: ",
-                               cm_archive_error_string(this->Archive));
-        return;
-      }
-      break;
-    case CompressGZip: {
-      if (archive_write_add_filter_gzip(this->Archive) != ARCHIVE_OK) {
-        this->Error = cmStrCat("archive_write_add_filter_gzip: ",
-                               cm_archive_error_string(this->Archive));
-        return;
-      }
-      std::string source_date_epoch;
-      cmSystemTools::GetEnv("SOURCE_DATE_EPOCH", source_date_epoch);
-      if (!source_date_epoch.empty()) {
-        // We're not able to specify an arbitrary timestamp for gzip.
-        // The next best thing is to omit the timestamp entirely.
-        if (archive_write_set_filter_option(this->Archive, "gzip", "timestamp",
-                                            nullptr) != ARCHIVE_OK) {
-          this->Error = cmStrCat("archive_write_set_filter_option: ",
+  if (!isFormatSupportsCompressionNatively) {
+    switch (c) {
+      case CompressNone:
+        if (archive_write_add_filter_none(this->Archive) != ARCHIVE_OK) {
+          this->Error = cmStrCat("archive_write_add_filter_none: ",
                                  cm_archive_error_string(this->Archive));
           return;
         }
-      }
-    } break;
-    case CompressBZip2:
-      if (archive_write_add_filter_bzip2(this->Archive) != ARCHIVE_OK) {
-        this->Error = cmStrCat("archive_write_add_filter_bzip2: ",
-                               cm_archive_error_string(this->Archive));
-        return;
-      }
-      break;
-    case CompressLZMA:
-      if (archive_write_add_filter_lzma(this->Archive) != ARCHIVE_OK) {
-        this->Error = cmStrCat("archive_write_add_filter_lzma: ",
-                               cm_archive_error_string(this->Archive));
-        return;
-      }
-      break;
-    case CompressXZ:
-      if (archive_write_add_filter_xz(this->Archive) != ARCHIVE_OK) {
-        this->Error = cmStrCat("archive_write_add_filter_xz: ",
-                               cm_archive_error_string(this->Archive));
-        return;
-      }
+        break;
+      case CompressCompress:
+        if (archive_write_add_filter_compress(this->Archive) != ARCHIVE_OK) {
+          this->Error = cmStrCat("archive_write_add_filter_compress: ",
+                                 cm_archive_error_string(this->Archive));
+          return;
+        }
+        break;
+      case CompressGZip: {
+        if (archive_write_add_filter_gzip(this->Archive) != ARCHIVE_OK) {
+          this->Error = cmStrCat("archive_write_add_filter_gzip: ",
+                                 cm_archive_error_string(this->Archive));
+          return;
+        }
+        std::string source_date_epoch;
+        cmSystemTools::GetEnv("SOURCE_DATE_EPOCH", source_date_epoch);
+        if (!source_date_epoch.empty()) {
+          // We're not able to specify an arbitrary timestamp for gzip.
+          // The next best thing is to omit the timestamp entirely.
+          if (archive_write_set_filter_option(
+                this->Archive, "gzip", "timestamp", nullptr) != ARCHIVE_OK) {
+            this->Error = cmStrCat("archive_write_set_filter_option: ",
+                                   cm_archive_error_string(this->Archive));
+            return;
+          }
+        }
+      } break;
+      case CompressBZip2:
+        if (archive_write_add_filter_bzip2(this->Archive) != ARCHIVE_OK) {
+          this->Error = cmStrCat("archive_write_add_filter_bzip2: ",
+                                 cm_archive_error_string(this->Archive));
+          return;
+        }
+        break;
+      case CompressLZMA:
+        if (archive_write_add_filter_lzma(this->Archive) != ARCHIVE_OK) {
+          this->Error = cmStrCat("archive_write_add_filter_lzma: ",
+                                 cm_archive_error_string(this->Archive));
+          return;
+        }
+        break;
+      case CompressXZ:
+        if (archive_write_add_filter_xz(this->Archive) != ARCHIVE_OK) {
+          this->Error = cmStrCat("archive_write_add_filter_xz: ",
+                                 cm_archive_error_string(this->Archive));
+          return;
+        }
 
 #if ARCHIVE_VERSION_NUMBER >= 3004000
 
 #  ifdef _AIX
-      // FIXME: Using more than 2 threads creates an empty archive.
-      // Enforce this limit pending further investigation.
-      if (numThreads > 2) {
-        numThreads = 2;
-        sNumThreads = std::to_string(numThreads);
-      }
+        // FIXME: Using more than 2 threads creates an empty archive.
+        // Enforce this limit pending further investigation.
+        if (numThreads > 2) {
+          numThreads = 2;
+          sNumThreads = std::to_string(numThreads);
+        }
 #  endif
-      if (archive_write_set_filter_option(this->Archive, "xz", "threads",
-                                          sNumThreads.c_str()) != ARCHIVE_OK) {
-        this->Error = cmStrCat("archive_compressor_xz_options: ",
-                               cm_archive_error_string(this->Archive));
-        return;
-      }
+        if (archive_write_set_filter_option(this->Archive, "xz", "threads",
+                                            sNumThreads.c_str()) !=
+            ARCHIVE_OK) {
+          this->Error = cmStrCat("archive_compressor_xz_options: ",
+                                 cm_archive_error_string(this->Archive));
+          return;
+        }
 #endif
 
-      break;
-    case CompressZstd:
-      if (archive_write_add_filter_zstd(this->Archive) != ARCHIVE_OK) {
-        this->Error = cmStrCat("archive_write_add_filter_zstd: ",
-                               cm_archive_error_string(this->Archive));
-        return;
-      }
+        break;
+      case CompressZstd:
+        if (archive_write_add_filter_zstd(this->Archive) != ARCHIVE_OK) {
+          this->Error = cmStrCat("archive_write_add_filter_zstd: ",
+                                 cm_archive_error_string(this->Archive));
+          return;
+        }
 
 #if ARCHIVE_VERSION_NUMBER >= 3006000
-      if (archive_write_set_filter_option(this->Archive, "zstd", "threads",
-                                          sNumThreads.c_str()) != ARCHIVE_OK) {
-        this->Error = cmStrCat("archive_compressor_zstd_options: ",
-                               cm_archive_error_string(this->Archive));
-        return;
-      }
+        if (archive_write_set_filter_option(this->Archive, "zstd", "threads",
+                                            sNumThreads.c_str()) !=
+            ARCHIVE_OK) {
+          this->Error = cmStrCat("archive_compressor_zstd_options: ",
+                                 cm_archive_error_string(this->Archive));
+          return;
+        }
 #endif
-      break;
+        break;
+      case CompressPPMd:
+        this->Error = cmStrCat("PPMd is not supported for ", format);
+        return;
+    }
   }
 
-  if (compressionLevel != 0) {
+  // 7zip always uses UTF16-LE for the headers and doesn't support
+  // header encoding specification.
+  // arbsd can use the default encoding of the system only.
+  if (!is7zip && format != "arbsd" && encoding != "OEM") {
+    char const* formatForOptions = format == "paxr" ? "pax" : format.c_str();
+    if (archive_write_set_format_option(this->Archive, formatForOptions,
+                                        "hdrcharset",
+                                        encoding.c_str()) != ARCHIVE_OK) {
+      this->Error = cmStrCat("archive_write_set_format_option(hdrcharset): ",
+                             cm_archive_error_string(this->Archive));
+      return;
+    }
+  }
+
+  if (isFormatSupportsCompressionNatively || compressionLevel != 0) {
     std::string compressionLevelStr = std::to_string(compressionLevel);
     std::string archiveFilterName;
     switch (c) {
       case CompressNone:
+        if (is7zip || isZip) {
+          archiveFilterName = "store";
+        } else {
+          // Nothing to do - the value should be empty
+        }
+        break;
       case CompressCompress:
+        if (is7zip || isZip) {
+          this->Error =
+            cmStrCat("CompressCompress is not supported for ", format);
+        } else {
+          // Nothing to do - the value should be empty
+        }
         break;
       case CompressGZip:
-        archiveFilterName = "gzip";
+        if (is7zip || isZip) {
+          archiveFilterName = "deflate";
+        } else {
+          archiveFilterName = "gzip";
+        }
         break;
       case CompressBZip2:
+#if ARCHIVE_VERSION_NUMBER < 3008000
+        if (isZip) {
+          this->Error = cmStrCat("BZip2 is not supported for ", format,
+                                 ". Please, build CMake with libarchive 3.8.0 "
+                                 "or newer if you want to use it.");
+          return;
+        }
+#endif
         archiveFilterName = "bzip2";
         break;
       case CompressLZMA:
-        archiveFilterName = "lzma";
+#if ARCHIVE_VERSION_NUMBER < 3008000
+        if (isZip) {
+          this->Error = cmStrCat("LZMA is not supported for ", format,
+                                 ". Please, build CMake with libarchive 3.8.0 "
+                                 "or newer if you want to use it.");
+          return;
+        }
+#endif
+        if (is7zip) {
+          archiveFilterName = "lzma1";
+        } else {
+          archiveFilterName = "lzma";
+        }
         break;
       case CompressXZ:
-        archiveFilterName = "xz";
+#if ARCHIVE_VERSION_NUMBER < 3008000
+        if (isZip) {
+          this->Error = cmStrCat("LZMA2 (XZ) is not supported for ", format,
+                                 ". Please, build CMake with libarchive 3.8.0 "
+                                 "or newer if you want to use it.");
+          return;
+        }
+#endif
+        if (is7zip) {
+          archiveFilterName = "lzma2";
+        } else {
+          archiveFilterName = "xz";
+        }
         break;
       case CompressZstd:
+#if ARCHIVE_VERSION_NUMBER < 3008000
+        if (is7zip || isZip) {
+          this->Error = cmStrCat("Zstd is not supported for ", format,
+                                 ". Please, build CMake with libarchive 3.8.0 "
+                                 "or newer if you want to use it.");
+          return;
+        }
+#endif
         archiveFilterName = "zstd";
         break;
+      case CompressPPMd:
+        if (is7zip) {
+          archiveFilterName = "ppmd";
+        } else {
+          this->Error = cmStrCat("PPMd is not supported for ", format);
+        }
+        return;
     }
-    if (!archiveFilterName.empty()) {
+
+    if (isFormatSupportsCompressionNatively) {
+      if (archiveFilterName.empty()) {
+        this->Error = cmStrCat("Unknown compression method for ", format);
+        return;
+      }
+
+      if (archive_write_set_format_option(
+            this->Archive, format.c_str(), "compression",
+            archiveFilterName.c_str()) != ARCHIVE_OK) {
+        this->Error =
+          cmStrCat("archive_write_set_format_option(compression): ",
+                   cm_archive_error_string(this->Archive));
+        return;
+      }
+
+#if ARCHIVE_VERSION_NUMBER >= 3008000
+      if (archive_write_set_format_option(this->Archive, format.c_str(),
+                                          "threads",
+                                          sNumThreads.c_str()) != ARCHIVE_OK) {
+        this->Error = cmStrCat("archive_write_set_format_option(threads): ",
+                               cm_archive_error_string(this->Archive));
+        return;
+      }
+#endif
+
+      if (compressionLevel != 0) {
+        if (archive_write_set_format_option(
+              this->Archive, format.c_str(), "compression-level",
+              compressionLevelStr.c_str()) != ARCHIVE_OK) {
+          this->Error =
+            cmStrCat("archive_write_set_format_option(compression-level): ",
+                     cm_archive_error_string(this->Archive));
+          return;
+        }
+      }
+    } else if (compressionLevel != 0 && !archiveFilterName.empty()) {
       if (archive_write_set_filter_option(
             this->Archive, archiveFilterName.c_str(), "compression-level",
             compressionLevelStr.c_str()) != ARCHIVE_OK) {
@@ -232,13 +381,6 @@ cmArchiveWrite::cmArchiveWrite(std::ostream& os, Compress c,
     return;
   }
 #endif
-
-  if (archive_write_set_format_by_name(this->Archive, format.c_str()) !=
-      ARCHIVE_OK) {
-    this->Error = cmStrCat("archive_write_set_format_by_name: ",
-                           cm_archive_error_string(this->Archive));
-    return;
-  }
 
   // do not pad the last block!!
   if (archive_write_set_bytes_in_last_block(this->Archive, 1)) {
@@ -276,15 +418,14 @@ bool cmArchiveWrite::Add(std::string path, size_t skip, char const* prefix,
   if (!path.empty() && path.back() == '/') {
     path.erase(path.size() - 1);
   }
-  this->AddPath(path.c_str(), skip, prefix, recursive);
+  this->AddPath(path, skip, prefix, recursive);
   return this->Okay();
 }
 
-bool cmArchiveWrite::AddPath(char const* path, size_t skip, char const* prefix,
-                             bool recursive)
+bool cmArchiveWrite::AddPath(std::string const& path, size_t skip,
+                             char const* prefix, bool recursive)
 {
-  if (strcmp(path, ".") != 0 ||
-      (this->Format != "zip" && this->Format != "7zip")) {
+  if (path != "." || (this->Format != "zip" && this->Format != "7zip")) {
     if (!this->AddFile(path, skip, prefix)) {
       return false;
     }
@@ -302,11 +443,11 @@ bool cmArchiveWrite::AddPath(char const* path, size_t skip, char const* prefix,
     std::string::size_type end = next.size();
     unsigned long n = d.GetNumberOfFiles();
     for (unsigned long i = 0; i < n; ++i) {
-      char const* file = d.GetFile(i);
-      if (strcmp(file, ".") != 0 && strcmp(file, "..") != 0) {
+      std::string const& file = d.GetFileName(i);
+      if (file != "." && file != "..") {
         next.erase(end);
         next += file;
-        if (!this->AddPath(next.c_str(), skip, prefix)) {
+        if (!this->AddPath(next, skip, prefix)) {
           return false;
         }
       }
@@ -315,18 +456,16 @@ bool cmArchiveWrite::AddPath(char const* path, size_t skip, char const* prefix,
   return true;
 }
 
-bool cmArchiveWrite::AddFile(char const* file, size_t skip, char const* prefix)
+bool cmArchiveWrite::AddFile(std::string const& file, size_t skip,
+                             char const* prefix)
 {
   this->Error = "";
   // Skip the file if we have no name for it.  This may happen on a
   // top-level directory, which does not need to be included anyway.
-  if (skip >= strlen(file)) {
+  if (skip >= file.length()) {
     return true;
   }
-  char const* out = file + skip;
-
-  cmLocaleRAII localeRAII;
-  static_cast<void>(localeRAII);
+  cm::string_view out = cm::string_view(file).substr(skip);
 
   // Meta-data.
   std::string dest = cmStrCat(prefix ? prefix : "", out);
@@ -335,11 +474,12 @@ bool cmArchiveWrite::AddFile(char const* file, size_t skip, char const* prefix)
   }
   Entry e;
   cm_archive_entry_copy_sourcepath(e, file);
-  cm_archive_entry_copy_pathname(e, dest);
+  cm_archive_entry_copy_pathname(e, dest.c_str());
   if (archive_read_disk_entry_from_file(this->Disk, e, -1, nullptr) !=
       ARCHIVE_OK) {
-    this->Error = cmStrCat("Unable to read from file '", file,
-                           "': ", cm_archive_error_string(this->Disk));
+    this->Error =
+      cmStrCat("Unable to read from file:\n  ", file, "\nbecause:\n  ",
+               cm_archive_error_string(this->Disk));
     return false;
   }
   if (!this->MTime.empty()) {
@@ -417,9 +557,9 @@ bool cmArchiveWrite::AddFile(char const* file, size_t skip, char const* prefix)
   return true;
 }
 
-bool cmArchiveWrite::AddData(char const* file, size_t size)
+bool cmArchiveWrite::AddData(std::string const& file, size_t size)
 {
-  cmsys::ifstream fin(file, std::ios::in | std::ios::binary);
+  cmsys::ifstream fin(file.c_str(), std::ios::in | std::ios::binary);
   if (!fin) {
     this->Error = cmStrCat("Error opening \"", file,
                            "\": ", cmSystemTools::GetLastSystemError());

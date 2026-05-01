@@ -16,8 +16,8 @@
 
 #include "cmArgumentParser.h"
 #include "cmArgumentParserTypes.h"
+#include "cmDiagnostics.h"
 #include "cmExecutionStatus.h"
-#include "cmExperimental.h"
 #include "cmList.h"
 #include "cmMakefile.h"
 #include "cmMessageType.h"
@@ -68,28 +68,22 @@ bool cmProjectCommand(std::vector<std::string> const& args,
   parser.BindKeywordMissingValue(missingValueKeywords)
     .BindParsedKeywords(parsedKeywords)
     .Bind("VERSION"_s, prArgs.Version)
+    .Bind("COMPAT_VERSION"_s, prArgs.CompatVersion)
+    .Bind("SPDX_LICENSE"_s, prArgs.License)
     .Bind("DESCRIPTION"_s, prArgs.Description)
     .Bind("HOMEPAGE_URL"_s, prArgs.HomepageURL)
     .Bind("LANGUAGES"_s, prArgs.Languages);
-
-  cmMakefile& mf = status.GetMakefile();
-  bool enablePackageInfo = cmExperimental::HasSupportEnabled(
-    mf, cmExperimental::Feature::ExportPackageInfo);
-
-  if (enablePackageInfo) {
-    parser.Bind("COMPAT_VERSION"_s, prArgs.CompatVersion);
-    parser.Bind("SPDX_LICENSE"_s, prArgs.License);
-  }
 
   if (args.empty()) {
     status.SetError("PROJECT called with incorrect number of arguments");
     return false;
   }
 
+  cmMakefile& mf = status.GetMakefile();
   std::string const& projectName = args[0];
   if (parser.HasKeyword(projectName)) {
-    mf.IssueMessage(
-      MessageType::AUTHOR_WARNING,
+    mf.IssueDiagnostic(
+      cmDiagnostics::CMD_AUTHOR,
       cmStrCat(
         "project() called with '", projectName,
         "' as first argument. The first parameter should be the project name, "
@@ -101,8 +95,8 @@ bool cmProjectCommand(std::vector<std::string> const& args,
 
   if (mf.IsRootMakefile() &&
       !mf.GetDefinition("CMAKE_MINIMUM_REQUIRED_VERSION")) {
-    mf.IssueMessage(
-      MessageType::AUTHOR_WARNING,
+    mf.IssueDiagnostic(
+      cmDiagnostics::CMD_AUTHOR,
       "cmake_minimum_required() should be called prior to this top-level "
       "project() call. Please see the cmake-commands(7) manual for usage "
       "documentation of both commands.");

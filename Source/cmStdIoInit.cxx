@@ -3,6 +3,7 @@
 #include "cmStdIoInit.h"
 
 #include <cerrno>
+#include <clocale>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -16,6 +17,9 @@
 
 #  include "cm_fileno.hxx"
 #else
+#  include <cm/string_view>
+#  include <cmext/string_view>
+
 #  include <unistd.h>
 #endif
 
@@ -91,8 +95,45 @@ public:
   OStream StdOut{ std::cout, stdout };
   OStream StdErr{ std::cerr, stderr };
 
+  Globals();
+
+#ifdef _WIN32
+  static BOOL WINAPI CtrlHandler(DWORD /*dwCtrlType*/)
+  {
+    Get().StdErr.Destroy();
+    Get().StdOut.Destroy();
+    Get().StdIn.Destroy();
+    return FALSE;
+  }
+#endif
+
   static Globals& Get();
 };
+
+Globals::Globals()
+{
+#ifdef _WIN32
+  // On Windows, setlocale offers a ".<code-page>" syntax to select the
+  // user's locale with a specific character set.  We always use UTF-8.
+  std::setlocale(LC_CTYPE, ".UTF-8");
+
+  SetConsoleCtrlHandler(CtrlHandler, TRUE);
+#else
+  // On non-Windows platforms, we select the user's locale.
+  std::setlocale(LC_CTYPE, "");
+
+  // In the "C" locale try switching to a UTF-8 character set.
+  if (char const* locale = std::setlocale(LC_CTYPE, nullptr)) {
+    if (locale == "C"_s || locale == "POSIX"_s) {
+      std::setlocale(LC_CTYPE, "C.UTF-8")
+#  ifdef __APPLE__
+        || std::setlocale(LC_CTYPE, "UTF-8")
+#  endif
+        || std::setlocale(LC_CTYPE, "en_US.UTF-8");
+    }
+  }
+#endif
+}
 
 Globals& Globals::Get()
 {

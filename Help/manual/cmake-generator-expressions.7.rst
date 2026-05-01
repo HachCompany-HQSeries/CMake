@@ -43,6 +43,12 @@ The above would expand to ``OLD_COMPILER`` if the
 :variable:`CMAKE_CXX_COMPILER_VERSION <CMAKE_<LANG>_COMPILER_VERSION>` is less
 than 4.2.0.
 
+.. note::
+
+  Generator expressions are supported in the values of many properties,
+  but not all.  Check a property's documentation for explicit mention
+  of generator expressions before using them.
+
 Whitespace And Quoting
 ======================
 
@@ -406,6 +412,8 @@ String Queries
   be exercised if ``string`` could contain multi-byte characters.
 
 .. genex:: $<STRING:FIND,string[,FROM:(BEGIN|END)],substring>
+
+  .. versionadded:: 4.3
 
   The position where the given ``substring`` was found in the supplied
   ``string``. If the ``substring`` is not found, a position of -1 is returned.
@@ -956,9 +964,9 @@ List Transformations
 
   Joins the ``list`` with the content of the ``glue`` string inserted between
   each item.  This is conceptually the same operation as
-  :ref:`$\<LIST:JOIN,list,glue\> <GenEx LIST-JOIN>`, but the two have
+  :cref:`$\<LIST:JOIN,list,glue\> <GenEx LIST-JOIN>`, but the two have
   different behavior with regard to empty items.
-  :ref:`$\<LIST:JOIN,list,glue\> <GenEx LIST-JOIN>` preserves all empty items,
+  :cref:`$\<LIST:JOIN,list,glue\> <GenEx LIST-JOIN>` preserves all empty items,
   whereas ``$<JOIN:list,glue>`` drops all empty items from the list.
 
 .. genex:: $<REMOVE_DUPLICATES:list>
@@ -968,7 +976,7 @@ List Transformations
   Removes duplicated items in the given ``list``. The relative order of items
   is preserved, and if duplicates are encountered, only the first instance is
   retained.  The result is the same as
-  :ref:`$\<LIST:REMOVE_DUPLICATES,list\> <GenEx LIST-REMOVE_DUPLICATES>`.
+  :cref:`$\<LIST:REMOVE_DUPLICATES,list\> <GenEx LIST-REMOVE_DUPLICATES>`.
 
 .. genex:: $<FILTER:list,INCLUDE|EXCLUDE,regex>
 
@@ -976,7 +984,7 @@ List Transformations
 
   Includes or removes items from ``list`` that match the regular expression
   ``regex``.  The result is the same as
-  :ref:`$\<LIST:FILTER,list,INCLUDE|EXCLUDE,regex\> <GenEx LIST-FILTER>`.
+  :cref:`$\<LIST:FILTER,list,INCLUDE|EXCLUDE,regex\> <GenEx LIST-FILTER>`.
 
 .. _GenEx List Ordering:
 
@@ -1048,7 +1056,7 @@ Most of the expressions in this section are closely associated with the
 the form of a generator expression.
 
 For all generator expressions in this section, paths are expected to be in
-cmake-style format. The :ref:`$\<PATH:CMAKE_PATH\> <GenEx PATH-CMAKE_PATH>`
+cmake-style format. The :cref:`$\<PATH:CMAKE_PATH\> <GenEx PATH-CMAKE_PATH>`
 generator expression can be used to convert a native path to a cmake-style
 one.
 
@@ -2420,6 +2428,135 @@ closely related to most of the expressions in this sub-section.
   any one of the entries in ``variant_ids``, otherwise ``0``.
 
 
+.. _`Source-Dependent Expressions`:
+
+Source-Dependent Expressions
+----------------------------
+
+The source file, as specified in the following expressions, can be nonexistent
+on the file system (i.e. generated file) but must be known from CMake. A source
+file becomes known from CMake if it is part of some target (library or
+executable) or when a source file property is defined. Moreover, this
+information is specific to the directory where the declaration occurred.
+
+For example, these generator expressions enable to offer a uniform behavior,
+for the :command:`add_custom_command` and :command:`add_custom_target`
+commands, regarding the source properties:
+
+.. code-block:: cmake
+
+  function(custom_add_library target)
+    unset(sources)
+    foreach(source IN LISTS ARGN)
+      add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${source}.bin
+        COMMAND my-compiler -o ${CMAKE_CURRENT_BINARY_DIR}/${source}.bin
+                            "$<$<SOURCE_EXISTS:${source}>:$<SOURCE_PROPERTY:${source},COMPILE_OPTIONS>>"
+                            ${source})
+      list(APPEND sources ${CMAKE_CURRENT_BINARY_DIR}/${source}.bin)
+    endforeach()
+    add_custom_target(${target}
+                      DEPENDS ${sources})
+  endfunction()
+
+  custom_add_library(my-lib file1.x file2.x file3.x)
+  set_property(SOURCE file1.x PROPERTY COMPILE_OPTIONS -X)
+  set_property(SOURCE file2.x PROPERTY COMPILE_OPTIONS -Y)
+
+Source Meta-Data
+^^^^^^^^^^^^^^^^
+
+These expressions look up information about a source file.
+
+.. genex:: $<SOURCE_EXISTS:src[,(DIRECTORY:dir|TARGET_DIRECTORY:tgt)]>
+
+  .. versionadded:: 4.3
+
+  ``1`` if ``src`` exists as a CMake source file, else ``0``. By default, the
+  source file is searched in the scope of the current source directory or the
+  directory of the consuming target.
+
+  Directory scope can be overridden with one of the following sub-options:
+
+  ``DIRECTORY:dir``
+    The source file will be searched in the ``dir`` directory's scope.
+    CMake must know about the directory, either by having added  it through a
+    call to :command:`add_subdirectory` or ``dir`` being the top level
+    directory. Relative paths are treated as relative to the current source
+    directory.
+
+  ``TARGET_DIRECTORY:target``
+      The source file will be searched in the directory scope in which
+      ``target`` was created (``target`` must therefore exist).
+
+Source Properties
+^^^^^^^^^^^^^^^^^
+
+These expressions look up the values of
+:ref:`source file properties <Source File Properties>`.
+
+.. genex:: $<SOURCE_PROPERTY:src[,(DIRECTORY:dir|TARGET_DIRECTORY:target)],prop>
+
+  .. versionadded:: 4.3
+
+  Value of the property ``prop`` on the source file ``src``, or empty if
+  the property is not set. An error will be raised if the source file is not
+  known by CMake. By default, the source file's property will be read from the
+  current source directory's scope or the directory of the consuming target.
+
+  Directory scope can be overridden with one of the following sub-options:
+
+  ``DIRECTORY:dir``
+    The source file property will be read from the ``dir`` directory's scope.
+    CMake must know about the directory, either by having added  it through a
+    call to :command:`add_subdirectory` or ``dir`` being the top level
+    directory. Relative paths are treated as relative to the current source
+    directory.
+
+  ``TARGET_DIRECTORY:target``
+      The source file property will be read from the directory scope in which
+      ``target`` was created (``target`` must therefore exist).
+
+.. _`FileSet-Dependent Expressions`:
+
+FileSet-Dependent Expressions
+-----------------------------
+
+FileSet Meta-Data
+^^^^^^^^^^^^^^^^^
+
+These expressions look up information about a file set.
+
+.. genex:: $<FILE_SET_EXISTS:fileset,TARGET:target>
+
+  .. versionadded:: 4.3
+
+  ``1`` if the ``fileset`` exists as a CMake file set attached to the
+  ``target``, else ``0``.
+
+  The possible sub-options are:
+
+  ``TARGET:target``
+    The target on which the file set depends.
+
+FileSet Properties
+^^^^^^^^^^^^^^^^^^
+
+These expressions look up the values of file set properties.
+
+.. genex:: $<FILE_SET_PROPERTY:fileset,TARGET:target,prop>
+
+  .. versionadded:: 4.3
+
+  Value of the property ``prop`` on the file set ``fileset``, or empty if
+  the property is not set. An error will be raised if the file set is not
+  known by CMake.
+
+  The possible sub-options are:
+
+  ``TARGET:target``
+    The target on which the file set depends.
+
 .. _`Target-Dependent Expressions`:
 
 Target-Dependent Expressions
@@ -2629,7 +2766,7 @@ In the following, the phrase "the ``tgt`` filename" means the name of the
   .. versionadded:: 3.15
 
   .. versionadded:: 4.2
-    The option ``POSTFIX``, which can be used to control the inclusion or not
+    The ``POSTFIX`` option can be used to control the inclusion or not
     of the :prop_tgt:`<CONFIG>_POSTFIX` target property value as part of the
     base name. The default is ``POSTFIX:INCLUDE``.
 
@@ -2707,7 +2844,7 @@ In the following, the phrase "the ``tgt`` filename" means the name of the
   .. versionadded:: 3.27
 
   .. versionadded:: 4.2
-    The option ``POSTFIX``, which can be used to control the inclusion or not
+    The ``POSTFIX`` option can be used to control the inclusion or not
     of the :prop_tgt:`<CONFIG>_POSTFIX` target property value as part of the
     base name. The default is ``POSTFIX:INCLUDE``.
 
@@ -2793,14 +2930,15 @@ In the following, the phrase "the ``tgt`` filename" means the name of the
   .. versionadded:: 3.15
 
   .. versionadded:: 4.2
-    The option ``POSTFIX``, which can be used to control the inclusion or not
+    The ``POSTFIX`` option can be used to control the inclusion or not
     of the :prop_tgt:`<CONFIG>_POSTFIX` target property value as part of the
     base name. The default is ``POSTFIX:INCLUDE``.
 
   Base name of file used to link the target ``tgt``, i.e.
   :genex:`$<TARGET_LINKER_FILE_NAME:tgt>` without prefix and suffix, and,
   optionally, postfix.
-  For example, if target file name is ``libbase_postfix.a``, the base name is:
+  For example, if the target file name is ``libbase_postfix.a``, the base name
+  is:
 
     * ``base_postfix`` for ``$<TARGET_LINKER_FILE_BASE_NAME:tgt>`` or
       ``$<TARGET_LINKER_FILE_BASE_NAME:tgt,POSTFIX:INCLUDE>``.
@@ -2871,14 +3009,15 @@ In the following, the phrase "the ``tgt`` filename" means the name of the
   .. versionadded:: 3.27
 
   .. versionadded:: 4.2
-    The option ``POSTFIX``, which can be used to control the inclusion or not
+    The ``POSTFIX`` option can be used to control the inclusion or not
     of the :prop_tgt:`<CONFIG>_POSTFIX` target property value as part of the
     base name. The default is ``POSTFIX:INCLUDE``.
 
   Base name of library file used to link the target ``tgt``, i.e.
   :genex:`$<TARGET_LINKER_LIBRARY_FILE_NAME:tgt>` without prefix and
   suffix,and, optionally, postfix.
-  For example, if target file name is ``libbase_postfix.a``, the base name is:
+  For example, if the target file name is ``libbase_postfix.a``, the base name
+  is:
 
     * ``base_postfix`` for ``$<TARGET_LINKER_LIBRARY_FILE_BASE_NAME:tgt>`` or
       ``$<TARGET_LINKER_LIBRARY_FILE_BASE_NAME:tgt,POSTFIX:INCLUDE>``.
@@ -2952,14 +3091,15 @@ In the following, the phrase "the ``tgt`` filename" means the name of the
   .. versionadded:: 3.27
 
   .. versionadded:: 4.2
-    The option ``POSTFIX``, which can be used to control the inclusion or not
+    The ``POSTFIX`` option can be used to control the inclusion or not
     of the :prop_tgt:`<CONFIG>_POSTFIX` target property value as part of the
     base name. The default is ``POSTFIX:INCLUDE``.
 
   Base name of the import file used to link the target ``tgt``, i.e.
   :genex:`$<TARGET_LINKER_IMPORT_FILE_NAME:tgt>` without prefix and suffix,
   and, optionally, postfix.
-  For example, if target file name is ``libbase_postfix.tbd``, the base name is
+  For example, if the target file name is ``libbase_postfix.tbd``, the base
+  name is
 
     * ``base_postfix`` for ``$<TARGET_LINKER_IMPORT_FILE_BASE_NAME:tgt>`` or
       ``$<TARGET_LINKER_IMPORT_FILE_BASE_NAME:tgt,POSTFIX:INCLUDE>``.
@@ -3084,29 +3224,29 @@ In the following, the phrase "the ``tgt`` filename" means the name of the
   where ``tgt`` is the name of a target.
 
   .. versionadded:: 4.2
-    The option ``POSTFIX``, which can be used to control the inclusion or not
+    The ``POSTFIX`` option can be used to control the inclusion or not
     of the :prop_tgt:`<CONFIG>_POSTFIX` target property value as part of the
     base name. The default is ``POSTFIX:INCLUDE``.
 
   .. versionchanged:: 4.2
     The postfix, as specified by :prop_tgt:`DEBUG_POSTFIX` or
     :prop_tgt:`<CONFIG>_POSTFIX` target properties, is always included in the
-    ``PDB`` base name, except if option ``POSTFIX`` has value ``EXCLUDE``.
-    See the policy :policy:`CMP0202`.
+    ``PDB`` base name, except if the ``POSTFIX`` option has the value
+    ``EXCLUDE``.  See the policy :policy:`CMP0202`.
 
   The base name corresponds to the target PDB file name (see
   ``$<TARGET_PDB_FILE_NAME:tgt>``) without prefix and suffix, and, optionally,
-  postfix. For example, if target file name is ``base_postfix.pdb``, the base
-  name is
+  postfix.  For example, if the target file name is ``base_postfix.pdb``, the
+  base name is
 
     * ``base_postfix`` for ``$<TARGET_PDB_FILE_BASE_NAME:tgt>`` or
       ``$<TARGET_PDB_FILE_BASE_NAME:tgt,POSTFIX:INCLUDE>``.
     * ``base`` for ``$<TARGET_PDB_FILE_BASE_NAME:tgt,POSTFIX:EXCLUDE>``.
 
-  See also the :prop_tgt:`OUTPUT_NAME`, :prop_tgt:`PDB_NAME` target properties,
-  and their configuration-specific variants :prop_tgt:`OUTPUT_NAME_<CONFIG>`
-  and :prop_tgt:`PDB_NAME_<CONFIG>`, and the :prop_tgt:`<CONFIG>_POSTFIX` and
-  :prop_tgt:`DEBUG_POSTFIX` target properties.
+  See also the :prop_tgt:`OUTPUT_NAME` and :prop_tgt:`PDB_NAME` target
+  properties, their configuration-specific variants
+  :prop_tgt:`OUTPUT_NAME_<CONFIG>` and :prop_tgt:`PDB_NAME_<CONFIG>`, and the
+  :prop_tgt:`<CONFIG>_POSTFIX` and :prop_tgt:`DEBUG_POSTFIX` target properties.
 
   Note that ``tgt`` is not added as a dependency of the target this
   expression is evaluated on.
@@ -3164,12 +3304,22 @@ In the following, the phrase "the ``tgt`` filename" means the name of the
   Note that ``tgt`` is not added as a dependency of the target this
   expression is evaluated on (see policy :policy:`CMP0112`).
 
-.. genex:: $<TARGET_OBJECTS:tgt>
+.. genex:: $<TARGET_OBJECTS:tgt[,SOURCE_FILES:source_file[;source_file]...]>
 
   .. versionadded:: 3.1
 
   List of objects resulting from building ``tgt``.  This would typically be
   used on :ref:`object library <Object Libraries>` targets.
+
+  Additional arguments:
+
+  ``SOURCE_FILES:source_file[;source_file]...``
+
+    .. versionadded:: 4.4
+
+    An optional list of one or more source files for the target. Only the
+    object files built from those source files will be returned (but not
+    necessarily in the same order they were specified).
 
 .. genex:: $<TARGET_RUNTIME_DLLS:tgt>
 

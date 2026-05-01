@@ -6,6 +6,7 @@
 #include <array>
 #include <cassert>
 #include <chrono>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
@@ -16,7 +17,6 @@
 #include <stdexcept>
 #include <utility>
 
-#include <cm/filesystem>
 #include <cm/memory>
 #include <cm/optional>
 #include <cm/string_view>
@@ -86,6 +86,7 @@
 #  include <cm3p/curl/curl.h>
 #  include <cm3p/json/writer.h>
 
+#  include "cmCMakePresetsArgs.h"
 #  include "cmConfigureLog.h"
 #  include "cmFileAPI.h"
 #  include "cmGraphVizWriter.h"
@@ -176,6 +177,19 @@ void cmWarnUnusedCliWarning(std::string const& variable, int /*unused*/,
   cm->MarkCliAsUsed(variable);
 }
 #endif
+
+void warnDeprecated(cm::string_view oldOption, cm::string_view newOption)
+{
+  std::cerr << "The "_s << oldOption << " option is deprecated.  Use "_s
+            << newOption << " instead.\n"_s;
+}
+
+std::string normalizeCliWarningName(cm::string_view cliName)
+{
+  std::string out = cmStrCat("CMD_"_s, cmSystemTools::UpperCase(cliName));
+  std::replace(out.begin(), out.end(), '-', '_');
+  return out;
+}
 
 bool cmakeCheckStampFile(std::string const& stampName)
 {
@@ -269,9 +283,16 @@ bool cmakeCheckStampList(std::string const& stampList)
   return true;
 }
 
+bool isDiagnosticSet(cmStateSnapshot const& state,
+                     cmDiagnosticCategory category)
+{
+  constexpr cmDiagnosticAction unset = cmDiagnostics::Undefined;
+  return (state.GetDiagnostic(category, unset) == unset);
+}
+
 } // namespace
 
-cmDocumentationEntry cmake::CMAKE_STANDARD_OPTIONS_TABLE[19] = {
+cmDocumentationEntry cmake::CMAKE_STANDARD_OPTIONS_TABLE[15] = {
   { "-S <path-to-source>", "Explicitly specify a source directory." },
   { "-B <path-to-build>", "Explicitly specify a build directory." },
   { "-C <initial-cache>", "Pre-load a script to populate the cache." },
@@ -285,18 +306,11 @@ cmDocumentationEntry cmake::CMAKE_STANDARD_OPTIONS_TABLE[19] = {
     "Specify install directory [CMAKE_INSTALL_PREFIX]." },
   { "--project-file <project-file-name>",
     "Specify an alternate project file name." },
-  { "-Wdev", "Enable developer warnings." },
-  { "-Wno-dev", "Suppress developer warnings." },
-  { "-Werror=dev", "Make developer warnings errors." },
-  { "-Wno-error=dev", "Make developer warnings not errors." },
-  { "-Wdeprecated", "Enable deprecation warnings." },
-  { "-Wno-deprecated", "Suppress deprecation warnings." },
-  { "-Werror=deprecated",
-    "Make deprecated macro and function warnings "
-    "errors." },
-  { "-Wno-error=deprecated",
-    "Make deprecated macro and function warnings "
-    "not errors." }
+  { "-W<category>", "Enable the specified category of warnings." },
+  { "-Wno-<category>", "Suppress the specified category of warnings." },
+  { "-Werror=<category>", "Make the specified category of warnings errors." },
+  { "-Wno-error=<category>",
+    "Make the specified category of warnings not errors." },
 };
 
 cmake::cmake(cmState::Role role, cmState::TryCompile isTryCompile)
@@ -471,7 +485,7 @@ cmake::CommandFailureAction cmake::GetCommandFailureAction() const
 
 void cmake::CleanupCommandsAndMacros()
 {
-  this->CurrentSnapshot = this->State->Reset();
+  this->CurrentSnapshot = this->State->Reset(this->CurrentSnapshot);
   this->State->RemoveUserDefinedCommands();
   this->CurrentSnapshot.SetDefaultDefinitions();
   // FIXME: InstalledFiles probably belongs in the global generator.
@@ -479,22 +493,33 @@ void cmake::CleanupCommandsAndMacros()
 }
 
 #ifndef CMAKE_BOOTSTRAP
-void cmake::SetWarningFromPreset(std::string const& name,
-                                 cm::optional<bool> warning,
-                                 cm::optional<bool> error)
+void cmake::SetDiagnosticsFromPreset(
+  std::map<cmDiagnosticCategory, bool> const& warnings,
+  std::map<cmDiagnosticCategory, bool> const& errors)
 {
-  if (warning) {
-    if (*warning) {
-      this->DiagLevels[name] = std::max(this->DiagLevels[name], DIAG_WARN);
-    } else {
-      this->DiagLevels[name] = DIAG_IGNORE;
+  for (unsigned i = 1; i < cmDiagnostics::CategoryCount; ++i) {
+    auto const category = static_cast<cmDiagnosticCategory>(i);
+
+    auto const wi = warnings.find(category);
+    if (wi != warnings.end()) {
+      if (wi->second) {
+        this->CurrentSnapshot.PromoteDiagnostic( // clang-format: break
+          category, cmDiagnostics::Warn, true);
+      } else {
+        this->CurrentSnapshot.DemoteDiagnostic( // clang-format: break
+          category, cmDiagnostics::Ignore, true);
+      }
     }
-  }
-  if (error) {
-    if (*error) {
-      this->DiagLevels[name] = DIAG_ERROR;
-    } else {
-      this->DiagLevels[name] = std::min(this->DiagLevels[name], DIAG_WARN);
+
+    auto const ei = errors.find(category);
+    if (ei != errors.end()) {
+      if (ei->second) {
+        this->CurrentSnapshot.PromoteDiagnostic( // clang-format: break
+          category, cmDiagnostics::SendError, true);
+      } else {
+        this->CurrentSnapshot.DemoteDiagnostic( // clang-format: break
+          category, cmDiagnostics::Warn, true);
+      }
     }
   }
 }
@@ -604,43 +629,50 @@ bool cmake::SetCacheArgs(std::vector<std::string> const& args)
     return true;
   };
 
-  auto WarningLambda = [](cm::string_view entry, cmake* state) -> bool {
+  auto WarningLambda = [](cm::string_view option, cmake* state) -> bool {
     bool foundNo = false;
     bool foundError = false;
 
-    if (cmHasLiteralPrefix(entry, "no-")) {
+    cm::string_view cname = option;
+    if (cmHasLiteralPrefix(cname, "no-")) {
       foundNo = true;
-      entry.remove_prefix(3);
+      cname.remove_prefix(3);
     }
 
-    if (cmHasLiteralPrefix(entry, "error=")) {
+    if (cmHasLiteralPrefix(cname, "error=")) {
       foundError = true;
-      entry.remove_prefix(6);
+      cname.remove_prefix(6);
     }
 
-    if (entry.empty()) {
+    if (cname.empty()) {
       cmSystemTools::Error("No warning name provided.");
       return false;
     }
 
-    std::string const name = std::string(entry);
-    if (!foundNo && !foundError) {
-      // -W<name>
-      state->DiagLevels[name] = std::max(state->DiagLevels[name], DIAG_WARN);
-    } else if (foundNo && !foundError) {
-      // -Wno<name>
-      state->DiagLevels[name] = DIAG_IGNORE;
-    } else if (!foundNo && foundError) {
-      // -Werror=<name>
-      state->DiagLevels[name] = DIAG_ERROR;
+    cm::optional<cmDiagnosticCategory> category;
+    if (cname == "dev"_s) {
+      warnDeprecated(
+        option,
+        cmStrCat("-W"_s, option.substr(0, option.size() - 3), "author"_s));
+      category = cmDiagnostics::CMD_AUTHOR;
     } else {
-      // -Wno-error=<name>
-      // This can downgrade an error to a warning, but should not enable
-      // or disable a warning in the first place.
-      auto dli = state->DiagLevels.find(name);
-      if (dli != state->DiagLevels.end()) {
-        dli->second = std::min(dli->second, DIAG_WARN);
+      category =
+        cmDiagnostics::GetDiagnosticCategory(normalizeCliWarningName(cname));
+      if (!category) {
+        cmSystemTools::Error(
+          cmStrCat("The warning category \""_s, cname, "\" is not known."));
+        return false;
       }
+    }
+
+    if (foundNo) {
+      state->CurrentSnapshot.DemoteDiagnostic(
+        *category, foundError ? cmDiagnostics::Warn : cmDiagnostics::Ignore,
+        true);
+    } else {
+      state->CurrentSnapshot.PromoteDiagnostic(
+        *category, foundError ? cmDiagnostics::SendError : cmDiagnostics::Warn,
+        true);
     }
     return true;
   };
@@ -687,7 +719,7 @@ bool cmake::SetCacheArgs(std::vector<std::string> const& args)
     // set to $PWD for -P mode.
     state->SetHomeDirectory(cmSystemTools::GetLogicalWorkingDirectory());
     state->SetHomeOutputDirectory(cmSystemTools::GetLogicalWorkingDirectory());
-    state->ReadListFile(args, path);
+    state->ReadListFile(args, cmSystemTools::ToNormalizedPathOnDisk(path));
     return true;
   };
 
@@ -734,11 +766,15 @@ bool cmake::SetCacheArgs(std::vector<std::string> const& args)
           cmSystemTools::Error("No file name specified for -C");
           return false;
         }
-        cmSystemTools::Stdout("loading initial cache file " + value + "\n");
+        state->SetInInitialCache(true);
+        cmSystemTools::Stdout(
+          cmStrCat("loading initial cache file ", value, '\n'));
         // Resolve script path specified on command line
         // relative to $PWD.
         auto path = cmSystemTools::ToNormalizedPathOnDisk(value);
+        state->InitializeFileAPI();
         state->ReadListFile(args, path);
+        state->SetInInitialCache(false);
         return true;
       } },
 
@@ -781,12 +817,15 @@ bool cmake::SetCacheArgs(std::vector<std::string> const& args)
 void cmake::ProcessCacheArg(std::string const& var, std::string const& value,
                             cmStateEnums::CacheEntryType type)
 {
+  cmDiagnosticAction const warnUnusedCli =
+    this->CurrentSnapshot.GetDiagnostic(cmDiagnostics::CMD_UNUSED_CLI);
+
   // The value is transformed if it is a filepath for example, so
   // we can't compare whether the value is already in the cache until
   // after we call AddCacheEntry.
   bool haveValue = false;
   std::string cachedValue;
-  if (this->WarnUnusedCli) {
+  if (warnUnusedCli != cmDiagnostics::Ignore) {
     if (cmValue v = this->State->GetInitializedCacheValue(var)) {
       haveValue = true;
       cachedValue = *v;
@@ -796,7 +835,7 @@ void cmake::ProcessCacheArg(std::string const& var, std::string const& value,
   this->AddCacheEntry(
     var, value, "No help, variable specified on the command line.", type);
 
-  if (this->WarnUnusedCli) {
+  if (warnUnusedCli != cmDiagnostics::Ignore) {
     if (!haveValue ||
         cachedValue != *this->State->GetInitializedCacheValue(var)) {
       this->WatchUnusedCli(var);
@@ -819,14 +858,14 @@ void cmake::ReadListFile(std::vector<std::string> const& args,
 
   // read in the list file to fill the cache
   if (!path.empty()) {
-    this->CurrentSnapshot = this->State->Reset();
+    this->CurrentSnapshot = this->State->Reset(this->CurrentSnapshot);
     cmStateSnapshot snapshot = this->GetCurrentSnapshot();
     snapshot.GetDirectory().SetCurrentBinary(this->GetHomeOutputDirectory());
     snapshot.GetDirectory().SetCurrentSource(this->GetHomeDirectory());
     snapshot.SetDefaultDefinitions();
     cmMakefile mf(gg, snapshot);
     if (this->State->GetRole() == cmState::Role::Script) {
-      mf.SetScriptModeFile(cmSystemTools::ToNormalizedPathOnDisk(path));
+      mf.SetScriptModeFile(path);
       mf.SetArgcArgv(args);
     }
     if (!cmSystemTools::FileExists(path, true)) {
@@ -963,19 +1002,6 @@ void cmake::LoadEnvironmentPresets()
     cmSystemTools::GetEnvVar("CMAKE_AUTOGEN_INTERMEDIATE_DIR_STRATEGY");
 }
 
-namespace {
-enum class ListPresets
-{
-  None,
-  Configure,
-  Build,
-  Test,
-  Package,
-  Workflow,
-  All,
-};
-}
-
 // Parse the args
 void cmake::SetArgs(std::vector<std::string> const& args)
 {
@@ -989,9 +1015,9 @@ void cmake::SetArgs(std::vector<std::string> const& args)
 #if !defined(CMAKE_BOOTSTRAP)
   std::string profilingFormat;
   std::string profilingOutput;
-  std::string presetName;
 
-  ListPresets listPresets = ListPresets::None;
+  cmCMakePresetsConfigureArgs presetsArgs;
+  using ListPresets = cmCMakePresetsConfigureArgs::ListPresetsOption;
 #endif
 
   auto EmptyStringArgLambda = [](std::string const&, cmake* state) -> bool {
@@ -1280,22 +1306,24 @@ void cmake::SetArgs(std::vector<std::string> const& args)
                        state->SetTrace(true);
                        return true;
                      } },
-    CommandArgument{ "--warn-uninitialized", CommandArgument::Values::Zero,
-                     [](std::string const&, cmake* state) -> bool {
-                       std::cout << "Warn about uninitialized values.\n";
-                       state->SetWarnUninitialized(true);
-                       return true;
-                     } },
+    CommandArgument{
+      "--warn-uninitialized", CommandArgument::Values::Zero,
+      [](std::string const&, cmake* state) -> bool {
+        warnDeprecated("--warn-uninitialized"_s, "-Wuninitialized"_s);
+        state->CurrentSnapshot.PromoteDiagnostic(
+          cmDiagnostics::CMD_UNINITIALIZED, cmDiagnostics::Warn, true);
+        return true;
+      } },
     CommandArgument{ "--warn-unused-vars", CommandArgument::Values::Zero,
                      IgnoreAndTrueLambda }, // Option was removed.
-    CommandArgument{ "--no-warn-unused-cli", CommandArgument::Values::Zero,
-                     [](std::string const&, cmake* state) -> bool {
-                       std::cout
-                         << "Not searching for unused variables given on the "
-                            "command line.\n";
-                       state->SetWarnUnusedCli(false);
-                       return true;
-                     } },
+    CommandArgument{
+      "--no-warn-unused-cli", CommandArgument::Values::Zero,
+      [](std::string const&, cmake* state) -> bool {
+        warnDeprecated("--no-warn-unused-cli"_s, "-Wno-unused-cli"_s);
+        state->CurrentSnapshot.DemoteDiagnostic(cmDiagnostics::CMD_UNUSED_CLI,
+                                                cmDiagnostics::Ignore, true);
+        return true;
+      } },
     CommandArgument{
       "--check-system-vars", CommandArgument::Values::Zero,
       [](std::string const&, cmake* state) -> bool {
@@ -1402,24 +1430,31 @@ void cmake::SetArgs(std::vector<std::string> const& args)
   arguments.emplace_back("--preset", "No preset specified for --preset",
                          CommandArgument::Values::One,
                          [&](std::string const& value, cmake*) -> bool {
-                           presetName = value;
+                           presetsArgs.PresetName = value;
                            return true;
                          });
+  arguments.emplace_back(
+    "--presets-file", "No file specified for --presets-file",
+    CommandArgument::Values::One,
+    [&presetsArgs](std::string const& value, cmake*) -> bool {
+      presetsArgs.PresetsFile = cmSystemTools::ToNormalizedPathOnDisk(value);
+      return true;
+    });
   arguments.emplace_back(
     "--list-presets", CommandArgument::Values::ZeroOrOne,
     [&](std::string const& value, cmake*) -> bool {
       if (value.empty() || value == "configure") {
-        listPresets = ListPresets::Configure;
+        presetsArgs.ListPresets = ListPresets::Configure;
       } else if (value == "build") {
-        listPresets = ListPresets::Build;
+        presetsArgs.ListPresets = ListPresets::Build;
       } else if (value == "test") {
-        listPresets = ListPresets::Test;
+        presetsArgs.ListPresets = ListPresets::Test;
       } else if (value == "package") {
-        listPresets = ListPresets::Package;
+        presetsArgs.ListPresets = ListPresets::Package;
       } else if (value == "workflow") {
-        listPresets = ListPresets::Workflow;
+        presetsArgs.ListPresets = ListPresets::Workflow;
       } else if (value == "all") {
-        listPresets = ListPresets::All;
+        presetsArgs.ListPresets = ListPresets::All;
       } else {
         cmSystemTools::Error(
           "Invalid value specified for --list-presets.\n"
@@ -1546,7 +1581,7 @@ void cmake::SetArgs(std::vector<std::string> const& args)
 #ifdef CMAKE_BOOTSTRAP
     false;
 #else
-    !presetName.empty();
+    !presetsArgs.PresetName.empty();
 #endif
 
   if (this->State->GetRole() == cmState::Role::Project && !haveSourceDir &&
@@ -1566,157 +1601,8 @@ void cmake::SetArgs(std::vector<std::string> const& args)
   }
 
 #if !defined(CMAKE_BOOTSTRAP)
-  if (listPresets != ListPresets::None || !presetName.empty()) {
-    cmCMakePresetsGraph presetsGraph;
-    auto result = presetsGraph.ReadProjectPresets(this->GetHomeDirectory());
-    if (result != true) {
-      std::string errorMsg =
-        cmStrCat("Could not read presets from ", this->GetHomeDirectory(),
-                 ":\n", presetsGraph.parseState.GetErrorMessage());
-      cmSystemTools::Error(errorMsg);
-      return;
-    }
-
-    if (listPresets != ListPresets::None) {
-      if (listPresets == ListPresets::Configure) {
-        this->PrintPresetList(presetsGraph);
-      } else if (listPresets == ListPresets::Build) {
-        presetsGraph.PrintBuildPresetList();
-      } else if (listPresets == ListPresets::Test) {
-        presetsGraph.PrintTestPresetList();
-      } else if (listPresets == ListPresets::Package) {
-        presetsGraph.PrintPackagePresetList();
-      } else if (listPresets == ListPresets::Workflow) {
-        presetsGraph.PrintWorkflowPresetList();
-      } else if (listPresets == ListPresets::All) {
-        presetsGraph.PrintAllPresets();
-      }
-
-      this->State->SetRoleToHelpForListPresets();
-      return;
-    }
-
-    auto preset = presetsGraph.ConfigurePresets.find(presetName);
-    if (preset == presetsGraph.ConfigurePresets.end()) {
-      cmSystemTools::Error(cmStrCat("No such preset in ",
-                                    this->GetHomeDirectory(), ": \"",
-                                    presetName, '"'));
-      this->PrintPresetList(presetsGraph);
-      return;
-    }
-    if (preset->second.Unexpanded.Hidden) {
-      cmSystemTools::Error(cmStrCat("Cannot use hidden preset in ",
-                                    this->GetHomeDirectory(), ": \"",
-                                    presetName, '"'));
-      this->PrintPresetList(presetsGraph);
-      return;
-    }
-    auto const& expandedPreset = preset->second.Expanded;
-    if (!expandedPreset) {
-      cmSystemTools::Error(cmStrCat("Could not evaluate preset \"",
-                                    preset->second.Unexpanded.Name,
-                                    "\": Invalid macro expansion"));
-      return;
-    }
-    if (!expandedPreset->ConditionResult) {
-      cmSystemTools::Error(cmStrCat("Could not use disabled preset \"",
-                                    preset->second.Unexpanded.Name, '"'));
-      return;
-    }
-
-    if (!this->State->IsCacheLoaded() && !haveBArg &&
-        !expandedPreset->BinaryDir.empty()) {
-      this->SetHomeOutputDirectory(expandedPreset->BinaryDir);
-    }
-    if (!this->GlobalGenerator && !expandedPreset->Generator.empty()) {
-      if (!this->CreateAndSetGlobalGenerator(expandedPreset->Generator)) {
-        return;
-      }
-    }
-    this->UnprocessedPresetVariables = expandedPreset->CacheVariables;
-    this->UnprocessedPresetEnvironment = expandedPreset->Environment;
-
-    if (!expandedPreset->InstallDir.empty() &&
-        !this->State->GetInitializedCacheValue("CMAKE_INSTALL_PREFIX")) {
-      this->UnprocessedPresetVariables["CMAKE_INSTALL_PREFIX"] = {
-        "PATH", expandedPreset->InstallDir
-      };
-    }
-    if (!expandedPreset->ToolchainFile.empty() &&
-        !this->State->GetInitializedCacheValue("CMAKE_TOOLCHAIN_FILE")) {
-      this->UnprocessedPresetVariables["CMAKE_TOOLCHAIN_FILE"] = {
-        "FILEPATH", expandedPreset->ToolchainFile
-      };
-    }
-
-    if (!expandedPreset->ArchitectureStrategy ||
-        expandedPreset->ArchitectureStrategy ==
-          cmCMakePresetsGraph::ArchToolsetStrategy::Set) {
-      if (!this->GeneratorPlatformSet &&
-          !expandedPreset->Architecture.empty()) {
-        this->SetGeneratorPlatform(expandedPreset->Architecture);
-      }
-    }
-    if (!expandedPreset->ToolsetStrategy ||
-        expandedPreset->ToolsetStrategy ==
-          cmCMakePresetsGraph::ArchToolsetStrategy::Set) {
-      if (!this->GeneratorToolsetSet && !expandedPreset->Toolset.empty()) {
-        this->SetGeneratorToolset(expandedPreset->Toolset);
-      }
-    }
-
-    if (!expandedPreset->GraphVizFile.empty()) {
-      if (this->GraphVizFile.empty()) {
-        this->SetGraphVizFile(
-          cmSystemTools::CollapseFullPath(expandedPreset->GraphVizFile));
-      }
-    }
-
-    this->SetWarningFromPreset("dev", expandedPreset->WarnDev,
-                               expandedPreset->ErrorDev);
-    this->SetWarningFromPreset("deprecated", expandedPreset->WarnDeprecated,
-                               expandedPreset->ErrorDeprecated);
-    if (expandedPreset->WarnUninitialized == true) {
-      this->SetWarnUninitialized(true);
-    }
-    if (expandedPreset->WarnUnusedCli == false) {
-      this->SetWarnUnusedCli(false);
-    }
-    if (expandedPreset->WarnSystemVars == true) {
-      this->SetCheckSystemVars(true);
-    }
-    if (expandedPreset->DebugOutput == true) {
-      this->SetDebugOutputOn(true);
-    }
-    if (expandedPreset->DebugTryCompile == true) {
-      this->DebugTryCompileOn();
-    }
-    if (expandedPreset->DebugFind == true) {
-      this->SetDebugFindOutput(true);
-    }
-    if (expandedPreset->TraceMode &&
-        expandedPreset->TraceMode !=
-          cmCMakePresetsGraph::TraceEnableMode::Disable) {
-      this->SetTrace(true);
-      if (expandedPreset->TraceMode ==
-          cmCMakePresetsGraph::TraceEnableMode::Expand) {
-        this->SetTraceExpand(true);
-      }
-    }
-    if (expandedPreset->TraceFormat) {
-      this->SetTrace(true);
-      this->SetTraceFormat(*expandedPreset->TraceFormat);
-    }
-    if (!expandedPreset->TraceSource.empty()) {
-      this->SetTrace(true);
-      for (std::string const& filePaths : expandedPreset->TraceSource) {
-        this->AddTraceSource(filePaths);
-      }
-    }
-    if (!expandedPreset->TraceRedirect.empty()) {
-      this->SetTrace(true);
-      this->SetTraceFile(expandedPreset->TraceRedirect);
-    }
+  if (presetsArgs.HasPresetsArg()) {
+    this->SetArgsFromPreset(presetsArgs, haveBArg);
   }
 #endif
 }
@@ -1986,10 +1872,10 @@ int cmake::AddCMakePaths()
         (cmSystemTools::GetCMakeRoot() + "/Modules/CMake.cmake"))) {
     // couldn't find modules
     cmSystemTools::Error(
-      "Could not find CMAKE_ROOT !!!\n"
-      "CMake has most likely not been installed correctly.\n"
-      "Modules directory not found in\n" +
-      cmSystemTools::GetCMakeRoot());
+      cmStrCat("Could not find CMAKE_ROOT !!!\n"
+               "CMake has most likely not been installed correctly.\n"
+               "Modules directory not found in\n",
+               cmSystemTools::GetCMakeRoot()));
     return 0;
   }
   this->AddCacheEntry("CMAKE_ROOT", cmSystemTools::GetCMakeRoot(),
@@ -2131,6 +2017,155 @@ bool cmake::CreateAndSetGlobalGenerator(std::string const& name)
 }
 
 #ifndef CMAKE_BOOTSTRAP
+bool cmake::SetArgsFromPreset(cmCMakePresetsConfigureArgs const& args,
+                              bool haveBinaryDirArg)
+{
+  using ListPresets = cmCMakePresetsConfigureArgs::ListPresetsOption;
+
+  cmCMakePresetsGraph presetsGraph;
+  auto result = presetsGraph.ReadProjectPresets(this->GetHomeDirectory(),
+                                                args.PresetsFile);
+  if (result != true) {
+    std::string errorMsg =
+      cmStrCat("Could not read presets from ", this->GetHomeDirectory(), ":\n",
+               presetsGraph.parseState.GetErrorMessage());
+    cmSystemTools::Error(errorMsg);
+    return false;
+  }
+
+  if (args.ListPresets != ListPresets::None) {
+    switch (args.ListPresets) {
+      case ListPresets::Configure:
+        this->PrintPresetList(presetsGraph);
+        break;
+      case ListPresets::Build:
+        presetsGraph.PrintBuildPresetList();
+        break;
+      case ListPresets::Test:
+        presetsGraph.PrintTestPresetList();
+        break;
+      case ListPresets::Package:
+        presetsGraph.PrintPackagePresetList();
+        break;
+      case ListPresets::Workflow:
+        presetsGraph.PrintWorkflowPresetList();
+        break;
+      case ListPresets::All:
+        presetsGraph.PrintAllPresets();
+        break;
+      default:
+        break;
+    }
+
+    this->State->SetRoleToHelpForListPresets();
+    return false;
+  }
+
+  auto resolveResult =
+    presetsGraph.ResolvePreset(args.PresetName, presetsGraph.ConfigurePresets);
+  using ConfigurePreset = cmCMakePresetsGraph::ConfigurePreset;
+  using S = cmCMakePresetsGraph::PresetResolveStatus;
+  auto resolveError = cmCMakePresetsGraph::FormatPresetError<ConfigurePreset>(
+    resolveResult.StatusCode, resolveResult.ErrorPresetName,
+    this->GetHomeDirectory());
+  if (resolveError) {
+    cmSystemTools::Error(*resolveError);
+    if (resolveResult.StatusCode == S::NotFound ||
+        resolveResult.StatusCode == S::Hidden) {
+      this->PrintPresetList(presetsGraph);
+    }
+    return false;
+  }
+  auto const* expandedPreset = resolveResult.Preset;
+
+  if (!this->State->IsCacheLoaded() && !haveBinaryDirArg &&
+      !expandedPreset->BinaryDir.empty()) {
+    this->SetHomeOutputDirectory(expandedPreset->BinaryDir);
+  }
+  if (!this->GlobalGenerator && !expandedPreset->Generator.empty()) {
+    if (!this->CreateAndSetGlobalGenerator(expandedPreset->Generator)) {
+      return false;
+    }
+  }
+  this->UnprocessedPresetVariables = expandedPreset->CacheVariables;
+  this->UnprocessedPresetEnvironment = expandedPreset->Environment;
+
+  if (!expandedPreset->InstallDir.empty() &&
+      !this->State->GetInitializedCacheValue("CMAKE_INSTALL_PREFIX")) {
+    this->UnprocessedPresetVariables["CMAKE_INSTALL_PREFIX"] = {
+      "PATH", expandedPreset->InstallDir
+    };
+  }
+  if (!expandedPreset->ToolchainFile.empty() &&
+      !this->State->GetInitializedCacheValue("CMAKE_TOOLCHAIN_FILE")) {
+    this->UnprocessedPresetVariables["CMAKE_TOOLCHAIN_FILE"] = {
+      "FILEPATH", expandedPreset->ToolchainFile
+    };
+  }
+
+  if (!expandedPreset->ArchitectureStrategy ||
+      expandedPreset->ArchitectureStrategy ==
+        cmCMakePresetsGraph::ArchToolsetStrategy::Set) {
+    if (!this->GeneratorPlatformSet && !expandedPreset->Architecture.empty()) {
+      this->SetGeneratorPlatform(expandedPreset->Architecture);
+    }
+  }
+  if (!expandedPreset->ToolsetStrategy ||
+      expandedPreset->ToolsetStrategy ==
+        cmCMakePresetsGraph::ArchToolsetStrategy::Set) {
+    if (!this->GeneratorToolsetSet && !expandedPreset->Toolset.empty()) {
+      this->SetGeneratorToolset(expandedPreset->Toolset);
+    }
+  }
+
+  if (!expandedPreset->GraphVizFile.empty()) {
+    if (this->GraphVizFile.empty()) {
+      this->SetGraphVizFile(
+        cmSystemTools::CollapseFullPath(expandedPreset->GraphVizFile));
+    }
+  }
+
+  this->SetDiagnosticsFromPreset(expandedPreset->Warnings,
+                                 expandedPreset->Errors);
+  if (expandedPreset->WarnSystemVars == true) {
+    this->SetCheckSystemVars(true);
+  }
+  if (expandedPreset->DebugOutput == true) {
+    this->SetDebugOutputOn(true);
+  }
+  if (expandedPreset->DebugTryCompile == true) {
+    this->DebugTryCompileOn();
+  }
+  if (expandedPreset->DebugFind == true) {
+    this->SetDebugFindOutput(true);
+  }
+  if (expandedPreset->TraceMode &&
+      expandedPreset->TraceMode !=
+        cmCMakePresetsGraph::TraceEnableMode::Disable) {
+    this->SetTrace(true);
+    if (expandedPreset->TraceMode ==
+        cmCMakePresetsGraph::TraceEnableMode::Expand) {
+      this->SetTraceExpand(true);
+    }
+  }
+  if (expandedPreset->TraceFormat) {
+    this->SetTrace(true);
+    this->SetTraceFormat(*expandedPreset->TraceFormat);
+  }
+  if (!expandedPreset->TraceSource.empty()) {
+    this->SetTrace(true);
+    for (std::string const& filePaths : expandedPreset->TraceSource) {
+      this->AddTraceSource(filePaths);
+    }
+  }
+  if (!expandedPreset->TraceRedirect.empty()) {
+    this->SetTrace(true);
+    this->SetTraceFile(expandedPreset->TraceRedirect);
+  }
+
+  return true;
+}
+
 void cmake::PrintPresetList(cmCMakePresetsGraph const& graph) const
 {
   std::vector<GeneratorInfo> generators;
@@ -2372,78 +2407,101 @@ int cmake::Configure()
   auto profilingRAII = this->CreateProfilingEntry("project", "configure");
 #endif
 
-  DiagLevel diagLevel;
+  // We now need to harmonize the previous initial diagnostic state with any
+  // changes requested via command line options. This is a bit tricky, because
+  // we need to underlay what is specified by the cache beneath whatever state
+  // has been built from command line processing.
 
-  if (this->DiagLevels.count("deprecated") == 1) {
+  cmDiagnosticAction deprecated = this->CurrentSnapshot.GetDiagnostic(
+    cmDiagnostics::CMD_DEPRECATED, cmDiagnostics::Undefined);
+  bool const deprecatedAlreadySet = (deprecated != cmDiagnostics::Undefined);
 
-    diagLevel = this->DiagLevels["deprecated"];
-    if (diagLevel == DIAG_IGNORE) {
-      this->SetSuppressDeprecatedWarnings(true);
-      this->SetDeprecatedWarningsAsErrors(false);
-    } else if (diagLevel == DIAG_WARN) {
-      this->SetSuppressDeprecatedWarnings(false);
-      this->SetDeprecatedWarningsAsErrors(false);
-    } else if (diagLevel == DIAG_ERROR) {
-      this->SetSuppressDeprecatedWarnings(false);
-      this->SetDeprecatedWarningsAsErrors(true);
-    }
-  }
+  if (cmValue cachedDiagnostics =
+        this->State->GetCacheEntryValue("CMAKE_DIAGNOSTIC_INIT")) {
+    for (std::string const& item : cmList{ cachedDiagnostics }) {
+      std::string::size_type n = item.find('=');
+      if (n != std::string::npos) {
+        cm::string_view v = item;
+        cm::optional<cmDiagnosticCategory> const& category =
+          cmDiagnostics::GetDiagnosticCategory(v.substr(0, n));
+        cm::optional<cmDiagnosticAction> const& action =
+          cmDiagnostics::GetDiagnosticAction(v.substr(n + 1));
 
-  if (this->DiagLevels.count("dev") == 1) {
-    bool setDeprecatedVariables = false;
-
-    cmValue cachedWarnDeprecated =
-      this->State->GetCacheEntryValue("CMAKE_WARN_DEPRECATED");
-    cmValue cachedErrorDeprecated =
-      this->State->GetCacheEntryValue("CMAKE_ERROR_DEPRECATED");
-
-    // don't overwrite deprecated warning setting from a previous invocation
-    if (!cachedWarnDeprecated && !cachedErrorDeprecated) {
-      setDeprecatedVariables = true;
-    }
-
-    diagLevel = this->DiagLevels["dev"];
-    if (diagLevel == DIAG_IGNORE) {
-      this->SetSuppressDevWarnings(true);
-      this->SetDevWarningsAsErrors(false);
-
-      if (setDeprecatedVariables) {
-        this->SetSuppressDeprecatedWarnings(true);
-        this->SetDeprecatedWarningsAsErrors(false);
-      }
-    } else if (diagLevel == DIAG_WARN) {
-      this->SetSuppressDevWarnings(false);
-      this->SetDevWarningsAsErrors(false);
-
-      if (setDeprecatedVariables) {
-        this->SetSuppressDeprecatedWarnings(false);
-        this->SetDeprecatedWarningsAsErrors(false);
-      }
-    } else if (diagLevel == DIAG_ERROR) {
-      this->SetSuppressDevWarnings(false);
-      this->SetDevWarningsAsErrors(true);
-
-      if (setDeprecatedVariables) {
-        this->SetSuppressDeprecatedWarnings(false);
-        this->SetDeprecatedWarningsAsErrors(true);
+        if (category && action) {
+          // Only use the cache if command-line options have not modified the
+          // diagnostic.
+          if (isDiagnosticSet(this->CurrentSnapshot, *category)) {
+            this->CurrentSnapshot.SetDiagnostic(*category, *action, false);
+          }
+        }
       }
     }
   }
 
-  // Cache variables may have already been set by a previous invocation,
-  // so we cannot rely on command line options alone. Always ensure our
-  // messenger is in sync with the cache.
-  cmValue value = this->State->GetCacheEntryValue("CMAKE_WARN_DEPRECATED");
-  this->Messenger->SetSuppressDeprecatedWarnings(value && value.IsOff());
+  cmValue cachedWarnDeprecated =
+    this->State->GetCacheEntryValue("CMAKE_WARN_DEPRECATED");
+  if (cachedWarnDeprecated) {
+    std::cerr << "The CMAKE_WARN_DEPRECATED variable is deprecated.  "
+                 "Use CMAKE_DIAGNOSTIC_INIT instead.\n"_s;
+    if (cachedWarnDeprecated.IsOn()) {
+      deprecated = cmDiagnostics::Warn;
+    } else {
+      deprecated = cmDiagnostics::Ignore;
+    }
+  }
 
-  value = this->State->GetCacheEntryValue("CMAKE_ERROR_DEPRECATED");
-  this->Messenger->SetDeprecatedWarningsAsErrors(value.IsOn());
+  cmValue cachedErrorDeprecated =
+    this->State->GetCacheEntryValue("CMAKE_ERROR_DEPRECATED");
+  if (cachedErrorDeprecated) {
+    std::cerr << "The CMAKE_ERROR_DEPRECATED variable is deprecated.  "
+                 "Use CMAKE_DIAGNOSTIC_INIT instead.\n"_s;
+    if (cachedErrorDeprecated.IsOn()) {
+      deprecated = cmDiagnostics::SendError;
+    }
+  }
 
-  value = this->State->GetCacheEntryValue("CMAKE_SUPPRESS_DEVELOPER_WARNINGS");
-  this->Messenger->SetSuppressDevWarnings(value.IsOn());
+  if (!deprecatedAlreadySet && deprecated != cmDiagnostics::Undefined) {
+    // CMD_DEPRECATED was not set by command-line options, but was altered by
+    // one or both of CMAKE_{WARN,ERROR}_DEPRECATED.
+    this->CurrentSnapshot.SetDiagnostic(cmDiagnostics::CMD_DEPRECATED,
+                                        deprecated, false);
+  }
 
-  value = this->State->GetCacheEntryValue("CMAKE_SUPPRESS_DEVELOPER_ERRORS");
-  this->Messenger->SetDevWarningsAsErrors(value && value.IsOff());
+  // Now write the diagnostic state back to the cache.
+  cmList diagnostics;
+  for (unsigned i = 1; i < cmDiagnostics::CategoryCount; ++i) {
+    auto const category = static_cast<cmDiagnosticCategory>(i);
+    auto const action = this->CurrentSnapshot.GetDiagnostic(category);
+
+    diagnostics.emplace_back(
+      cmStrCat(cmDiagnostics::GetCategoryString(category), '=',
+               cmDiagnostics::GetActionString(action)));
+
+    if (category == cmDiagnostics::CMD_DEPRECATED) {
+      // Set deprecated CMAKE_{WARN,ERROR}_DEPRECATED, but only in the cache,
+      // and only if they were already set in the cache.
+      if (cachedWarnDeprecated) {
+        std::string const value =
+          (action >= cmDiagnostics::Warn ? "ON" : "OFF");
+        this->AddCacheEntry("CMAKE_WARN_DEPRECATED", value,
+                            "Deprecated.  Use CMAKE_DIAGNOSTIC_INIT instead.",
+                            cmStateEnums::INTERNAL);
+      }
+      if (cachedErrorDeprecated) {
+        std::string const value =
+          (action >= cmDiagnostics::SendError ? "ON" : "OFF");
+        this->AddCacheEntry("CMAKE_ERROR_DEPRECATED", value,
+                            "Deprecated.  Use CMAKE_DIAGNOSTIC_INIT instead.",
+                            cmStateEnums::INTERNAL);
+      }
+    }
+  }
+
+  this->AddCacheEntry("CMAKE_DIAGNOSTIC_INIT", cmJoin(diagnostics, ";"_s),
+                      "Set initial state for CMake diagnostics; "
+                      "used to persist state set by command-line options "
+                      "across invocations.",
+                      cmStateEnums::INTERNAL);
 
   int ret = this->ActualConfigure();
   cmValue delCacheVars =
@@ -2680,6 +2738,19 @@ int cmake::ActualConfigure()
     }
   }
 
+  if (!this->State->GetInitializedCacheValue(
+        "CMAKE_DISABLE_PRECOMPILE_HEADERS")) {
+    cm::optional<std::string> disablePrecompileHeaders =
+      cmSystemTools::GetEnvVar("CMAKE_DISABLE_PRECOMPILE_HEADERS");
+    if (disablePrecompileHeaders && !disablePrecompileHeaders->empty()) {
+      std::string message =
+        "Default value for DISABLE_PRECOMPILE_HEADERS of targets.";
+      this->AddCacheEntry("CMAKE_DISABLE_PRECOMPILE_HEADERS",
+                          *disablePrecompileHeaders, message,
+                          cmStateEnums::BOOL);
+    }
+  }
+
   // reset any system configuration information, except for when we are
   // InTryCompile. With TryCompile the system info is taken from the parent's
   // info to save time
@@ -2688,19 +2759,16 @@ int cmake::ActualConfigure()
   }
 
 #if !defined(CMAKE_BOOTSTRAP)
-  this->FileAPI = cm::make_unique<cmFileAPI>(this);
+  this->InitializeFileAPI();
   this->FileAPI->ReadQueries();
-
-  this->Instrumentation = cm::make_unique<cmInstrumentation>(
-    this->State->GetBinaryDirectory(),
-    cmInstrumentation::LoadQueriesAfter::No);
-  this->Instrumentation->ClearGeneratedQueries();
+  this->InitializeInstrumentation();
 
   if (!this->GetIsInTryCompile()) {
     this->TruncateOutputLog("CMakeConfigureLog.yaml");
     this->ConfigureLog = cm::make_unique<cmConfigureLog>(
       cmStrCat(this->GetHomeOutputDirectory(), "/CMakeFiles"_s),
       this->FileAPI->GetConfigureLogVersions());
+    this->Instrumentation->ClearGeneratedQueries();
     this->Instrumentation->CheckCDashVariable();
   }
 #endif
@@ -2952,6 +3020,26 @@ void cmake::StopDebuggerIfNeeded(int exitCode)
 
 #endif
 
+void cmake::InitializeFileAPI()
+{
+#ifndef CMAKE_BOOTSTRAP
+  if (!this->FileAPI) {
+    this->FileAPI = cm::make_unique<cmFileAPI>(this);
+  }
+#endif
+}
+
+void cmake::InitializeInstrumentation()
+{
+#ifndef CMAKE_BOOTSTRAP
+  if (!this->Instrumentation) {
+    this->Instrumentation = cm::make_unique<cmInstrumentation>(
+      this->State->GetBinaryDirectory(),
+      cmInstrumentation::LoadQueriesAfter::No);
+  }
+#endif
+}
+
 // handle a command line invocation
 int cmake::Run(std::vector<std::string> const& args, bool noconfigure)
 {
@@ -3004,10 +3092,9 @@ int cmake::Run(std::vector<std::string> const& args, bool noconfigure)
     if (!this->SarifFileOutput) {
       // If no output file is specified, use the default path
       // Enable parent directory creation for the default path
-      sarifLogFileWriter.SetPath(
-        cm::filesystem::path(this->GetHomeOutputDirectory()) /
-          std::string(cmSarif::PROJECT_DEFAULT_SARIF_FILE),
-        true);
+      sarifLogFileWriter.SetPath(cmStrCat(this->GetHomeOutputDirectory(), '/',
+                                          cmSarif::PROJECT_DEFAULT_SARIF_FILE),
+                                 true);
     }
 #endif
   } else {
@@ -3169,9 +3256,7 @@ int cmake::Generate()
     std::cout << "Generate graphviz: " << this->GraphVizFile << '\n';
     this->GenerateGraphViz(this->GraphVizFile);
   }
-  if (this->WarnUnusedCli) {
-    this->RunCheckForUnusedVariables();
-  }
+  this->RunCheckForUnusedVariables();
   if (cmSystemTools::GetErrorOccurredFlag()) {
 #if !defined(CMAKE_BOOTSTRAP)
     this->FileAPI->WriteReplies(cmFileAPI::IndexFor::FailedGenerate);
@@ -3199,16 +3284,6 @@ void cmake::AddCacheEntry(std::string const& key, cmValue value,
   this->State->AddCacheEntry(key, value, helpString,
                              static_cast<cmStateEnums::CacheEntryType>(type));
   this->UnwatchUnusedCli(key);
-
-  if (key == "CMAKE_WARN_DEPRECATED"_s) {
-    this->Messenger->SetSuppressDeprecatedWarnings(value && value.IsOff());
-  } else if (key == "CMAKE_ERROR_DEPRECATED"_s) {
-    this->Messenger->SetDeprecatedWarningsAsErrors(value.IsOn());
-  } else if (key == "CMAKE_SUPPRESS_DEVELOPER_WARNINGS"_s) {
-    this->Messenger->SetSuppressDevWarnings(value.IsOn());
-  } else if (key == "CMAKE_SUPPRESS_DEVELOPER_ERRORS"_s) {
-    this->Messenger->SetDevWarningsAsErrors(value && value.IsOff());
-  }
 }
 
 bool cmake::DoWriteGlobVerifyTarget() const
@@ -3816,6 +3891,14 @@ void cmake::IssueMessage(MessageType t, std::string const& text,
   this->Messenger->IssueMessage(t, text, backtrace);
 }
 
+void cmake::IssueDiagnostic(cmDiagnosticCategory category,
+                            std::string const& text,
+                            cmStateSnapshot const& state,
+                            cmListFileBacktrace const& backtrace) const
+{
+  this->Messenger->IssueDiagnostic(category, text, state, backtrace);
+}
+
 std::vector<std::string> cmake::GetDebugConfigs()
 {
   cmList configs;
@@ -3832,19 +3915,30 @@ std::vector<std::string> cmake::GetDebugConfigs()
   return std::move(configs.data());
 }
 
-int cmake::Build(int jobs, std::string dir, std::vector<std::string> targets,
-                 std::string config, std::vector<std::string> nativeOptions,
-                 cmBuildOptions& buildOptions, bool verbose,
-                 std::string const& presetName, bool listPresets,
+int cmake::Build(cmBuildArgs buildArgs, std::vector<std::string> targets,
+                 std::vector<std::string> nativeOptions,
+                 cmBuildOptions& buildOptions,
+                 cmCMakePresetsArgs const& presetsArgs,
                  std::vector<std::string> const& args)
 {
-#if !defined(CMAKE_BOOTSTRAP)
-  if (!presetName.empty() || listPresets) {
-    this->SetHomeDirectory(cmSystemTools::GetLogicalWorkingDirectory());
-    this->SetHomeOutputDirectory(cmSystemTools::GetLogicalWorkingDirectory());
+  buildArgs.timeout = cmDuration::zero();
 
+#if !defined(CMAKE_BOOTSTRAP)
+  if (presetsArgs.HasPresetsArg()) {
+    // If the binary directory was specified, use it to find
+    // the source directory so we can locate the presets file.
+    if (!buildArgs.binaryDir.empty() &&
+        this->SetDirectoriesFromFile(buildArgs.binaryDir)) {
+      // HomeDirectory is now the source directory (found in CMakeCache.txt)
+    } else {
+      // Otherwise we assume this command was called from the source directory.
+      this->SetHomeDirectory(cmSystemTools::GetLogicalWorkingDirectory());
+      this->SetHomeOutputDirectory(
+        cmSystemTools::GetLogicalWorkingDirectory());
+    }
     cmCMakePresetsGraph settingsFile;
-    auto result = settingsFile.ReadProjectPresets(this->GetHomeDirectory());
+    auto result = settingsFile.ReadProjectPresets(this->GetHomeDirectory(),
+                                                  presetsArgs.PresetsFile);
     if (result != true) {
       cmSystemTools::Error(
         cmStrCat("Could not read presets from ", this->GetHomeDirectory(),
@@ -3852,44 +3946,23 @@ int cmake::Build(int jobs, std::string dir, std::vector<std::string> targets,
       return 1;
     }
 
-    if (listPresets) {
+    if (presetsArgs.ListPresets) {
       settingsFile.PrintBuildPresetList();
       return 0;
     }
 
-    auto presetPair = settingsFile.BuildPresets.find(presetName);
-    if (presetPair == settingsFile.BuildPresets.end()) {
-      cmSystemTools::Error(cmStrCat("No such build preset in ",
-                                    this->GetHomeDirectory(), ": \"",
-                                    presetName, '"'));
+    auto resolveResult = settingsFile.ResolvePreset(presetsArgs.PresetName,
+                                                    settingsFile.BuildPresets);
+    auto resolveError =
+      cmCMakePresetsGraph::FormatPresetError<cmCMakePresetsGraph::BuildPreset>(
+        resolveResult.StatusCode, resolveResult.ErrorPresetName,
+        this->GetHomeDirectory());
+    if (resolveError) {
+      cmSystemTools::Error(*resolveError);
       settingsFile.PrintBuildPresetList();
       return 1;
     }
-
-    if (presetPair->second.Unexpanded.Hidden) {
-      cmSystemTools::Error(cmStrCat("Cannot use hidden build preset in ",
-                                    this->GetHomeDirectory(), ": \"",
-                                    presetName, '"'));
-      settingsFile.PrintBuildPresetList();
-      return 1;
-    }
-
-    auto const& expandedPreset = presetPair->second.Expanded;
-    if (!expandedPreset) {
-      cmSystemTools::Error(cmStrCat("Could not evaluate build preset \"",
-                                    presetName,
-                                    "\": Invalid macro expansion"));
-      settingsFile.PrintBuildPresetList();
-      return 1;
-    }
-
-    if (!expandedPreset->ConditionResult) {
-      cmSystemTools::Error(cmStrCat("Cannot use disabled build preset in ",
-                                    this->GetHomeDirectory(), ": \"",
-                                    presetName, '"'));
-      settingsFile.PrintBuildPresetList();
-      return 1;
-    }
+    auto const* expandedPreset = resolveResult.Preset;
 
     auto configurePresetPair =
       settingsFile.ConfigurePresets.find(expandedPreset->ConfigurePreset);
@@ -3917,17 +3990,23 @@ int cmake::Build(int jobs, std::string dir, std::vector<std::string> targets,
       return 1;
     }
 
-    if (dir.empty() && !expandedConfigurePreset->BinaryDir.empty()) {
-      dir = expandedConfigurePreset->BinaryDir;
+    if (buildArgs.binaryDir.empty() &&
+        !expandedConfigurePreset->BinaryDir.empty()) {
+      buildArgs.binaryDir = expandedConfigurePreset->BinaryDir;
     }
 
     this->UnprocessedPresetEnvironment = expandedPreset->Environment;
     this->ProcessPresetEnvironment();
 
-    if ((jobs == cmake::DEFAULT_BUILD_PARALLEL_LEVEL ||
-         jobs == cmake::NO_BUILD_PARALLEL_LEVEL) &&
+    if ((buildArgs.jobs == cmake::DEFAULT_BUILD_PARALLEL_LEVEL ||
+         buildArgs.jobs == cmake::NO_BUILD_PARALLEL_LEVEL) &&
         expandedPreset->Jobs) {
-      jobs = *expandedPreset->Jobs;
+      if (*expandedPreset->Jobs > static_cast<unsigned int>(INT_MAX)) {
+        cmSystemTools::Error(
+          "The build preset \"jobs\" value is too large.\n");
+        return 1;
+      }
+      buildArgs.jobs = *expandedPreset->Jobs;
     }
 
     if (targets.empty()) {
@@ -3935,8 +4014,8 @@ int cmake::Build(int jobs, std::string dir, std::vector<std::string> targets,
                      expandedPreset->Targets.end());
     }
 
-    if (config.empty()) {
-      config = expandedPreset->Configuration;
+    if (buildArgs.config.empty()) {
+      buildArgs.config = expandedPreset->Configuration;
     }
 
     if (!buildOptions.Clean && expandedPreset->CleanFirst) {
@@ -3948,8 +4027,8 @@ int cmake::Build(int jobs, std::string dir, std::vector<std::string> targets,
       buildOptions.ResolveMode = *expandedPreset->ResolvePackageReferences;
     }
 
-    if (!verbose && expandedPreset->Verbose) {
-      verbose = *expandedPreset->Verbose;
+    if (!buildArgs.verbose && expandedPreset->Verbose) {
+      buildArgs.verbose = *expandedPreset->Verbose;
     }
 
     if (nativeOptions.empty()) {
@@ -3960,12 +4039,12 @@ int cmake::Build(int jobs, std::string dir, std::vector<std::string> targets,
   }
 #endif
 
-  if (!cmSystemTools::FileIsDirectory(dir)) {
-    std::cerr << "Error: " << dir << " is not a directory\n";
+  if (!cmSystemTools::FileIsDirectory(buildArgs.binaryDir)) {
+    std::cerr << "Error: " << buildArgs.binaryDir << " is not a directory\n";
     return 1;
   }
 
-  std::string cachePath = FindCacheFile(dir);
+  std::string cachePath = FindCacheFile(buildArgs.binaryDir);
   if (!this->LoadCache(cachePath)) {
     std::cerr
       << "Error: not a CMake build directory (missing CMakeCache.txt)\n";
@@ -4010,17 +4089,16 @@ int cmake::Build(int jobs, std::string dir, std::vector<std::string> targets,
       return 1;
     }
   }
-  std::string projName;
   cmValue cachedProjectName =
     this->State->GetCacheEntryValue("CMAKE_PROJECT_NAME");
   if (!cachedProjectName) {
     std::cerr << "Error: could not find CMAKE_PROJECT_NAME in Cache\n";
     return 1;
   }
-  projName = *cachedProjectName;
+  buildArgs.projectName = *cachedProjectName;
 
   if (this->State->GetCacheEntryValue("CMAKE_VERBOSE_MAKEFILE").IsOn()) {
-    verbose = true;
+    buildArgs.verbose = true;
   }
 
 #ifdef CMAKE_HAVE_VS_GENERATORS
@@ -4028,8 +4106,9 @@ int cmake::Build(int jobs, std::string dir, std::vector<std::string> targets,
   // actually starting the build. If not done separately from the build
   // itself, there is the risk of building an out-of-date solution file due
   // to limitations of the underlying build system.
-  std::string const stampList = cachePath + "/" + "CMakeFiles/" +
-    cmGlobalVisualStudio14Generator::GetGenerateStampList();
+  std::string const stampList =
+    cmStrCat(cachePath, "/CMakeFiles/",
+             cmGlobalVisualStudio14Generator::GetGenerateStampList());
 
   // Note that the stampList file only exists for VS generators.
   if (cmSystemTools::FileExists(stampList) &&
@@ -4066,7 +4145,7 @@ int cmake::Build(int jobs, std::string dir, std::vector<std::string> targets,
   }
 
 #if !defined(CMAKE_BOOTSTRAP)
-  cmInstrumentation instrumentation(dir);
+  cmInstrumentation instrumentation(buildArgs.binaryDir);
   if (instrumentation.HasErrors()) {
     return 1;
   }
@@ -4074,18 +4153,17 @@ int cmake::Build(int jobs, std::string dir, std::vector<std::string> targets,
     cmInstrumentationQuery::Hook::PreCMakeBuild);
 #endif
 
-  this->GlobalGenerator->PrintBuildCommandAdvice(std::cerr, jobs);
+  this->GlobalGenerator->PrintBuildCommandAdvice(std::cerr, buildArgs.jobs);
   std::stringstream ostr;
   // `cmGlobalGenerator::Build` logs metadata about what directory and commands
   // are being executed to the `output` parameter. If CMake is verbose, print
   // this out.
-  std::ostream& verbose_ostr = verbose ? std::cout : ostr;
-  auto doBuild = [this, jobs, dir, projName, targets, &verbose_ostr, config,
-                  buildOptions, verbose, nativeOptions]() -> int {
+  std::ostream& verbose_ostr = buildArgs.verbose ? std::cout : ostr;
+  auto doBuild = [this, targets, &verbose_ostr, buildOptions, buildArgs,
+                  nativeOptions]() -> int {
     return this->GlobalGenerator->Build(
-      jobs, "", dir, projName, targets, verbose_ostr, "", config, buildOptions,
-      verbose, cmDuration::zero(), cmSystemTools::OUTPUT_PASSTHROUGH,
-      nativeOptions);
+      buildArgs, targets, verbose_ostr, "", buildArgs.config, buildOptions,
+      buildArgs.timeout, cmSystemTools::OUTPUT_PASSTHROUGH, nativeOptions);
   };
 
 #if !defined(CMAKE_BOOTSTRAP)
@@ -4205,15 +4283,16 @@ std::function<cmUVProcessChain::Status()> buildWorkflowStep(
 }
 #endif
 
-int cmake::Workflow(std::string const& presetName,
-                    WorkflowListPresets listPresets, WorkflowFresh fresh)
+int cmake::Workflow(cmCMakePresetsWorkflowArgs const& args)
 {
+  int exitStatus = 0;
 #ifndef CMAKE_BOOTSTRAP
   this->SetHomeDirectory(cmSystemTools::GetLogicalWorkingDirectory());
   this->SetHomeOutputDirectory(cmSystemTools::GetLogicalWorkingDirectory());
 
   cmCMakePresetsGraph settingsFile;
-  auto result = settingsFile.ReadProjectPresets(this->GetHomeDirectory());
+  auto result = settingsFile.ReadProjectPresets(this->GetHomeDirectory(),
+                                                args.PresetsFile);
   if (result != true) {
     cmSystemTools::Error(cmStrCat("Could not read presets from ",
                                   this->GetHomeDirectory(), ":\n",
@@ -4221,24 +4300,24 @@ int cmake::Workflow(std::string const& presetName,
     return 1;
   }
 
-  if (listPresets == WorkflowListPresets::Yes) {
+  if (args.ListPresets) {
     settingsFile.PrintWorkflowPresetList();
     return 0;
   }
 
-  auto presetPair = settingsFile.WorkflowPresets.find(presetName);
+  auto presetPair = settingsFile.WorkflowPresets.find(args.PresetName);
   if (presetPair == settingsFile.WorkflowPresets.end()) {
     cmSystemTools::Error(cmStrCat("No such workflow preset in ",
-                                  this->GetHomeDirectory(), ": \"", presetName,
-                                  '"'));
+                                  this->GetHomeDirectory(), ": \"",
+                                  args.PresetName, '"'));
     settingsFile.PrintWorkflowPresetList();
     return 1;
   }
 
   if (presetPair->second.Unexpanded.Hidden) {
     cmSystemTools::Error(cmStrCat("Cannot use hidden workflow preset in ",
-                                  this->GetHomeDirectory(), ": \"", presetName,
-                                  '"'));
+                                  this->GetHomeDirectory(), ": \"",
+                                  args.PresetName, '"'));
     settingsFile.PrintWorkflowPresetList();
     return 1;
   }
@@ -4246,15 +4325,16 @@ int cmake::Workflow(std::string const& presetName,
   auto const& expandedPreset = presetPair->second.Expanded;
   if (!expandedPreset) {
     cmSystemTools::Error(cmStrCat("Could not evaluate workflow preset \"",
-                                  presetName, "\": Invalid macro expansion"));
+                                  args.PresetName,
+                                  "\": Invalid macro expansion"));
     settingsFile.PrintWorkflowPresetList();
     return 1;
   }
 
   if (!expandedPreset->ConditionResult) {
     cmSystemTools::Error(cmStrCat("Cannot use disabled workflow preset in ",
-                                  this->GetHomeDirectory(), ": \"", presetName,
-                                  '"'));
+                                  this->GetHomeDirectory(), ": \"",
+                                  args.PresetName, '"'));
     settingsFile.PrintWorkflowPresetList();
     return 1;
   }
@@ -4280,22 +4360,24 @@ int cmake::Workflow(std::string const& presetName,
   std::vector<CalculatedStep> steps;
   steps.reserve(expandedPreset->Steps.size());
   int stepNumber = 1;
+  cmCMakePresetsGraph::ConfigurePreset const* configurePreset = {};
   for (auto const& step : expandedPreset->Steps) {
     switch (step.PresetType) {
       case cmCMakePresetsGraph::WorkflowPreset::WorkflowStep::Type::
         Configure: {
-        auto const* configurePreset = this->FindPresetForWorkflow(
+        configurePreset = this->FindPresetForWorkflow(
           "configure"_s, settingsFile.ConfigurePresets, step);
         if (!configurePreset) {
           return 1;
         }
-        std::vector<std::string> args{ cmSystemTools::GetCMakeCommand(),
-                                       "--preset", step.PresetName };
-        if (fresh == WorkflowFresh::Yes) {
-          args.emplace_back("--fresh");
+        std::vector<std::string> configureCmdArgs{
+          cmSystemTools::GetCMakeCommand(), "--preset", step.PresetName
+        };
+        if (args.Fresh) {
+          configureCmdArgs.emplace_back("--fresh");
         }
         steps.emplace_back(stepNumber, "configure"_s, step.PresetName,
-                           buildWorkflowStep(args));
+                           buildWorkflowStep(configureCmdArgs));
       } break;
       case cmCMakePresetsGraph::WorkflowPreset::WorkflowStep::Type::Build: {
         auto const* buildPreset = this->FindPresetForWorkflow(
@@ -4345,19 +4427,27 @@ int cmake::Workflow(std::string const& presetName,
               << std::flush;
     cmUVProcessChain::Status const status = step.Action();
     if (status.ExitStatus != 0) {
-      return static_cast<int>(status.ExitStatus);
+      exitStatus = static_cast<int>(status.ExitStatus);
+      break;
     }
     auto const codeReasonPair = status.GetException();
     if (codeReasonPair.first != cmUVProcessChain::ExceptionCode::None) {
       std::cout << "Step command ended abnormally: " << codeReasonPair.second
                 << std::endl;
-      return status.SpawnResult != 0 ? status.SpawnResult : status.TermSignal;
+      exitStatus =
+        status.SpawnResult != 0 ? status.SpawnResult : status.TermSignal;
+      break;
     }
     first = false;
   }
+  if (configurePreset) {
+    cmInstrumentation instrumentation(configurePreset->BinaryDir);
+    instrumentation.CollectTimingData(
+      cmInstrumentationQuery::Hook::PostCMakeWorkflow);
+  }
 #endif
 
-  return 0;
+  return exitStatus;
 }
 
 void cmake::WatchUnusedCli(std::string const& var)
@@ -4381,115 +4471,23 @@ void cmake::UnwatchUnusedCli(std::string const& var)
 void cmake::RunCheckForUnusedVariables()
 {
 #ifndef CMAKE_BOOTSTRAP
-  bool haveUnused = false;
-  std::ostringstream msg;
-  msg << "Manually-specified variables were not used by the project:";
-  for (auto const& it : this->UsedCliVariables) {
-    if (!it.second) {
-      haveUnused = true;
-      msg << "\n  " << it.first;
+  cmDiagnosticAction const action =
+    this->CurrentSnapshot.GetDiagnostic(cmDiagnostics::CMD_UNUSED_CLI);
+  if (action != cmDiagnostics::Ignore) {
+    bool haveUnused = false;
+    std::ostringstream msg;
+    msg << "Manually-specified variables were not used by the project:";
+    for (auto const& it : this->UsedCliVariables) {
+      if (!it.second) {
+        haveUnused = true;
+        msg << "\n  " << it.first;
+      }
+    }
+    if (haveUnused) {
+      this->IssueDiagnostic(cmDiagnostics::CMD_UNUSED_CLI, msg.str());
     }
   }
-  if (haveUnused) {
-    this->IssueMessage(MessageType::WARNING, msg.str());
-  }
 #endif
-}
-
-bool cmake::GetSuppressDevWarnings() const
-{
-  return this->Messenger->GetSuppressDevWarnings();
-}
-
-void cmake::SetSuppressDevWarnings(bool b)
-{
-  std::string value;
-
-  // equivalent to -Wno-dev
-  if (b) {
-    value = "TRUE";
-  }
-  // equivalent to -Wdev
-  else {
-    value = "FALSE";
-  }
-
-  this->AddCacheEntry("CMAKE_SUPPRESS_DEVELOPER_WARNINGS", value,
-                      "Suppress Warnings that are meant for"
-                      " the author of the CMakeLists.txt files.",
-                      cmStateEnums::INTERNAL);
-}
-
-bool cmake::GetSuppressDeprecatedWarnings() const
-{
-  return this->Messenger->GetSuppressDeprecatedWarnings();
-}
-
-void cmake::SetSuppressDeprecatedWarnings(bool b)
-{
-  std::string value;
-
-  // equivalent to -Wno-deprecated
-  if (b) {
-    value = "FALSE";
-  }
-  // equivalent to -Wdeprecated
-  else {
-    value = "TRUE";
-  }
-
-  this->AddCacheEntry("CMAKE_WARN_DEPRECATED", value,
-                      "Whether to issue warnings for deprecated "
-                      "functionality.",
-                      cmStateEnums::INTERNAL);
-}
-
-bool cmake::GetDevWarningsAsErrors() const
-{
-  return this->Messenger->GetDevWarningsAsErrors();
-}
-
-void cmake::SetDevWarningsAsErrors(bool b)
-{
-  std::string value;
-
-  // equivalent to -Werror=dev
-  if (b) {
-    value = "FALSE";
-  }
-  // equivalent to -Wno-error=dev
-  else {
-    value = "TRUE";
-  }
-
-  this->AddCacheEntry("CMAKE_SUPPRESS_DEVELOPER_ERRORS", value,
-                      "Suppress errors that are meant for"
-                      " the author of the CMakeLists.txt files.",
-                      cmStateEnums::INTERNAL);
-}
-
-bool cmake::GetDeprecatedWarningsAsErrors() const
-{
-  return this->Messenger->GetDeprecatedWarningsAsErrors();
-}
-
-void cmake::SetDeprecatedWarningsAsErrors(bool b)
-{
-  std::string value;
-
-  // equivalent to -Werror=deprecated
-  if (b) {
-    value = "TRUE";
-  }
-  // equivalent to -Wno-error=deprecated
-  else {
-    value = "FALSE";
-  }
-
-  this->AddCacheEntry("CMAKE_ERROR_DEPRECATED", value,
-                      "Whether to issue deprecation errors for macros"
-                      " and functions.",
-                      cmStateEnums::INTERNAL);
 }
 
 void cmake::SetDebugFindOutputPkgs(std::string const& args)

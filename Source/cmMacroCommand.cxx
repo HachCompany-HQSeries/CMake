@@ -10,6 +10,7 @@
 #include <cmext/algorithm>
 #include <cmext/string_view>
 
+#include "cmDiagnostics.h"
 #include "cmExecutionStatus.h"
 #include "cmFunctionBlocker.h"
 #include "cmList.h"
@@ -18,6 +19,7 @@
 #include "cmPolicies.h"
 #include "cmRange.h"
 #include "cmState.h"
+#include "cmStateTypes.h"
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
 
@@ -37,6 +39,7 @@ public:
   std::vector<std::string> Args;
   std::vector<cmListFileFunction> Functions;
   cmPolicies::PolicyMap Policies;
+  cmDiagnostics::DiagnosticMap Diagnostics;
   std::string FilePath;
 };
 
@@ -61,7 +64,7 @@ bool cmMacroHelperCommand::operator()(
   }
 
   cmMakefile::MacroPushPop macroScope(&makefile, this->FilePath,
-                                      this->Policies);
+                                      this->Policies, this->Diagnostics);
 
   // set the value of argc
   std::string argcDef = std::to_string(expandedArgs.size());
@@ -168,15 +171,20 @@ bool cmMacroFunctionBlocker::Replay(std::vector<cmListFileFunction> functions,
                                     cmExecutionStatus& status)
 {
   cmMakefile& mf = status.GetMakefile();
-  mf.AppendProperty("MACROS", this->Args[0]);
+  if (status.GetMakefile().GetPolicyStatus(cmPolicies::CMP0217) !=
+      cmPolicies::NEW) {
+
+    mf.AppendProperty("MACROS", this->Args[0]);
+  }
   // create a new command and add it to cmake
   cmMacroHelperCommand f;
   f.Args = this->Args;
   f.Functions = std::move(functions);
   f.FilePath = this->GetStartingContext().FilePath;
   mf.RecordPolicies(f.Policies);
+  mf.RecordDiagnostics(f.Diagnostics);
   return mf.GetState()->AddScriptedCommand(
-    this->Args[0],
+    this->Args[0], cmStateEnums::CommandType::Macro,
     BT<cmState::Command>(std::move(f),
                          mf.GetBacktrace().Push(this->GetStartingContext())),
     mf);

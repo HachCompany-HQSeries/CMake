@@ -11,6 +11,7 @@
 
 #include <cmext/algorithm>
 
+#include "cmDiagnostics.h"
 #include "cmExportFileGenerator.h"
 #include "cmStateTypes.h"
 
@@ -86,7 +87,10 @@ protected:
   void ComplainAboutDuplicateTarget(
     std::string const& targetName) const override;
 
-  void ReportError(std::string const& errorMessage) const override;
+  void IssueMessage(MessageType type,
+                    std::string const& message) const override;
+  void IssueDiagnostic(cmDiagnosticCategory category,
+                       std::string const& message) const override;
 
   /** Fill in properties indicating built file locations.  */
   void SetImportLocationProperty(std::string const& config,
@@ -109,6 +113,10 @@ protected:
   using cmExportFileGenerator::PopulateInterfaceProperties;
   bool PopulateInterfaceProperties(cmGeneratorTarget const* target,
                                    ImportPropertyMap& properties);
+
+  using cmExportFileGenerator::PopulateFileSetInterfaceProperties;
+  bool PopulateFileSetInterfaceProperties(
+    cmGeneratorTarget const* target, ImportFileSetPropertyMap& properties);
 
   struct TargetExportPrivate
   {

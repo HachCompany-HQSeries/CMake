@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include <cm/string_view>
+
 #include "cmCustomCommand.h"
 #include "cmListFileCache.h"
 #include "cmPropertyMap.h"
@@ -182,6 +184,8 @@ public:
   void SetObjectLibrary(std::string const& objlib);
   std::string GetObjectLibrary() const;
 
+  cmValue GetRustEmitProperty() const;
+
 private:
   cmSourceFileLocation Location;
   cmPropertyMap Properties;
@@ -200,7 +204,7 @@ private:
 
   bool FindFullPath(std::string* error, std::string* cmp0115Warning);
   void CheckExtension();
-  void CheckLanguage(std::string const& ext);
+  void CheckLanguage(cm::string_view ext);
 
   static std::string const propLANGUAGE;
   static std::string const propLOCATION;

@@ -24,6 +24,7 @@
 
 #include "cmAlgorithms.h"
 #include "cmComputeLinkInformation.h"
+#include "cmDiagnostics.h"
 #include "cmGenExContext.h"
 #include "cmGeneratorExpression.h"
 #include "cmGeneratorExpressionDAGChecker.h"
@@ -227,7 +228,7 @@ bool cmGeneratorTarget::ComputeLinkClosure(std::string const& config,
     // Now consider languages that propagate from linked targets.
     for (std::string const& lang : languages) {
       std::string propagates =
-        "CMAKE_" + lang + "_LINKER_PREFERENCE_PROPAGATES";
+        cmStrCat("CMAKE_", lang, "_LINKER_PREFERENCE_PROPAGATES");
       if (this->Makefile->IsOn(propagates)) {
         tsl.Consider(lang);
       }
@@ -823,7 +824,7 @@ std::vector<cmLinkItem> cmGeneratorTarget::ComputeImplicitLanguageTargets(
   std::string const& runtimeLibrary =
     this->GetRuntimeLinkLibrary(lang, config);
   if (cmValue runtimeLinkOptions = this->Makefile->GetDefinition(
-        "CMAKE_" + lang + "_RUNTIME_LIBRARIES_" + runtimeLibrary)) {
+        cmStrCat("CMAKE_", lang, "_RUNTIME_LIBRARIES_", runtimeLibrary))) {
     cmList libsList{ *runtimeLinkOptions };
     result.reserve(libsList.size());
 
@@ -1298,8 +1299,8 @@ cmLinkItem cmGeneratorTarget::ResolveLinkItem(
       ", is marked as being deprecated by the owner.  The message provided by "
       "the developer is: \n" << resolved.Target->GetDeprecation() << "\n";
     /* clang-format on */
-    this->LocalGenerator->GetCMakeInstance()->IssueMessage(
-      MessageType::AUTHOR_WARNING, w.str(), bt);
+    this->LocalGenerator->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, w.str(),
+                                          bt);
   }
 
   // Skip targets that will not really be linked.  This is probably a

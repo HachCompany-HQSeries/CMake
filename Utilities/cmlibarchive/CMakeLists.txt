@@ -44,9 +44,11 @@ ENDIF(NOT "${CMAKE_BUILD_TYPE_UPPER}"
        MATCHES "^(DEBUG|RELEASE|RELWITHDEBINFO|MINSIZEREL|NONE)\$")
 ENDIF()
 
+if(0) # XXX(cmake): not needed for build within cmake
 # On MacOS, prefer MacPorts libraries to system libraries.
 # I haven't come up with a compelling argument for this to be conditional.
 list(APPEND CMAKE_PREFIX_PATH /opt/local)
+endif() # XXX(cmake): end
 # Enable @rpath in the install name.
 # detail in "cmake  --help-policy CMP0042"
 SET(CMAKE_MACOSX_RPATH ON)
@@ -167,7 +169,12 @@ IF (CMAKE_C_COMPILER_ID MATCHES "^GNU$" OR
   # either of the following two, yet neither is supported as of 3.0.2
   # - check_linker_flag - does not exist
   # - try_compile - does not support linker flags
-  IF(NOT CMAKE_SYSTEM_NAME MATCHES "Darwin")
+  IF(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-dead_strip")
+    SET(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-dead_strip")
+  ELSEIF(CMAKE_SYSTEM_NAME MATCHES "SunOS")
+    # SunOS linker doesn't support --gc-sections
+  ELSE()
     # Place the functions and data into separate sections, allowing the linker
     # to garbage collect the unused ones.
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ffunction-sections -fdata-sections")
@@ -176,10 +183,7 @@ IF (CMAKE_C_COMPILER_ID MATCHES "^GNU$" OR
     # Printing the discarded section is "too much", so enable on demand.
     #SET(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} -Wl,--print-gc-sections")
     #SET(CMAKE_SHARED_LINKER_FLAGS_DEBUG "${CMAKE_SHARED_LINKER_FLAGS_DEBUG} -Wl,--print-gc-sections")
-  ELSE()
-    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-dead_strip")
-    SET(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-dead_strip")
-  ENDIF(NOT CMAKE_SYSTEM_NAME MATCHES "Darwin")
+  ENDIF()
 ENDIF (CMAKE_C_COMPILER_ID MATCHES "^GNU$" OR
        CMAKE_C_COMPILER_ID MATCHES "^Clang$" AND NOT MSVC)
 IF (CMAKE_C_COMPILER_ID MATCHES "^XL$")
@@ -1118,8 +1122,8 @@ MACRO(CHECK_ICONV LIB TRY_ICONV_CONST)
         CMAKE_C_COMPILER_ID MATCHES "^Clang$")
       #
       # During checking iconv proto type, we should use -Werror to avoid the
-      # success of iconv detection with a warning which success is a miss
-      # detection. So this needs for all build mode(even it's a release mode).
+      # success of iconv detection with a warning, which would be a false
+      # positive.  So this is needed for all build modes, even in release mode.
       #
       SET(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -Werror")
     ENDIF (CMAKE_C_COMPILER_ID MATCHES "^GNU$" OR CMAKE_C_COMPILER_ID MATCHES "^LCC$" OR
@@ -1196,6 +1200,13 @@ IF(ENABLE_ICONV)
       ENDIF(HAVE_ICONV)
     ENDIF(NOT HAVE_ICONV AND LIBICONV_PATH)
   ENDIF(ICONV_INCLUDE_DIR)
+
+  # XXX(cmake): iconv is required on non-Windows platforms
+  if(NOT HAVE_ICONV AND NOT WIN32)
+    message(FATAL_ERROR "iconv is required, but was not found.")
+  endif()
+  # XXX(cmake): end
+
   #
   # Find locale_charset() for libiconv.
   #
@@ -1563,6 +1574,7 @@ CHECK_FUNCTION_EXISTS_GLIBC(nl_langinfo HAVE_NL_LANGINFO)
 CHECK_FUNCTION_EXISTS_GLIBC(openat HAVE_OPENAT)
 CHECK_FUNCTION_EXISTS_GLIBC(pipe HAVE_PIPE)
 CHECK_FUNCTION_EXISTS_GLIBC(poll HAVE_POLL)
+CHECK_FUNCTION_EXISTS_GLIBC(posix_spawn HAVE_POSIX_SPAWN)
 CHECK_FUNCTION_EXISTS_GLIBC(posix_spawnp HAVE_POSIX_SPAWNP)
 CHECK_FUNCTION_EXISTS_GLIBC(readlink HAVE_READLINK)
 CHECK_FUNCTION_EXISTS_GLIBC(readpassphrase HAVE_READPASSPHRASE)

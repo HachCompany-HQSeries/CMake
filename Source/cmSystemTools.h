@@ -10,8 +10,6 @@
 
 #include <cstddef>
 #include <functional>
-#include <map>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -40,20 +38,22 @@ public:
   using Superclass = cmsys::SystemTools;
   using Encoding = cmProcessOutput::Encoding;
 
-  /**
-   * Return a lower case string
-   */
-  static std::string LowerCase(cm::string_view);
+  /** Return a lower-case string.  */
+  static std::string LowerCase(cm::string_view s)
+  {
+    return cmsys::SystemTools::LowerCase(std::string(s));
+  }
   static std::string LowerCase(char const* s)
   {
     return LowerCase(cm::string_view{ s });
   }
   using cmsys::SystemTools::LowerCase;
 
-  /**
-   * Return an upper case string
-   */
-  static std::string UpperCase(cm::string_view);
+  /** Return an upper-case string.  */
+  static std::string UpperCase(cm::string_view s)
+  {
+    return cmsys::SystemTools::UpperCase(std::string(s));
+  }
   static std::string UpperCase(char const* s)
   {
     return UpperCase(cm::string_view{ s });
@@ -291,7 +291,8 @@ public:
                                char const* dir = nullptr,
                                OutputOption outputflag = OUTPUT_MERGE,
                                cmDuration timeout = cmDuration::zero(),
-                               Encoding encoding = cmProcessOutput::Auto);
+                               Encoding encoding = cmProcessOutput::Auto,
+                               std::vector<std::string> env = {});
 
   static std::string PrintSingleCommand(std::vector<std::string> const&);
 
@@ -374,13 +375,11 @@ public:
     None,
     STDOUT,
     STDERR,
-    Timeout,
   };
 
   /** a general output handler for libuv  */
   static WaitForLineResult WaitForLine(uv_loop_t* loop, uv_stream_t* outPipe,
                                        uv_stream_t* errPipe, std::string& line,
-                                       cmDuration timeout,
                                        std::vector<char>& out,
                                        std::vector<char>& err);
 
@@ -450,45 +449,6 @@ public:
   /** Get the list of all environment variables */
   static std::vector<std::string> GetEnvironmentVariables();
 
-  /** Append multiple variables to the current environment. */
-  static void AppendEnv(std::vector<std::string> const& env);
-
-  /**
-   * Helper class to represent an environment diff directly. This is to avoid
-   * repeated in-place environment modification (i.e. via setenv/putenv), which
-   * could be slow.
-   */
-  class EnvDiff
-  {
-  public:
-    /** Append multiple variables to the current environment diff */
-    void AppendEnv(std::vector<std::string> const& env);
-
-    /**
-     * Add a single variable (or remove if no = sign) to the current
-     * environment diff.
-     */
-    void PutEnv(std::string const& env);
-
-    /** Remove a single variable from the current environment diff. */
-    void UnPutEnv(std::string const& env);
-
-    /**
-     * Apply an ENVIRONMENT_MODIFICATION operation to this diff. Returns
-     * false and issues an error on parse failure.
-     */
-    bool ParseOperation(std::string const& envmod);
-
-    /**
-     * Apply this diff to the actual environment, optionally writing out the
-     * modifications to a CTest-compatible measurement stream.
-     */
-    void ApplyToCurrentEnv(std::ostringstream* measurement = nullptr);
-
-  private:
-    std::map<std::string, cm::optional<std::string>> diff;
-  };
-
   /** Helper class to save and restore the environment.
       Instantiate this class as an automatic variable on
       the stack. Its constructor saves a copy of the current
@@ -547,8 +507,11 @@ public:
   {
     TarCompressGZip,
     TarCompressBZip2,
+    TarCompressLZMA,
     TarCompressXZ,
     TarCompressZstd,
+    TarCompressPPMd,
+    TarCompressAuto,
     TarCompressNone
   };
 
@@ -558,19 +521,21 @@ public:
     No
   };
 
-  static bool ListTar(std::string const& outFileName,
-                      std::vector<std::string> const& files, bool verbose);
-  static bool CreateTar(std::string const& outFileName,
+  static bool ListTar(std::string const& arFileName,
+                      std::vector<std::string> const& files,
+                      std::string const& encoding, bool verbose);
+  static bool CreateTar(std::string const& arFileName,
                         std::vector<std::string> const& files,
                         std::string const& workingDirectory,
-                        cmTarCompression compressType, bool verbose,
+                        cmTarCompression compressType,
+                        std::string const& encoding, bool verbose,
                         std::string const& mtime = std::string(),
                         std::string const& format = std::string(),
-                        int compressionLevel = 0);
-  static bool ExtractTar(std::string const& inFileName,
+                        int compressionLevel = 0, int numThreads = 1);
+  static bool ExtractTar(std::string const& arFileName,
                          std::vector<std::string> const& files,
                          cmTarExtractTimestamps extractTimestamps,
-                         bool verbose);
+                         std::string const& encoding, bool verbose);
 
   /** Random number generation.  */
   static unsigned int RandomSeed();
@@ -703,6 +668,16 @@ public:
 
   /** Get the system path separator character */
   static char GetSystemPathlistSeparator();
+
+  /** Return subview of the full filename (i.e. file name without path) */
+  static cm::string_view GetFilenameNameView(cm::string_view filename);
+
+  /**
+   * Return subview of file extension of a full filename (dot included).
+   * Warning: this is the shortest extension (for example: .gz of .tar.gz)
+   */
+  static cm::string_view GetFilenameLastExtensionView(
+    cm::string_view filename);
 
 private:
   static bool s_ForceUnixPaths;

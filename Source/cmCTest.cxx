@@ -3,7 +3,6 @@
 #include "cmCTest.h"
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -13,6 +12,7 @@
 #include <functional>
 #include <initializer_list>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <ratio>
 #include <sstream>
@@ -34,6 +34,7 @@
 #include "cmsys/Directory.hxx"
 #include "cmsys/FStream.hxx"
 #include "cmsys/RegularExpression.hxx"
+#include "cmsys/String.h"
 #include "cmsys/SystemInformation.hxx"
 #ifndef _WIN32
 #  include <unistd.h> // IWYU pragma: keep
@@ -41,6 +42,7 @@
 
 #include "cm_parse_date.h"
 
+#include "cmCMakePresetsArgs.h"
 #include "cmCMakePresetsGraph.h"
 #include "cmCTestBuildAndTest.h"
 #include "cmCTestScriptHandler.h"
@@ -299,7 +301,8 @@ std::string cmCTest::DecodeURL(std::string const& in)
 {
   std::string out;
   for (char const* c = in.c_str(); *c; ++c) {
-    if (*c == '%' && isxdigit(*(c + 1)) && isxdigit(*(c + 2))) {
+    if (*c == '%' && cmsysString_isxdigit(*(c + 1)) &&
+        cmsysString_isxdigit(*(c + 2))) {
       char buf[3] = { *(c + 1), *(c + 2), 0 };
       out.append(1, static_cast<char>(strtoul(buf, nullptr, 16)));
       c += 2;
@@ -663,7 +666,7 @@ bool cmCTest::OpenOutputFile(std::string const& path, std::string const& name,
       return false;
     }
   }
-  std::string filename = testingDir + "/" + name;
+  std::string filename = cmStrCat(testingDir, '/', name);
   stream.Open(filename);
   if (!stream) {
     cmCTestLog(this, ERROR_MESSAGE,
@@ -695,8 +698,8 @@ bool cmCTest::AddIfExists(Part part, std::string const& file)
 
 bool cmCTest::CTestFileExists(std::string const& filename)
 {
-  std::string testingDir = this->Impl->BinaryDir + "/Testing/" +
-    this->Impl->CurrentTag + "/" + filename;
+  std::string testingDir = cmStrCat(this->Impl->BinaryDir, "/Testing/",
+                                    this->Impl->CurrentTag, '/', filename);
   return cmSystemTools::FileExists(testingDir);
 }
 
@@ -820,8 +823,8 @@ int cmCTest::ProcessSteps()
     d.Load(notes_dir);
     unsigned long kk;
     for (kk = 0; kk < d.GetNumberOfFiles(); kk++) {
-      char const* file = d.GetFile(kk);
-      std::string fullname = notes_dir + "/" + file;
+      std::string const& file = d.GetFileName(kk);
+      std::string fullname = cmStrCat(notes_dir, '/', file);
       if (cmSystemTools::FileExists(fullname, true)) {
         if (!this->Impl->NotesFiles.empty()) {
           this->Impl->NotesFiles += ";";
@@ -921,9 +924,7 @@ bool cmCTest::RunMakeCommand(std::string const& command, std::string& output,
     builder.SetWorkingDirectory(dir);
   }
   auto chain = builder.Start();
-  cm::uv_pipe_ptr outputStream;
-  outputStream.init(chain.GetLoop(), 0);
-  uv_pipe_open(outputStream, chain.OutputStream());
+  uv_stream_t* outputStream = chain.OutputStream();
 
   // Initialize tick's
   std::string::size_type tick = 0;
@@ -1032,8 +1033,8 @@ void cmCTest::StartXML(cmXMLWriter& xml, cmake* cm, bool append)
 
   std::string buildname =
     cmCTest::SafeBuildIdField(this->GetCTestConfiguration("BuildName"));
-  std::string stamp = cmCTest::SafeBuildIdField(this->Impl->CurrentTag + "-" +
-                                                this->GetTestGroupString());
+  std::string stamp = cmCTest::SafeBuildIdField(
+    cmStrCat(this->Impl->CurrentTag, '-', this->GetTestGroupString()));
   std::string site =
     cmCTest::SafeBuildIdField(this->GetCTestConfiguration("Site"));
 
@@ -1150,8 +1151,9 @@ int cmCTest::GenerateCTestNotesOutput(cmXMLWriter& xml, cmake* cm,
                             "<file:///Dart/Source/Server/XSL/Build.xsl> \"");
   xml.StartElement("Site");
   xml.Attribute("BuildName", buildname);
-  xml.Attribute("BuildStamp",
-                this->Impl->CurrentTag + "-" + this->GetTestGroupString());
+  xml.Attribute(
+    "BuildStamp",
+    cmStrCat(this->Impl->CurrentTag, '-', this->GetTestGroupString()));
   xml.Attribute("Name", this->GetCTestConfiguration("Site"));
   xml.Attribute("Generator",
                 std::string("ctest-") + cmVersion::GetCMakeVersion());
@@ -1175,7 +1177,7 @@ int cmCTest::GenerateCTestNotesOutput(cmXMLWriter& xml, cmake* cm,
       }
       ifs.close();
     } else {
-      xml.Content("Problem reading file: " + file + "\n");
+      xml.Content(cmStrCat("Problem reading file: ", file, '\n'));
       cmCTestLog(this, ERROR_MESSAGE,
                  "Problem reading file: " << file << " while creating notes"
                                           << std::endl);
@@ -1251,8 +1253,8 @@ std::string cmCTest::Base64GzipEncodeFile(std::string const& file)
   std::vector<std::string> files;
   files.push_back(file);
 
-  if (!cmSystemTools::CreateTar(tarFile, files, {},
-                                cmSystemTools::TarCompressGZip, false)) {
+  if (!cmSystemTools::CreateTar(
+        tarFile, files, {}, cmSystemTools::TarCompressGZip, "UTF-8", false)) {
     cmCTestLog(this, ERROR_MESSAGE,
                "Error creating tar while "
                "encoding file: "
@@ -1500,13 +1502,13 @@ bool cmCTest::AddVariableDefinition(std::string const& arg)
   return false;
 }
 
-bool cmCTest::SetArgsFromPreset(std::string const& presetName,
-                                bool listPresets)
+bool cmCTest::SetArgsFromPreset(cmCMakePresetsArgs const& args)
 {
   auto const workingDirectory = cmSystemTools::GetLogicalWorkingDirectory();
 
   cmCMakePresetsGraph settingsFile;
-  auto result = settingsFile.ReadProjectPresets(workingDirectory);
+  auto result =
+    settingsFile.ReadProjectPresets(workingDirectory, args.PresetsFile);
   if (result != true) {
     cmSystemTools::Error(cmStrCat("Could not read presets from ",
                                   workingDirectory, ":\n",
@@ -1514,40 +1516,23 @@ bool cmCTest::SetArgsFromPreset(std::string const& presetName,
     return false;
   }
 
-  if (listPresets) {
+  if (args.ListPresets) {
     settingsFile.PrintTestPresetList();
     return true;
   }
 
-  auto presetPair = settingsFile.TestPresets.find(presetName);
-  if (presetPair == settingsFile.TestPresets.end()) {
-    cmSystemTools::Error(cmStrCat("No such test preset in ", workingDirectory,
-                                  ": \"", presetName, '"'));
+  auto resolveResult =
+    settingsFile.ResolvePreset(args.PresetName, settingsFile.TestPresets);
+  auto resolveError =
+    cmCMakePresetsGraph::FormatPresetError<cmCMakePresetsGraph::TestPreset>(
+      resolveResult.StatusCode, resolveResult.ErrorPresetName,
+      workingDirectory);
+  if (resolveError) {
+    cmSystemTools::Error(*resolveError);
     settingsFile.PrintTestPresetList();
     return false;
   }
-
-  if (presetPair->second.Unexpanded.Hidden) {
-    cmSystemTools::Error(cmStrCat("Cannot use hidden test preset in ",
-                                  workingDirectory, ": \"", presetName, '"'));
-    settingsFile.PrintTestPresetList();
-    return false;
-  }
-
-  auto const& expandedPreset = presetPair->second.Expanded;
-  if (!expandedPreset) {
-    cmSystemTools::Error(cmStrCat("Could not evaluate test preset \"",
-                                  presetName, "\": Invalid macro expansion"));
-    settingsFile.PrintTestPresetList();
-    return false;
-  }
-
-  if (!expandedPreset->ConditionResult) {
-    cmSystemTools::Error(cmStrCat("Cannot use disabled test preset in ",
-                                  workingDirectory, ": \"", presetName, '"'));
-    settingsFile.PrintTestPresetList();
-    return false;
-  }
+  auto const* expandedPreset = resolveResult.Preset;
 
   auto configurePresetPair =
     settingsFile.ConfigurePresets.find(expandedPreset->ConfigurePreset);
@@ -1667,12 +1652,12 @@ bool cmCTest::SetArgsFromPreset(std::string const& presetName,
           auto const& start = expandedPreset->Filter->Include->Index->Start;
           auto const& end = expandedPreset->Filter->Include->Index->End;
           auto const& stride = expandedPreset->Filter->Include->Index->Stride;
-          std::string indexOptions;
-          indexOptions += (start ? std::to_string(*start) : "") + ",";
-          indexOptions += (end ? std::to_string(*end) : "") + ",";
-          indexOptions += (stride ? std::to_string(*stride) : "") + ",";
-          indexOptions +=
-            cmJoin(expandedPreset->Filter->Include->Index->SpecificTests, ",");
+          std::string indexOptions = cmStrCat(
+            (start ? std::to_string(*start) : std::string{}), ',',
+            (end ? std::to_string(*end) : std::string{}), ',',
+            (stride ? std::to_string(*stride) : std::string{}), ',',
+            cmJoin(expandedPreset->Filter->Include->Index->SpecificTests,
+                   ","));
 
           this->Impl->TestOptions.TestsToRunInformation = indexOptions;
         } else {
@@ -1711,8 +1696,12 @@ bool cmCTest::SetArgsFromPreset(std::string const& presetName,
       expandedPreset->Execution->EnableFailover.value_or(false);
 
     if (expandedPreset->Execution->Jobs) {
-      auto jobs = *expandedPreset->Execution->Jobs;
-      this->SetParallelLevel(jobs);
+      cm::optional<unsigned int> jobs = *expandedPreset->Execution->Jobs;
+      if (jobs.has_value()) {
+        this->SetParallelLevel(static_cast<size_t>(jobs.value()));
+      } else {
+        this->SetParallelLevel(cm::nullopt);
+      }
       this->Impl->ParallelLevelSetInCli = true;
     }
 
@@ -1795,6 +1784,11 @@ bool cmCTest::SetArgsFromPreset(std::string const& presetName,
           return false;
       }
     }
+
+    // Assign passthrough arguments from preset.
+    // CLI -- args (parsed later in Run()) will be appended after these.
+    this->Impl->TestOptions.TestPassthroughArguments =
+      expandedPreset->Execution->TestPassthroughArguments;
   }
 
   return true;
@@ -1808,46 +1802,10 @@ int cmCTest::Run(std::vector<std::string> const& args)
   bool processSteps = false;
   bool SRArgumentSpecified = false;
   std::vector<std::pair<std::string, bool>> runScripts;
+  cmCMakePresetsArgs presetsArgs;
 
   // copy the command line
   cm::append(this->Impl->InitialCommandLineArguments, args);
-
-  // check if a test preset was specified
-
-  bool listPresets =
-    find(args.begin(), args.end(), "--list-presets") != args.end();
-  auto it =
-    std::find_if(args.begin(), args.end(), [](std::string const& arg) -> bool {
-      return arg == "--preset" || cmHasLiteralPrefix(arg, "--preset=");
-    });
-  if (listPresets || it != args.end()) {
-    std::string errormsg;
-    bool success;
-
-    if (listPresets) {
-      // If listing presets we don't need a presetName
-      success = this->SetArgsFromPreset("", listPresets);
-    } else {
-      if (cmHasLiteralPrefix(*it, "--preset=")) {
-        auto const& presetName = it->substr(9);
-        success = this->SetArgsFromPreset(presetName, listPresets);
-      } else if (++it != args.end()) {
-        auto const& presetName = *it;
-        success = this->SetArgsFromPreset(presetName, listPresets);
-      } else {
-        cmSystemTools::Error("'--preset' requires an argument");
-        success = false;
-      }
-    }
-
-    if (listPresets) {
-      return success ? 0 : 1;
-    }
-
-    if (!success) {
-      return 1;
-    }
-  }
 
   auto const dashD = [this, &processSteps](std::string const& targ) -> bool {
     // AddTestsForDashboard parses the dashboard type and converts it
@@ -2029,6 +1987,30 @@ int cmCTest::Run(std::vector<std::string> const& args)
 
   using CommandArgument =
     cmCommandLineArgument<bool(std::string const& value)>;
+
+  auto const presetArguments = std::vector<CommandArgument>{
+    CommandArgument{ "--list-presets", CommandArgument::Values::Zero,
+                     [&presetsArgs](std::string const&) -> bool {
+                       presetsArgs.ListPresets = true;
+                       return true;
+                     } },
+    CommandArgument{ "--preset", "'--preset' requires an argument",
+                     CommandArgument::Values::One,
+                     [&presetsArgs](std::string const& presetArg) -> bool {
+                       presetsArgs.PresetName = presetArg;
+                       return true;
+                     } },
+    CommandArgument{ "--presets-file", "'--presets-file' requires an argument",
+                     CommandArgument::Values::One,
+                     [&presetsArgs](std::string const& presetFileArg) -> bool {
+                       presetsArgs.PresetsFile =
+                         cmSystemTools::ToNormalizedPathOnDisk(presetFileArg);
+                       return true;
+                     } }
+  };
+  auto const isPresetArgument = [&](std::string const& arg) -> bool {
+    return cmHasLiteralPrefix(arg, "--preset") || arg == "--list-presets";
+  };
 
   auto const arguments = std::vector<CommandArgument>{
     CommandArgument{ "--dashboard", CommandArgument::Values::One, dashD },
@@ -2501,9 +2483,45 @@ int cmCTest::Run(std::vector<std::string> const& args)
                      } },
   };
 
-  // process the command line arguments
+  // Process command line arguments for presets first, since other arguments
+  // can override those settings.
   for (size_t i = 1; i < args.size(); ++i) {
     std::string const& arg = args[i];
+    for (auto const& m : presetArguments) {
+      if (m.matches(arg)) {
+        if (!m.parse(arg, i, args)) {
+          return 1;
+        }
+        break;
+      }
+    }
+  }
+
+  if (presetsArgs.HasPresetsArg()) {
+    bool success = this->SetArgsFromPreset(presetsArgs);
+    if (presetsArgs.ListPresets) {
+      return static_cast<int>(!success);
+    }
+    if (!success) {
+      return 1;
+    }
+  }
+
+  // Process the remaining command line arguments.
+  bool hadPassthroughDelimiter = false;
+  for (size_t i = 1; i < args.size(); ++i) {
+    std::string const& arg = args[i];
+
+    // The "--" argument terminates processing and passes
+    // all remaining arguments through to the tests.
+    if (arg == "--"_s) {
+      hadPassthroughDelimiter = true;
+      std::copy(
+        args.begin() + i + 1, args.end(),
+        std::back_inserter(this->Impl->TestOptions.TestPassthroughArguments));
+      break;
+    }
+
     bool matched = false;
     for (auto const& m : arguments) {
       if (m.matches(arg)) {
@@ -2531,8 +2549,7 @@ int cmCTest::Run(std::vector<std::string> const& args)
         this->Impl->BuildAndTest.TestCommandArgs.emplace_back(args[i]);
       }
     }
-    if (!matched && cmHasPrefix(arg, '-') &&
-        !cmHasLiteralPrefix(arg, "--preset")) {
+    if (!matched && cmHasPrefix(arg, '-') && !isPresetArgument(arg)) {
       cmSystemTools::Error(cmStrCat("Unknown argument: ", arg));
       cmSystemTools::Error("Run 'ctest --help' for all supported options.");
       return 1;
@@ -2576,8 +2593,29 @@ int cmCTest::Run(std::vector<std::string> const& args)
     }
   }
 
-  // TestProgressOutput only supported if console supports it and not logging
-  // to a file
+  // Passthrough arguments (after --) are only supported in direct test
+  // execution mode, not --build-and-test, -S, or -D/-T/-M modes.
+  if (hadPassthroughDelimiter) {
+    if (cmakeAndTest) {
+      cmSystemTools::Error(
+        "The -- option cannot be used with --build-and-test. "
+        "Use --build-options or --test-command to forward arguments.");
+      return 1;
+    }
+    if (!runScripts.empty()) {
+      cmSystemTools::Error(
+        "The -- option cannot be used with -S or -SP script mode.");
+      return 1;
+    }
+    if (processSteps) {
+      cmSystemTools::Error(
+        "The -- option cannot be used with -D, -T, or -M dashboard mode.");
+      return 1;
+    }
+  }
+
+  // TestProgressOutput only supported if console supports it and not
+  // logging to a file
   this->Impl->TestProgressOutput = this->Impl->TestProgressOutput &&
     !this->Impl->OutputLogFile && this->ProgressOutputSupportedByConsole();
 #ifdef _WIN32
@@ -3293,19 +3331,14 @@ bool cmCTest::RunCommand(std::vector<std::string> const& args,
 
   std::vector<char> tempOutput;
   bool outFinished = false;
-  cm::uv_pipe_ptr outStream;
   std::vector<char> tempError;
   bool errFinished = false;
-  cm::uv_pipe_ptr errStream;
   cmProcessOutput processOutput(encoding);
-  auto startRead = [this, &chain, &processOutput](
-                     cm::uv_pipe_ptr& pipe, int stream,
-                     std::vector<char>& temp,
+  auto startRead = [this, &processOutput](
+                     uv_stream_t* stream, std::vector<char>& temp,
                      bool& finished) -> std::unique_ptr<cmUVStreamReadHandle> {
-    pipe.init(chain.GetLoop(), 0);
-    uv_pipe_open(pipe, stream);
     return cmUVStreamRead(
-      pipe,
+      stream,
       [this, &temp, &processOutput](std::vector<char> data) {
         cm::append(temp, data);
         if (this->Impl->ExtraVerbose) {
@@ -3316,10 +3349,8 @@ bool cmCTest::RunCommand(std::vector<std::string> const& args,
       },
       [&finished]() { finished = true; });
   };
-  auto outputHandle =
-    startRead(outStream, chain.OutputStream(), tempOutput, outFinished);
-  auto errorHandle =
-    startRead(errStream, chain.ErrorStream(), tempError, errFinished);
+  auto outputHandle = startRead(chain.OutputStream(), tempOutput, outFinished);
+  auto errorHandle = startRead(chain.ErrorStream(), tempError, errFinished);
   while (!timedOut && !(outFinished && errFinished)) {
     uv_run(&chain.GetLoop(), UV_RUN_ONCE);
   }
@@ -3657,7 +3688,7 @@ void cmCTest::ConvertInstrumentationSnippetsToXML(cmXMLWriter& xml,
 
   for (unsigned int i = 0; i < d.GetNumberOfFiles(); i++) {
     std::string fpath = d.GetFilePath(i);
-    std::string fname = d.GetFile(i);
+    std::string const& fname = d.GetFileName(i);
     if (fname.rfind('.', 0) == 0) {
       continue;
     }
@@ -3706,7 +3737,7 @@ bool cmCTest::ConvertInstrumentationJSONFileToXML(std::string const& fpath,
   bool generating_test_xml = root["role"] == "test";
   if (!generating_test_xml) {
     std::string element_name = root["role"].asString();
-    element_name[0] = static_cast<char>(std::toupper(element_name[0]));
+    element_name[0] = static_cast<char>(cmsysString_toupper(element_name[0]));
     xml.StartElement(element_name);
     std::vector<std::string> keys = root.getMemberNames();
     for (auto const& key : keys) {
@@ -3738,7 +3769,8 @@ bool cmCTest::ConvertInstrumentationJSONFileToXML(std::string const& fpath,
   std::vector<std::string> keys = dynamic_information.getMemberNames();
   for (auto const& key : keys) {
     std::string measurement_name = key;
-    measurement_name[0] = static_cast<char>(std::toupper(measurement_name[0]));
+    measurement_name[0] =
+      static_cast<char>(cmsysString_toupper(measurement_name[0]));
 
     xml.StartElement("NamedMeasurement");
     xml.Attribute("type", "numeric/double");

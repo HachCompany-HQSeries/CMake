@@ -4,12 +4,13 @@ file LICENSE.rst or https://cmake.org/licensing for details.  */
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cstdlib>
 #include <utility>
 
 #include <cm/string_view>
 #include <cmext/string_view>
+
+#include "cmsys/String.h"
 
 #include "cmArgumentParser.h"
 #include "cmArgumentParserTypes.h"
@@ -22,11 +23,6 @@ file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include "cmake.h"
 
 namespace {
-
-bool isCharDigit(char ch)
-{
-  return std::isdigit(static_cast<unsigned char>(ch));
-}
 
 std::string processObjectKindVersions(cmFileAPI& fileApi,
                                       cmFileAPI::ObjectKind objectKind,
@@ -68,7 +64,7 @@ bool handleQueryCommand(std::vector<std::string> const& args,
                         cmExecutionStatus& status)
 {
   if (args.empty()) {
-    status.SetError("QUERY subcommand called without required arguments.");
+    status.SetError("QUERY called without required arguments.");
     return false;
   }
 
@@ -97,21 +93,20 @@ bool handleQueryCommand(std::vector<std::string> const& args,
     return true;
   }
   if (!unparsedArguments.empty()) {
-    status.SetError("QUERY subcommand given unknown argument \"" +
-                    unparsedArguments.front() + "\".");
+    status.SetError(cmStrCat("QUERY given unknown argument \"",
+                             unparsedArguments.front(), "\"."));
     return false;
   }
 
   if (!std::all_of(arguments.ApiVersion.begin(), arguments.ApiVersion.end(),
-                   isCharDigit)) {
-    status.SetError("QUERY subcommand given a non-integer API_VERSION.");
+                   cmsysString_isdigit)) {
+    status.SetError("QUERY given non-integer API_VERSION.");
     return false;
   }
   int const apiVersion = std::atoi(arguments.ApiVersion.c_str());
   if (apiVersion != 1) {
     status.SetError(
-      cmStrCat("QUERY subcommand given an unsupported API_VERSION \"",
-               arguments.ApiVersion,
+      cmStrCat("QUERY given unsupported API_VERSION \"", arguments.ApiVersion,
                "\" (the only currently supported version is 1)."));
     return false;
   }
@@ -138,7 +133,7 @@ bool handleQueryCommand(std::vector<std::string> const& args,
 
   if (!std::all_of(errors.begin(), errors.end(),
                    [](std::string const& s) -> bool { return s.empty(); })) {
-    std::string message("QUERY subcommand was given invalid arguments:");
+    std::string message("QUERY given invalid arguments:");
     for (std::string const& s : errors) {
       if (!s.empty()) {
         message = cmStrCat(message, "\n  ", s);

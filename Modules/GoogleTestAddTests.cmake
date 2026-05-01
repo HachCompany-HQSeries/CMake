@@ -3,19 +3,6 @@
 
 cmake_minimum_required(VERSION 4.2)
 
-function(add_command name test_name)
-  set(args "")
-  foreach(arg ${ARGN})
-    if(arg MATCHES "[^-./:a-zA-Z0-9_]")
-      string(APPEND args " [==[${arg}]==]")
-    else()
-      string(APPEND args " ${arg}")
-    endif()
-  endforeach()
-  string(APPEND script "${name}(${test_name} ${args})\n")
-  set(script "${script}" PARENT_SCOPE)
-endfunction()
-
 function(generate_testname_guards output open_guard_var close_guard_var)
   set(open_guard "[=[")
   set(close_guard "]=]")
@@ -52,7 +39,7 @@ macro(write_test_to_file)
   # Handle disabled tests
   set(maybe_DISABLED "")
   if(pretty_test_suite MATCHES "^DISABLED_" OR pretty_test_name MATCHES "^DISABLED_")
-    set(maybe_DISABLED DISABLED YES)
+    set(maybe_DISABLED "DISABLED YES")
     string(REGEX REPLACE "^DISABLED_" "" pretty_test_suite "${pretty_test_suite}")
     string(REGEX REPLACE "^DISABLED_" "" pretty_test_name "${pretty_test_name}")
   endif()
@@ -95,9 +82,6 @@ macro(write_test_to_file)
     string(REPLACE "${close_sb}" "]" testname "${testname}")
   endif()
   set(guarded_testname "${open_guard}${testname}${close_guard}")
-  # Add to script. Do not use add_command() here because it messes up the
-  # handling of empty values when forwarding arguments, and we need to
-  # preserve those carefully for arg_TEST_EXECUTOR and arg_EXTRA_ARGS.
   string(APPEND script "add_test(${guarded_testname} ${launcherArgs}")
   foreach(arg IN ITEMS
     "${arg_TEST_EXECUTABLE}"
@@ -121,17 +105,24 @@ macro(write_test_to_file)
 
   set(maybe_LOCATION "")
   if(NOT current_test_file STREQUAL "" AND NOT current_test_line STREQUAL "")
-    set(maybe_LOCATION DEF_SOURCE_LINE "${current_test_file}:${current_test_line}")
+    set(maybe_LOCATION "DEF_SOURCE_LINE [==[${current_test_file}:${current_test_line}]==]")
   endif()
 
-  add_command(set_tests_properties
-    "${guarded_testname}"
-    PROPERTIES
-      ${maybe_DISABLED}
-      ${maybe_LOCATION}
-      WORKING_DIRECTORY "${arg_TEST_WORKING_DIR}"
-      SKIP_REGULAR_EXPRESSION "\\[  SKIPPED \\]"
-      ${arg_TEST_PROPERTIES}
+  set(maybe_properties)
+  if(arg_TEST_PROPERTIES)
+    list(JOIN arg_TEST_PROPERTIES "]] [[" maybe_properties)
+    set(maybe_properties "[[${maybe_properties}]]")
+  endif()
+
+  string(APPEND script
+    "set_tests_properties(${guarded_testname}\n"
+    "  PROPERTIES\n"
+    "    ${maybe_DISABLED}\n"
+    "    ${maybe_LOCATION}\n"
+    "    WORKING_DIRECTORY [==[${arg_TEST_WORKING_DIR}]==]\n"
+    "    SKIP_REGULAR_EXPRESSION [==[\\[  SKIPPED \\]]==]\n"
+    "    ${maybe_properties}\n"
+    ")\n"
   )
 
   # possibly unbalanced square brackets render lists invalid so skip such
@@ -290,16 +281,14 @@ function(gtest_discover_tests_impl)
     CTEST_FILE
     TEST_DISCOVERY_TIMEOUT
     TEST_XML_OUTPUT_DIR
-    # The following are all multi-value arguments in gtest_discover_tests(),
-    # but they are each given to us as a single argument. We parse them that
-    # way to avoid problems with preserving empty list values and escaping.
     TEST_FILTER
+  )
+  set(multiValueArgs
     TEST_EXTRA_ARGS
     TEST_DISCOVERY_EXTRA_ARGS
     TEST_PROPERTIES
     TEST_EXECUTOR
   )
-  set(multiValueArgs "")
   cmake_parse_arguments(PARSE_ARGV 0 arg
     "${options}" "${oneValueArgs}" "${multiValueArgs}"
   )
@@ -411,29 +400,9 @@ function(gtest_discover_tests_impl)
 
   # Create a list of all discovered tests, which users may use to e.g. set
   # properties on the tests
-  add_command(set "" ${arg_TEST_LIST} "${tests}")
+  list(JOIN tests "]==] [==[" tests)
+  string(APPEND script "set(${arg_TEST_LIST} [==[${tests}]==])\n")
 
   # Write remaining content to the CTest script
   file(APPEND "${arg_CTEST_FILE}" "${script}")
 endfunction()
-
-if(CMAKE_SCRIPT_MODE_FILE)
-  gtest_discover_tests_impl(
-    NO_PRETTY_TYPES ${NO_PRETTY_TYPES}
-    NO_PRETTY_VALUES ${NO_PRETTY_VALUES}
-    TEST_TARGET ${TEST_TARGET}
-    TEST_EXECUTABLE ${TEST_EXECUTABLE}
-    TEST_EXECUTOR "${TEST_EXECUTOR}"
-    TEST_WORKING_DIR ${TEST_WORKING_DIR}
-    TEST_PREFIX ${TEST_PREFIX}
-    TEST_SUFFIX ${TEST_SUFFIX}
-    TEST_FILTER ${TEST_FILTER}
-    TEST_LIST ${TEST_LIST}
-    CTEST_FILE ${CTEST_FILE}
-    TEST_DISCOVERY_TIMEOUT ${TEST_DISCOVERY_TIMEOUT}
-    TEST_XML_OUTPUT_DIR ${TEST_XML_OUTPUT_DIR}
-    TEST_EXTRA_ARGS "${TEST_EXTRA_ARGS}"
-    TEST_DISCOVERY_EXTRA_ARGS "${TEST_DISCOVERY_EXTRA_ARGS}"
-    TEST_PROPERTIES "${TEST_PROPERTIES}"
-  )
-endif()

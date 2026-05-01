@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include <cm/string_view>
+
 #include <cm3p/json/value.h>
 
 #include "cmCommonTargetGenerator.h"
@@ -41,6 +43,8 @@ public:
   virtual void Generate(std::string const& config) = 0;
 
   std::string GetTargetName() const;
+
+  std::string ConvertToOutputFormatForShell(cm::string_view path) const;
 
   void AddDepfileBinding(cmNinjaVars& vars, std::string depfile) const;
   void RemoveDepfileBinding(cmNinjaVars& vars) const;
@@ -74,6 +78,8 @@ protected:
   std::string LanguageCompilerRule(std::string const& lang,
                                    std::string const& config,
                                    WithScanning withScanning) const;
+  std::string LanguageEmitModuleRule(std::string const& lang,
+                                     std::string const& config) const;
   std::string LanguagePreprocessAndScanRule(std::string const& lang,
                                             std::string const& config) const;
   std::string LanguageScanRule(std::string const& lang,
@@ -164,6 +170,7 @@ protected:
 
   void WriteLanguageRules(std::string const& language,
                           std::string const& config);
+  std::string GetCompileTemplateVar(std::string const& lang) const;
   void WriteCompileRule(std::string const& language,
                         std::string const& config);
   void WriteCompileRule(std::string const& language, std::string const& config,
@@ -209,6 +216,7 @@ protected:
   void AdditionalCleanFiles(std::string const& config);
 
   cmNinjaDeps GetObjects(std::string const& config) const;
+  std::string GetSwiftModuleOutput(std::string const& config) const;
 
   void EnsureDirectoryExists(std::string const& dir) const;
   void EnsureParentDirectoryExists(std::string const& path) const;
@@ -271,6 +279,8 @@ private:
     Json::Value SwiftOutputMap;
     cmNinjaDeps ExtraFiles;
     std::unique_ptr<MacOSXContentGeneratorType> MacOSXContentGenerator;
+    // Path declared as the .swiftmodule output (compile or emit-module edge).
+    std::string SwiftModuleOutput;
   };
 
   std::map<std::string, ByConfig> Configs;

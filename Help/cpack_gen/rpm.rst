@@ -255,13 +255,13 @@ List of CPack RPM generator specific variables:
     Lempel–Ziv–Markov chain algorithm
 
   ``xz``
-    XZ Utils compression
+    XZ Utils LZMA2 (Lempel–Ziv–Markov chain algorithm, version 2) compression
 
   ``bzip2``
     bzip2 Burrows–Wheeler algorithm
 
   ``gzip``
-    GNU Gzip compression
+    GNU Gzip Deflate compression
 
   ``zstd``
     .. versionadded:: 3.31
@@ -552,6 +552,10 @@ List of CPack RPM generator specific variables:
  .. code-block:: cmake
 
    set(CPACK_RPM_SPEC_MORE_DEFINE "%define __spec_install_post /bin/true")
+
+ .. versionadded:: 4.4
+   If the variable is a list, its string elements will be concatenated using
+   ``\n`` before being substituted into the spec template.
 
 .. variable:: CPACK_RPM_PACKAGE_DEBUG
 

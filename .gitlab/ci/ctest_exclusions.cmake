@@ -42,17 +42,28 @@ if ("$ENV{CMAKE_CONFIGURATION}" MATCHES "_valgrind")
     )
 endif()
 
-if ("$ENV{CMAKE_CONFIGURATION}" MATCHES "_xcode")
-  list(APPEND test_exclusions
-    # FIXME(#27358): Qt6Autogen.RerunMocOnAddFile fails in Xcode.
-    "^Qt6Autogen.RerunMocOnAddFile$"
-    )
-endif()
-
 if ("$ENV{CMAKE_CONFIGURATION}" MATCHES "^macos_x86_64_")
   list(APPEND test_exclusions
     # FIXME(#27376): CMakeGUI's simpleConfigure:fail case hangs.
     "^CMakeGUI$"
+    )
+endif()
+
+if ("$ENV{CMAKE_CONFIGURATION}" MATCHES [[windows_orangec7\.0\.7]])
+  list(APPEND test_exclusions
+    # FIXME(OrangeC#1136): OrangeC 7 no longer fails when linking a missing library
+    "^RunCMake.CheckModules$"
+    )
+endif()
+
+if ("$ENV{CMAKE_CONFIGURATION}" MATCHES "windows_clang_fastbuild")
+  list(APPEND test_exclusions
+    # FIXME(#27697): These fail with clang-cl and FASTBuild.
+    "^BuildDepends$"
+    "^ExportImport$"
+    "^Module.CheckIPOSupported-C$"
+    "^RunCMake.PrecompileHeaders$"
+    "^RunCMake.PrecompileHeaders-Reuse$"
     )
 endif()
 

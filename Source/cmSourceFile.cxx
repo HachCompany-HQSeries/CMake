@@ -7,6 +7,7 @@
 #include <cm/string_view>
 #include <cmext/string_view>
 
+#include "cmDiagnostics.h"
 #include "cmGlobalGenerator.h"
 #include "cmList.h"
 #include "cmListFileCache.h"
@@ -91,8 +92,8 @@ std::string const& cmSourceFile::GetOrDetermineLanguage()
       this->ResolveFullPath();
     } else {
       // Use the known extension to get the language if possible.
-      std::string ext =
-        cmSystemTools::GetFilenameLastExtension(this->Location.GetName());
+      cm::string_view ext =
+        cmSystemTools::GetFilenameLastExtensionView(this->Location.GetName());
       this->CheckLanguage(ext);
     }
   }
@@ -206,8 +207,8 @@ bool cmSourceFile::FindFullPath(std::string* error,
               if (cmp0115Warning) {
                 *cmp0115Warning = std::move(warning);
               } else {
-                makefile->GetCMakeInstance()->IssueMessage(
-                  MessageType::AUTHOR_WARNING, warning);
+                makefile->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, warning,
+                                          cmListFileBacktrace{});
               }
             }
             return true;
@@ -263,11 +264,11 @@ bool cmSourceFile::FindFullPath(std::string* error,
 void cmSourceFile::CheckExtension()
 {
   // Compute the extension.
-  std::string realExt =
-    cmSystemTools::GetFilenameLastExtension(this->FullPath);
+  cm::string_view realExt =
+    cmSystemTools::GetFilenameLastExtensionView(this->FullPath);
   if (!realExt.empty()) {
     // Store the extension without the leading '.'.
-    this->Extension = realExt.substr(1);
+    this->Extension = std::string(realExt.substr(1));
   }
 
   // Look for object files.
@@ -282,14 +283,14 @@ void cmSourceFile::CheckExtension()
   }
 }
 
-void cmSourceFile::CheckLanguage(std::string const& ext)
+void cmSourceFile::CheckLanguage(cm::string_view ext)
 {
   // Try to identify the source file language from the extension.
   cmMakefile const* mf = this->Location.GetMakefile();
   cmGlobalGenerator* gg = mf->GetGlobalGenerator();
-  std::string l = gg->GetLanguageFromExtension(ext.c_str());
+  cm::string_view l = gg->GetLanguageFromExtension(ext);
   if (!l.empty()) {
-    this->Language = l;
+    this->Language = std::string(l);
   }
 }
 
@@ -502,4 +503,14 @@ cmCustomCommand* cmSourceFile::GetCustomCommand() const
 void cmSourceFile::SetCustomCommand(std::unique_ptr<cmCustomCommand> cc)
 {
   this->CustomCommand = std::move(cc);
+}
+
+cmValue cmSourceFile::GetRustEmitProperty() const
+{
+  static std::string const s_default = "link";
+  cmValue const value = this->GetProperty("Rust_EMIT");
+  if (!value || value->empty()) {
+    return cmValue(s_default);
+  }
+  return value;
 }

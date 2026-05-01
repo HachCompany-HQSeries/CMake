@@ -89,10 +89,7 @@ The options are:
     :variable:`CMAKE_PROJECT_VERSION`.
 
 ``COMPAT_VERSION <version>``
-  .. versionadded:: 4.1
-  .. note::
-
-    Experimental. Gated by ``CMAKE_EXPERIMENTAL_EXPORT_PACKAGE_INFO``.
+  .. versionadded:: 4.3
 
   Optional; requires ``VERSION`` also be set.
 
@@ -101,17 +98,14 @@ The options are:
   and sets the variables
 
   * :variable:`PROJECT_COMPAT_VERSION`,
-    :variable:`<PROJECT-NAME>_COMPAT_VERSION`
+    :variable:`<PROJECT-NAME>_COMPAT_VERSION`.
 
-    When the ``project()`` command is called from the top-level
-    ``CMakeLists.txt``, then the compatibility version is also stored in the
-    variable :variable:`CMAKE_PROJECT_COMPAT_VERSION`.
+  When the ``project()`` command is called from the top-level
+  ``CMakeLists.txt``, then the compatibility version is also stored in the
+  variable :variable:`CMAKE_PROJECT_COMPAT_VERSION`.
 
 ``SPDX_LICENSE <license-string>``
-  .. versionadded:: 4.2
-  .. note::
-
-    Experimental. Gated by ``CMAKE_EXPERIMENTAL_EXPORT_PACKAGE_INFO``.
+  .. versionadded:: 4.3
 
   Optional.
   Sets the variables
@@ -181,7 +175,7 @@ The options are:
 
   Selects which programming languages are needed to build the project.
 
-.. include:: include/SUPPORTED_LANGUAGES.rst
+  .. include:: include/SUPPORTED_LANGUAGES.rst
 
 By default ``C`` and ``CXX`` are enabled if no language options are given.
 Specify language ``NONE``, or use the ``LANGUAGES`` keyword and list no languages,

@@ -40,8 +40,8 @@ Properties of Global Scope
    /prop_gbl/GENERATOR_IS_MULTI_CONFIG
    /prop_gbl/GLOBAL_DEPENDS_DEBUG_MODE
    /prop_gbl/GLOBAL_DEPENDS_NO_CYCLES
-   /prop_gbl/INSTALL_PARALLEL
    /prop_gbl/IN_TRY_COMPILE
+   /prop_gbl/INSTALL_PARALLEL
    /prop_gbl/JOB_POOLS
    /prop_gbl/PACKAGES_FOUND
    /prop_gbl/PACKAGES_NOT_FOUND
@@ -84,7 +84,6 @@ Properties on Directories
    /prop_dir/LINK_DIRECTORIES
    /prop_dir/LINK_OPTIONS
    /prop_dir/LISTFILE_STACK
-   /prop_dir/MACROS
    /prop_dir/PARENT_DIRECTORY
    /prop_dir/RULE_LAUNCH_COMPILE
    /prop_dir/RULE_LAUNCH_CUSTOM
@@ -257,6 +256,7 @@ Properties on Targets
    /prop_tgt/IMPORTED_CXX_MODULES_COMPILE_DEFINITIONS
    /prop_tgt/IMPORTED_CXX_MODULES_COMPILE_FEATURES
    /prop_tgt/IMPORTED_CXX_MODULES_COMPILE_OPTIONS
+   /prop_tgt/IMPORTED_CXX_MODULES_CONFIG
    /prop_tgt/IMPORTED_CXX_MODULES_INCLUDE_DIRECTORIES
    /prop_tgt/IMPORTED_CXX_MODULES_LINK_LIBRARIES
    /prop_tgt/IMPORTED_GLOBAL
@@ -306,6 +306,7 @@ Properties on Targets
    /prop_tgt/INTERFACE_LINK_OPTIONS
    /prop_tgt/INTERFACE_POSITION_INDEPENDENT_CODE
    /prop_tgt/INTERFACE_PRECOMPILE_HEADERS
+   /prop_tgt/INTERFACE_SOURCE_SETS
    /prop_tgt/INTERFACE_SOURCES
    /prop_tgt/INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
    /prop_tgt/INTERPROCEDURAL_OPTIMIZATION
@@ -326,6 +327,7 @@ Properties on Targets
    /prop_tgt/LANG_ICSTAT
    /prop_tgt/LANG_INCLUDE_WHAT_YOU_USE
    /prop_tgt/LANG_LINKER_LAUNCHER
+   /prop_tgt/LANG_PVS_STUDIO
    /prop_tgt/LANG_STANDARD
    /prop_tgt/LANG_STANDARD_REQUIRED
    /prop_tgt/LANG_VISIBILITY_PRESET
@@ -333,7 +335,6 @@ Properties on Targets
    /prop_tgt/LIBRARY_OUTPUT_DIRECTORY_CONFIG
    /prop_tgt/LIBRARY_OUTPUT_NAME
    /prop_tgt/LIBRARY_OUTPUT_NAME_CONFIG
-   /prop_tgt/SPDX_LICENSE
    /prop_tgt/LINK_DEPENDS
    /prop_tgt/LINK_DEPENDS_NO_SHARED
    /prop_tgt/LINK_DIRECTORIES
@@ -393,6 +394,7 @@ Properties on Targets
    /prop_tgt/PRECOMPILE_HEADERS_REUSE_FROM
    /prop_tgt/PREFIX
    /prop_tgt/PRIVATE_HEADER
+   /prop_tgt/PRIVATE_HEADER_SETS_TO_VERIFY
    /prop_tgt/PROJECT_LABEL
    /prop_tgt/PUBLIC_HEADER
    /prop_tgt/RESOURCE
@@ -403,11 +405,18 @@ Properties on Targets
    /prop_tgt/RUNTIME_OUTPUT_DIRECTORY_CONFIG
    /prop_tgt/RUNTIME_OUTPUT_NAME
    /prop_tgt/RUNTIME_OUTPUT_NAME_CONFIG
+   /prop_tgt/Rust_EDITION
    /prop_tgt/SKIP_BUILD_RPATH
    /prop_tgt/SKIP_LINTING
    /prop_tgt/SOURCE_DIR
+   /prop_tgt/SOURCE_DIRS
+   /prop_tgt/SOURCE_DIRS_NAME
+   /prop_tgt/SOURCE_SET
+   /prop_tgt/SOURCE_SET_NAME
+   /prop_tgt/SOURCE_SETS
    /prop_tgt/SOURCES
    /prop_tgt/SOVERSION
+   /prop_tgt/SPDX_LICENSE
    /prop_tgt/STATIC_LIBRARY_FLAGS
    /prop_tgt/STATIC_LIBRARY_FLAGS_CONFIG
    /prop_tgt/STATIC_LIBRARY_OPTIONS
@@ -417,6 +426,8 @@ Properties on Targets
    /prop_tgt/Swift_LANGUAGE_VERSION
    /prop_tgt/Swift_MODULE_DIRECTORY
    /prop_tgt/Swift_MODULE_NAME
+   /prop_tgt/Swift_PACKAGE_NAME
+   /prop_tgt/Swift_SEPARATE_MODULE_EMISSION
    /prop_tgt/SYMBOLIC
    /prop_tgt/SYSTEM
    /prop_tgt/TEST_LAUNCHER
@@ -432,6 +443,7 @@ Properties on Targets
    /prop_tgt/UNITY_BUILD_RELOCATABLE
    /prop_tgt/UNITY_BUILD_UNIQUE_ID
    /prop_tgt/VERIFY_INTERFACE_HEADER_SETS
+   /prop_tgt/VERIFY_PRIVATE_HEADER_SETS
    /prop_tgt/VERSION
    /prop_tgt/VISIBILITY_INLINES_HIDDEN
    /prop_tgt/VS_CONFIGURATION_TYPE
@@ -505,13 +517,13 @@ Properties on Targets
    /prop_tgt/XCODE_SCHEME_EXECUTABLE
    /prop_tgt/XCODE_SCHEME_GUARD_MALLOC
    /prop_tgt/XCODE_SCHEME_LAUNCH_CONFIGURATION
-   /prop_tgt/XCODE_SCHEME_TEST_CONFIGURATION
    /prop_tgt/XCODE_SCHEME_LAUNCH_MODE
    /prop_tgt/XCODE_SCHEME_LLDB_INIT_FILE
    /prop_tgt/XCODE_SCHEME_MAIN_THREAD_CHECKER_STOP
    /prop_tgt/XCODE_SCHEME_MALLOC_GUARD_EDGES
    /prop_tgt/XCODE_SCHEME_MALLOC_SCRIBBLE
    /prop_tgt/XCODE_SCHEME_MALLOC_STACK
+   /prop_tgt/XCODE_SCHEME_TEST_CONFIGURATION
    /prop_tgt/XCODE_SCHEME_THREAD_SANITIZER
    /prop_tgt/XCODE_SCHEME_THREAD_SANITIZER_STOP
    /prop_tgt/XCODE_SCHEME_UNDEFINED_BEHAVIOUR_SANITIZER
@@ -520,6 +532,28 @@ Properties on Targets
    /prop_tgt/XCODE_SCHEME_ZOMBIE_OBJECTS
    /prop_tgt/XCODE_XCCONFIG
    /prop_tgt/XCTEST
+
+.. _`File Set Properties`:
+
+Properties on File Sets
+=======================
+
+.. toctree::
+   :maxdepth: 1
+
+   /prop_fs/BASE_DIRS
+   /prop_fs/COMPILE_DEFINITIONS
+   /prop_fs/COMPILE_OPTIONS
+   /prop_fs/CXX_SCAN_FOR_MODULES
+   /prop_fs/INCLUDE_DIRECTORIES
+   /prop_fs/INDEPENDENT_FILES
+   /prop_fs/INTERFACE_COMPILE_DEFINITIONS
+   /prop_fs/INTERFACE_COMPILE_OPTIONS
+   /prop_fs/INTERFACE_INCLUDE_DIRECTORIES
+   /prop_fs/INTERFACE_SOURCES
+   /prop_fs/SCOPE
+   /prop_fs/SOURCES
+   /prop_fs/TYPE
 
 .. _`Test Properties`:
 
@@ -581,6 +615,7 @@ Properties on Source Files
    /prop_sf/HEADER_FILE_ONLY
    /prop_sf/INCLUDE_DIRECTORIES
    /prop_sf/INSTALL_OBJECT_NAME
+   /prop_sf/JOB_POOL_COMPILE
    /prop_sf/KEEP_EXTENSION
    /prop_sf/LABELS
    /prop_sf/LANGUAGE
@@ -589,7 +624,7 @@ Properties on Source Files
    /prop_sf/OBJECT_DEPENDS
    /prop_sf/OBJECT_NAME
    /prop_sf/OBJECT_OUTPUTS
-   /prop_sf/JOB_POOL_COMPILE
+   /prop_sf/Rust_EMIT
    /prop_sf/SKIP_AUTOGEN
    /prop_sf/SKIP_AUTOMOC
    /prop_sf/SKIP_AUTORCC
@@ -666,6 +701,7 @@ Deprecated Properties on Directories
    /prop_dir/COMPILE_DEFINITIONS_CONFIG
    /prop_dir/INTERPROCEDURAL_OPTIMIZATION
    /prop_dir/INTERPROCEDURAL_OPTIMIZATION_CONFIG
+   /prop_dir/MACROS
    /prop_dir/TEST_INCLUDE_FILE
 
 

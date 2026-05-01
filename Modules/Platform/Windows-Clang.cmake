@@ -207,19 +207,19 @@ if("x${CMAKE_C_SIMULATE_ID}" STREQUAL "xMSVC"
   if(NOT CMAKE_RC_COMPILER_INIT)
     # Check if rc is already in the path
     # This may happen in cases where the user is already in a visual studio environment when CMake is invoked
-    find_program(__RC_COMPILER_PATH NAMES rc)
+    find_program(__RC_COMPILER_PATH NO_CACHE NAMES rc)
 
     # Default to rc if it's available, otherwise fall back to llvm-rc
     if(__RC_COMPILER_PATH)
       set(CMAKE_RC_COMPILER_INIT rc)
     else()
-      find_program(__RC_COMPILER_PATH NAMES llvm-rc)
+      find_program(__RC_COMPILER_PATH NO_CACHE NAMES llvm-rc)
       if(__RC_COMPILER_PATH)
         set(CMAKE_RC_COMPILER_INIT llvm-rc)
       endif()
     endif()
 
-    unset(__RC_COMPILER_PATH CACHE)
+    unset(__RC_COMPILER_PATH)
   endif()
 
   if ( "x${CMAKE_CXX_COMPILER_FRONTEND_VARIANT}" STREQUAL "xMSVC"
@@ -233,6 +233,11 @@ if("x${CMAKE_C_SIMULATE_ID}" STREQUAL "xMSVC"
     macro(__windows_compiler_clang_base lang)
       set(_COMPILE_${lang} "${_COMPILE_${lang}_MSVC}")
       __windows_compiler_msvc(${lang})
+
+      # Prefer clang-cl's gcc-style depfile over cl-style /showIncludes
+      set(CMAKE_DEPFILE_FLAGS_${lang} "-clang:-MD -clang:-MT<DEP_TARGET> -clang:-MF<DEP_FILE>")
+      unset(CMAKE_${lang}_DEPFILE_FORMAT)
+
       unset(CMAKE_${lang}_COMPILE_OPTIONS_MSVC_DEBUG_INFORMATION_FORMAT_EditAndContinue) # -ZI not supported by Clang
       set(CMAKE_${lang}_COMPILE_OPTIONS_WARNING_AS_ERROR "-WX")
       set(CMAKE_INCLUDE_SYSTEM_FLAG_${lang} "-imsvc")

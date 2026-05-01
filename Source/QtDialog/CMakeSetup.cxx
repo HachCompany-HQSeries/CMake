@@ -2,7 +2,6 @@
    file LICENSE.rst or https://cmake.org/licensing for details.  */
 #include <iostream>
 
-#include "QCMake.h" // include to disable MS warnings
 #include <QApplication>
 #include <QDir>
 #include <QLocale>
@@ -22,6 +21,8 @@
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h" // IWYU pragma: keep
 #include "cmake.h"
+
+#include "QCMake.h" // include to disable MS warnings
 
 namespace {
 cmDocumentationEntry const cmDocumentationName = {
@@ -52,13 +53,6 @@ static void cmAddPluginPath();
 
 #if defined(USE_QXcbIntegrationPlugin)
 Q_IMPORT_PLUGIN(QXcbIntegrationPlugin);
-#endif
-
-#if defined(USE_QWindowsIntegrationPlugin)
-Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin);
-#  if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
-Q_IMPORT_PLUGIN(QWindowsVistaStylePlugin);
-#  endif
 #endif
 
 int CMakeGUIExec(CMakeSetupDialog* window);

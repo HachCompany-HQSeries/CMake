@@ -28,6 +28,7 @@
 // https://msdn.microsoft.com/en-us/library/ms683219(VS.85).aspx
 
 #include "kwsysPrivate.h"
+#include KWSYS_HEADER(String.h)
 #include KWSYS_HEADER(SystemInformation.hxx)
 #include KWSYS_HEADER(Process.h)
 
@@ -35,6 +36,7 @@
 // duplicate the above list of headers.
 #if 0
 #  include "Process.h.in"
+#  include "String.h.in"
 #  include "SystemInformation.hxx.in"
 #endif
 
@@ -165,7 +167,6 @@ using ResourceLimitType = struct rlimit;
 #  undef KWSYS_SYSTEMINFORMATION_HAS_SYMBOL_LOOKUP
 #endif
 
-#include <cctype> // int isdigit(int c);
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -601,7 +602,7 @@ std::string SystemInformation::GetCPUDescription()
   oss << this->GetNumberOfPhysicalCPU() << " core ";
   if (this->GetModelName().empty()) {
     oss << this->GetProcessorClockFrequency() << " MHz "
-        << this->GetVendorString() << " " << this->GetExtendedProcessorName();
+        << this->GetVendorString() << ' ' << this->GetExtendedProcessorName();
   } else {
     oss << this->GetModelName();
   }
@@ -678,7 +679,7 @@ int SystemInformation::GetOSIsApple()
 std::string SystemInformation::GetOSDescription()
 {
   std::ostringstream oss;
-  oss << this->GetOSName() << " " << this->GetOSRelease() << " "
+  oss << this->GetOSName() << ' ' << this->GetOSRelease() << ' '
       << this->GetOSVersion();
 
   return oss.str();
@@ -960,7 +961,7 @@ void StacktraceSignalHandler(int sigNo, siginfo_t* sigInfo,
   oss << std::endl
       << "========================================================="
       << std::endl
-      << "Process id " << getpid() << " ";
+      << "Process id " << getpid() << ' ';
   switch (sigNo) {
     case SIGINT:
       oss << "Caught SIGINT";
@@ -976,7 +977,7 @@ void StacktraceSignalHandler(int sigNo, siginfo_t* sigInfo,
 
     case SIGFPE:
       oss << "Caught SIGFPE at " << (sigInfo->si_addr ? "" : "0x")
-          << sigInfo->si_addr << " ";
+          << sigInfo->si_addr << ' ';
       switch (sigInfo->si_code) {
 #    if defined(FPE_INTDIV)
         case FPE_INTDIV:
@@ -1024,7 +1025,7 @@ void StacktraceSignalHandler(int sigNo, siginfo_t* sigInfo,
 
     case SIGSEGV:
       oss << "Caught SIGSEGV at " << (sigInfo->si_addr ? "" : "0x")
-          << sigInfo->si_addr << " ";
+          << sigInfo->si_addr << ' ';
       switch (sigInfo->si_code) {
         case SEGV_MAPERR:
           oss << "address not mapped to object";
@@ -1042,7 +1043,7 @@ void StacktraceSignalHandler(int sigNo, siginfo_t* sigInfo,
 
     case SIGBUS:
       oss << "Caught SIGBUS at " << (sigInfo->si_addr ? "" : "0x")
-          << sigInfo->si_addr << " ";
+          << sigInfo->si_addr << ' ';
       switch (sigInfo->si_code) {
         case BUS_ADRALN:
           oss << "invalid address alignment";
@@ -1082,7 +1083,7 @@ void StacktraceSignalHandler(int sigNo, siginfo_t* sigInfo,
 
     case SIGILL:
       oss << "Caught SIGILL at " << (sigInfo->si_addr ? "" : "0x")
-          << sigInfo->si_addr << " ";
+          << sigInfo->si_addr << ' ';
       switch (sigInfo->si_code) {
         case ILL_ILLOPC:
           oss << "illegal opcode";
@@ -1247,8 +1248,8 @@ std::ostream& operator<<(std::ostream& os, SymbolProperties const& sp)
 {
 #  if defined(KWSYS_SYSTEMINFORMATION_HAS_SYMBOL_LOOKUP)
   os << std::hex << sp.GetAddress() << " : " << sp.GetFunction() << " [("
-     << sp.GetBinary() << ") " << sp.GetSourceFile() << ":" << std::dec
-     << sp.GetLineNumber() << "]";
+     << sp.GetBinary() << ") " << sp.GetSourceFile() << ':' << std::dec
+     << sp.GetLineNumber() << ']';
 #  elif defined(KWSYS_SYSTEMINFORMATION_HAS_BACKTRACE)
   void* addr = sp.GetAddress();
   char** syminfo = backtrace_symbols(&addr, 1);
@@ -3600,7 +3601,7 @@ bool SystemInformationImplementation::RetrieveInformationFromCpuInfoFile()
   std::string cpuflags = this->ExtractValueFromCpuInfoFile(buffer, "flags");
   if (!cpurev.empty()) {
     // now we can match every flags as space + flag + space
-    cpuflags = " " + cpuflags + " ";
+    cpuflags = ' ' + cpuflags + ' ';
     if ((cpuflags.find(" fpu ") != std::string::npos)) {
       this->Features.HasFPU = true;
     }
@@ -3918,8 +3919,8 @@ double SystemInformationImplementation::GetLoadAverage()
   // Old windows.h headers do not provide GetSystemTimes.
   using GetSystemTimesType = BOOL(WINAPI*)(LPFILETIME, LPFILETIME, LPFILETIME);
   static GetSystemTimesType pGetSystemTimes =
-    (GetSystemTimesType)GetProcAddress(GetModuleHandleW(L"kernel32"),
-                                       "GetSystemTimes");
+    (GetSystemTimesType)(void*)GetProcAddress(GetModuleHandleW(L"kernel32"),
+                                              "GetSystemTimes");
   FILETIME idleTime, kernelTime, userTime;
   if (pGetSystemTimes && pGetSystemTimes(&idleTime, &kernelTime, &userTime)) {
     unsigned __int64 const idleTicks = fileTimeToUInt64(idleTime);
@@ -4167,11 +4168,11 @@ bool SystemInformationImplementation::QueryLinuxMemory()
     char majorChar = unameInfo.release[0];
     char minorChar = unameInfo.release[2];
 
-    if (isdigit(majorChar)) {
+    if (kwsysString_isdigit(majorChar)) {
       linuxMajor = majorChar - '0';
     }
 
-    if (isdigit(minorChar)) {
+    if (kwsysString_isdigit(minorChar)) {
       linuxMinor = minorChar - '0';
     }
   }
@@ -4468,7 +4469,7 @@ void SystemInformationImplementation::CPUCountWindows()
   using GetLogicalProcessorInformationType =
     BOOL(WINAPI*)(PSYSTEM_LOGICAL_PROCESSOR_INFORMATION, PDWORD);
   static GetLogicalProcessorInformationType pGetLogicalProcessorInformation =
-    reinterpret_cast<GetLogicalProcessorInformationType>(GetProcAddress(
+    reinterpret_cast<GetLogicalProcessorInformationType>((void*)GetProcAddress(
       GetModuleHandleW(L"kernel32"), "GetLogicalProcessorInformation"));
 
   if (!pGetLogicalProcessorInformation) {
@@ -5067,7 +5068,7 @@ bool SystemInformationImplementation::QueryQNXMemory()
   size_t pos = buffer.find("System RAM:");
   if (pos == std::string::npos)
     return false;
-  pos = buffer.find(":", pos);
+  pos = buffer.find(':', pos);
   size_t pos2 = buffer.find("M (", pos);
   if (pos2 == std::string::npos)
     return false;
@@ -5140,7 +5141,7 @@ bool SystemInformationImplementation::QueryQNXProcessor()
 
   pos2 = buffer.find(" Stepping", pos);
   if (pos2 != std::string::npos) {
-    pos2 = buffer.find(" ", pos2 + 1);
+    pos2 = buffer.find(' ', pos2 + 1);
     if (pos2 != std::string::npos && pos2 < pos3) {
       this->ChipID.Revision =
         atoi(buffer.substr(pos2 + 1, pos3 - pos2).c_str());
@@ -5329,7 +5330,8 @@ bool SystemInformationImplementation::QueryOSInformation()
 
   this->OSName = "Windows";
 
-  OSVERSIONINFOEXW osvi = { sizeof(osvi) };
+  OSVERSIONINFOEXW osvi = {};
+  osvi.dwOSVersionInfoSize = sizeof(osvi);
 #  ifdef KWSYS_WINDOWS_DEPRECATED_GetVersionEx
 #    pragma warning(push)
 #    ifdef __INTEL_COMPILER
@@ -5353,8 +5355,8 @@ bool SystemInformationImplementation::QueryOSInformation()
 #  endif
 
   // Produce the release like it is displayed in `cmd`
-  this->OSRelease = std::to_string(osvi.dwMajorVersion) + "." +
-    std::to_string(osvi.dwMinorVersion) + "." +
+  this->OSRelease = std::to_string(osvi.dwMajorVersion) + '.' +
+    std::to_string(osvi.dwMinorVersion) + '.' +
     std::to_string(osvi.dwBuildNumber & 0xFFFF);
 
   struct VersionNames

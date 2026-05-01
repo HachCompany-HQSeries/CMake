@@ -15,6 +15,7 @@
 #include <cm/optional>
 
 #include "cmComputeLinkInformation.h"
+#include "cmDiagnostics.h"
 #include "cmGeneratorExpression.h"
 #include "cmGeneratorTarget.h"
 #include "cmGlobalGenerator.h"
@@ -23,7 +24,6 @@
 #include "cmMakefile.h"
 #include "cmMessageType.h"
 #include "cmObjectLocation.h"
-#include "cmOutputConverter.h"
 #include "cmPolicies.h"
 #include "cmScriptGenerator.h"
 #include "cmStateTypes.h"
@@ -401,12 +401,15 @@ cmInstallTargetGenerator::Files cmInstallTargetGenerator::GetFiles(
           // Assume the NamelinkModeSkip instance will warn and install.
           return files;
         case NamelinkModeSkip: {
-          std::string e = "Target '" + this->Target->GetName() +
-            "' was changed to a FRAMEWORK sometime after install().  "
-            "This may result in the wrong install DESTINATION.  "
-            "Set the FRAMEWORK property earlier.";
-          this->Target->GetGlobalGenerator()->GetCMakeInstance()->IssueMessage(
-            MessageType::AUTHOR_WARNING, e, this->GetBacktrace());
+          cmake const* const cm =
+            this->Target->GetGlobalGenerator()->GetCMakeInstance();
+          cm->IssueDiagnostic(
+            cmDiagnostics::CMD_AUTHOR,
+            cmStrCat("Target '", this->Target->GetName(),
+                     "' was changed to a FRAMEWORK sometime after install().  "
+                     "This may result in the wrong install DESTINATION.  "
+                     "Set the FRAMEWORK property earlier."),
+            this->GetBacktrace());
         } break;
       }
 
@@ -476,8 +479,11 @@ void cmInstallTargetGenerator::GetInstallObjectNames(
 std::string cmInstallTargetGenerator::GetDestination(
   std::string const& config) const
 {
-  return cmGeneratorExpression::Evaluate(
-    this->Destination, this->Target->GetLocalGenerator(), config);
+  cmLocalGenerator* lg = this->Target->GetLocalGenerator();
+  std::string dest =
+    cmGeneratorExpression::Evaluate(this->Destination, lg, config);
+  cmInstallGenerator::CheckAbsoluteDestination(dest, lg, this->Backtrace);
+  return dest;
 }
 
 std::string cmInstallTargetGenerator::GetInstallFilename(
@@ -714,9 +720,8 @@ void cmInstallTargetGenerator::AddRPathCheckRule(
     default: {
       // Get the install RPATH from the link information and
       // escape any CMake syntax in the install RPATH.
-      std::string escapedNewRpath =
-        cmOutputConverter::EscapeForCMake(cli->GetChrpathString());
-      os << indent << "     RPATH " << escapedNewRpath << ")\n";
+      os << indent << "     RPATH "
+         << cmScriptGenerator::Quote(cli->GetChrpathString()) << ")\n";
       break;
     }
   }
@@ -829,14 +834,11 @@ void cmInstallTargetGenerator::AddChrpathPatchRule(
       return;
     }
 
-    // Escape any CMake syntax in the RPATHs.
-    std::string escapedOldRpath = cmOutputConverter::EscapeForCMake(oldRpath);
-    std::string escapedNewRpath = cmOutputConverter::EscapeForCMake(newRpath);
-
     // Write a rule to run chrpath to set the install-tree RPATH
     os << indent << "file(RPATH_CHANGE\n"
        << indent << "     FILE \"" << toDestDirPath << "\"\n"
-       << indent << "     OLD_RPATH " << escapedOldRpath << "\n";
+       << indent << "     OLD_RPATH " << cmScriptGenerator::Quote(oldRpath)
+       << "\n";
 
     // CMP0095: ``RPATH`` entries are properly escaped in the intermediary
     // CMake install script.
@@ -848,7 +850,8 @@ void cmInstallTargetGenerator::AddChrpathPatchRule(
         os << indent << "     NEW_RPATH \"" << newRpath << "\"";
         break;
       default:
-        os << indent << "     NEW_RPATH " << escapedNewRpath;
+        os << indent << "     NEW_RPATH "
+           << cmScriptGenerator::Quote(newRpath);
         break;
     }
 
@@ -976,12 +979,14 @@ void cmInstallTargetGenerator::IssueCMP0095Warning(
                                   std::string::npos);
 
   if (potentially_affected) {
+    cmake const* const cm =
+      this->Target->GetGlobalGenerator()->GetCMakeInstance();
     std::ostringstream w;
     w << cmPolicies::GetPolicyWarning(cmPolicies::CMP0095) << "\n";
     w << "RPATH entries for target '" << this->Target->GetName() << "' "
       << "will not be escaped in the intermediary "
       << "cmake_install.cmake script.";
-    this->Target->GetGlobalGenerator()->GetCMakeInstance()->IssueMessage(
-      MessageType::AUTHOR_WARNING, w.str(), this->GetBacktrace());
+    cm->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, w.str(),
+                        this->GetBacktrace());
   }
 }

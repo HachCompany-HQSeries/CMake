@@ -3,7 +3,6 @@
 #include "cmComputeLinkInformation.h"
 
 #include <algorithm>
-#include <cctype>
 #include <sstream>
 #include <utility>
 
@@ -12,6 +11,8 @@
 #include <cm/string_view>
 #include <cmext/algorithm>
 #include <cmext/string_view>
+
+#include "cmsys/String.h"
 
 #include "cmComputeLinkDepends.h"
 #include "cmGeneratorTarget.h"
@@ -1556,8 +1557,8 @@ std::string cmComputeLinkInformation::NoCaseExpression(std::string const& str)
       ret += c;
     } else {
       ret += '[';
-      ret += static_cast<char>(tolower(c));
-      ret += static_cast<char>(toupper(c));
+      ret += static_cast<char>(cmsysString_tolower(c));
+      ret += static_cast<char>(cmsysString_toupper(c));
       ret += ']';
     }
   }
@@ -2291,9 +2292,13 @@ void cmComputeLinkInformation::GetRPath(std::vector<std::string>& runtimeDirs,
     }
   }
 
-  // Add runtime paths required by the languages to always be
-  // present.  This is done even when skipping rpath support.
-  {
+  // Add runtime paths required by the toolchains' runtime libraries.
+  // This is done even when skipping RPATH entries modeled by CMake.
+  // However, INSTALL_REMOVE_ENVIRONMENT_RPATH tells us to exclude
+  // toolchain-defined RPATH entries from installation.
+  bool const removeEnvironmentRPath = for_install &&
+    this->Target->GetPropertyAsBool("INSTALL_REMOVE_ENVIRONMENT_RPATH");
+  if (!removeEnvironmentRPath) {
     cmGeneratorTarget::LinkClosure const* lc =
       this->Target->GetLinkClosure(this->Config);
     for (std::string const& li : lc->Languages) {
@@ -2309,8 +2314,8 @@ void cmComputeLinkInformation::GetRPath(std::vector<std::string>& runtimeDirs,
     }
   }
 
-  // Add runtime paths required by the platform to always be
-  // present.  This is done even when skipping rpath support.
+  // Add runtime paths required by the platform to always be present.
+  // This is done even when skipping RPATH entries modeled by CMake.
   cmCLI_ExpandListUnique(this->RuntimeAlways, runtimeDirs, emitted);
 }
 

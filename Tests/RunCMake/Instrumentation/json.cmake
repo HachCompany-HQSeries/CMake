@@ -1,3 +1,5 @@
+include_guard()
+
 # Read the JSON `filename` into `outvar`.
 function(read_json filename outvar)
   file(READ "${filename}" ${outvar})
@@ -23,9 +25,9 @@ function(json_has_key file json key)
   cmake_parse_arguments(ARG "UNEXPECTED" "" "" ${ARGN})
   unset(missingKey)
   string(JSON ${key} ERROR_VARIABLE missingKey GET "${json}" ${key})
-  if (NOT ARG_UNEXPECTED AND NOT missingKey MATCHES NOTFOUND)
+  if (NOT ARG_UNEXPECTED AND missingKey)
     json_error("${file}" "Missing key \'${key}\':\n${json}")
-  elseif (ARG_UNEXPECTED AND missingKey MATCHES NOTFOUND)
+  elseif (ARG_UNEXPECTED AND NOT missingKey)
     json_error("${file}" "\nUnexpected key \'${key}\':\n${json}")
   endif()
   return(PROPAGATE RunCMake_TEST_FAILED ERROR_MESSAGE ${key})
@@ -34,16 +36,17 @@ endfunction()
 # Check if the JSON string `json` does not have `key`.
 function(json_missing_key file json key)
   string(JSON data ERROR_VARIABLE missingKey GET "${json}" ${key})
-  if (missingKey MATCHES NOTFOUND)
+  if (NOT missingKey)
     json_error("${file}" "Has unexpected ${key}.")
   endif()
   return(PROPAGATE RunCMake_TEST_FAILED ERROR_MESSAGE)
 endfunction()
 
 # Check if the JSON string `json` has `key` and its value matches `expected`.
+# If successful, return its value in `key`.
 function(json_assert_key file json key expected)
   string(JSON data ERROR_VARIABLE missingKey GET "${json}" ${key})
-  if (NOT missingKey MATCHES NOTFOUND)
+  if (missingKey)
     json_error("${file}" "Missing ${key}.")
   endif()
   if (NOT ${data} MATCHES ${expected})
@@ -52,6 +55,7 @@ function(json_assert_key file json key expected)
       "Unexpected data in custom content file:\nGot ${data}, Expected ${expected}."
     )
   endif()
+  set(${key} ${data} PARENT_SCOPE)
   return(PROPAGATE RunCMake_TEST_FAILED ERROR_MESSAGE)
 endfunction()
 

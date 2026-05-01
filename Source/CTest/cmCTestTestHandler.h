@@ -55,6 +55,8 @@ struct cmCTestTestOptions
   std::string ExcludeTestListFile;
   std::string ResourceSpecFile;
   std::string JUnitXMLFileName;
+
+  std::vector<std::string> TestPassthroughArguments;
 };
 
 /** \class cmCTestTestHandler
@@ -194,6 +196,7 @@ public:
     std::string TestMeasurementsOutput;
     std::string InstrumentationFile;
     int TestCount = 0;
+    cm::optional<cmDuration> StartTestTime;
     cmCTestTestProperties* Properties = nullptr;
   };
 

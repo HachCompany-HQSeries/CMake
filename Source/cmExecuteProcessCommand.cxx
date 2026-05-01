@@ -24,7 +24,12 @@
 #  include "cm_fileno.hxx"
 #endif
 
+#include "cmsys/String.h"
+
 #include "cmArgumentParser.h"
+#include "cmArgumentParserTypes.h"
+#include "cmDiagnostics.h"
+#include "cmEnvironment.h"
 #include "cmExecutionStatus.h"
 #include "cmList.h"
 #include "cmMakefile.h"
@@ -40,7 +45,7 @@
 namespace {
 bool cmExecuteProcessCommandIsWhitespace(char c)
 {
-  return (cmIsSpace(c) || c == '\n' || c == '\r');
+  return (cmsysString_isspace(c) || c == '\n' || c == '\r');
 }
 
 FILE* FopenCLOEXEC(std::string const& path, char const* mode)
@@ -92,6 +97,8 @@ bool cmExecuteProcessCommand(std::vector<std::string> const& args,
     bool EchoOutputVariable = false;
     bool EchoErrorVariable = false;
     cm::optional<std::string> Encoding;
+    ArgumentParser::MaybeEmpty<std::vector<std::string>> Environment;
+    ArgumentParser::MaybeEmpty<std::vector<std::string>> EnvModification;
     std::string CommandErrorIsFatal;
   };
 
@@ -115,6 +122,8 @@ bool cmExecuteProcessCommand(std::vector<std::string> const& args,
       .Bind("ERROR_STRIP_TRAILING_WHITESPACE"_s,
             &Arguments::ErrorStripTrailingWhitespace)
       .Bind("ENCODING"_s, &Arguments::Encoding)
+      .Bind("ENVIRONMENT"_s, &Arguments::Environment)
+      .Bind("ENVIRONMENT_MODIFICATION"_s, &Arguments::EnvModification)
       .Bind("ECHO_OUTPUT_VARIABLE"_s, &Arguments::EchoOutputVariable)
       .Bind("ECHO_ERROR_VARIABLE"_s, &Arguments::EchoErrorVariable)
       .Bind("COMMAND_ERROR_IS_FATAL"_s, &Arguments::CommandErrorIsFatal);
@@ -209,6 +218,23 @@ bool cmExecuteProcessCommand(std::vector<std::string> const& args,
   // Set the process working directory.
   if (!arguments.WorkingDirectory.empty()) {
     builder.SetWorkingDirectory(arguments.WorkingDirectory);
+  }
+
+  if (!arguments.Environment.empty() || !arguments.EnvModification.empty()) {
+#ifndef CMAKE_BOOTSTRAP
+    auto diff = cmEnvironmentModification{};
+    if (!diff.Add(arguments.EnvModification)) {
+      return false;
+    }
+    auto env = cmEnvironment{ cmSystemTools::GetEnvironmentVariables() };
+    env.Update(arguments.Environment);
+    diff.ApplyTo(env);
+    builder.SetEnvironment(env.GetVariables());
+#else
+    status.SetError(
+      "does not support environment modification in bootstrap builds");
+    return false;
+#endif
   }
 
   // Check the output variables.
@@ -326,12 +352,14 @@ bool cmExecuteProcessCommand(std::vector<std::string> const& args,
   // Read the process output.
   struct ReadData
   {
+    uv_stream_t* Stream = nullptr;
     bool Finished = false;
     std::vector<char> Output;
-    cm::uv_pipe_ptr Stream;
   };
   ReadData outputData;
   ReadData errorData;
+  outputData.Stream = chain.OutputStream();
+  errorData.Stream = chain.ErrorStream();
   cmPolicies::PolicyStatus const cmp0176 =
     status.GetMakefile().GetPolicyStatus(cmPolicies::CMP0176);
   cmProcessOutput::Encoding encoding =
@@ -343,8 +371,8 @@ bool cmExecuteProcessCommand(std::vector<std::string> const& args,
           cmProcessOutput::FindEncoding(*arguments.Encoding)) {
       encoding = *maybeEncoding;
     } else {
-      status.GetMakefile().IssueMessage(
-        MessageType::AUTHOR_WARNING,
+      status.GetMakefile().IssueDiagnostic(
+        cmDiagnostics::CMD_AUTHOR,
         cmStrCat("ENCODING option given unknown value \"", *arguments.Encoding,
                  "\".  Ignoring."));
     }
@@ -353,9 +381,7 @@ bool cmExecuteProcessCommand(std::vector<std::string> const& args,
   std::string strdata;
 
   std::unique_ptr<cmUVStreamReadHandle> outputHandle;
-  if (chain.OutputStream() >= 0) {
-    outputData.Stream.init(chain.GetLoop(), 0);
-    uv_pipe_open(outputData.Stream, chain.OutputStream());
+  if (outputData.Stream) {
     outputHandle = cmUVStreamRead(
       outputData.Stream,
       [&arguments, &processOutput, &outputData,
@@ -377,10 +403,7 @@ bool cmExecuteProcessCommand(std::vector<std::string> const& args,
     outputData.Finished = true;
   }
   std::unique_ptr<cmUVStreamReadHandle> errorHandle;
-  if (chain.ErrorStream() >= 0 &&
-      chain.ErrorStream() != chain.OutputStream()) {
-    errorData.Stream.init(chain.GetLoop(), 0);
-    uv_pipe_open(errorData.Stream, chain.ErrorStream());
+  if (errorData.Stream) {
     errorHandle = cmUVStreamRead(
       errorData.Stream,
       [&arguments, &processOutput, &errorData,

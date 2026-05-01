@@ -11,7 +11,7 @@ endif()
 
 set(__CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS}")
 
-if(CMAKE_HIP_COMPILER_ID STREQUAL "Clang")
+if(CMAKE_HIP_COMPILER_ID STREQUAL "Clang" AND NOT CMAKE_HIP_PLATFORM STREQUAL "spirv")
   string(APPEND CMAKE_HIP_FLAGS " --cuda-host-only")
 endif()
 
@@ -61,11 +61,9 @@ if(NOT CMAKE_HIP_COMPILER_WORKS)
   # Puts test result in cache variable.
   try_compile(CMAKE_HIP_COMPILER_WORKS
     SOURCE_FROM_VAR testHIPCompiler.hip __TestCompiler_testHIPCompilerSource
+    NO_CACHE
     OUTPUT_VARIABLE __CMAKE_HIP_COMPILER_OUTPUT)
   unset(__TestCompiler_testHIPCompilerSource)
-  # Move result from cache to normal variable.
-  set(CMAKE_HIP_COMPILER_WORKS ${CMAKE_HIP_COMPILER_WORKS})
-  unset(CMAKE_HIP_COMPILER_WORKS CACHE)
   __TestCompiler_restoreTryCompileTargetType()
   if(NOT CMAKE_HIP_COMPILER_WORKS)
     PrintTestCompilerResult(CHECK_FAIL "broken")

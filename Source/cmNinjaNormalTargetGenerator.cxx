@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include <cm/filesystem>
 #include <cm/memory>
 #include <cm/optional>
 #include <cm/vector>
@@ -476,6 +477,12 @@ void cmNinjaNormalTargetGenerator::WriteLinkRule(
       vars.Defines = "$DEFINES";
       vars.Flags = "$FLAGS";
       vars.Includes = "$INCLUDES";
+    }
+
+    if (this->TargetLinkLanguage(config) == "Rust") {
+      vars.RustMainCrateRoot = "$RUST_MAIN_CRATE_ROOT";
+      vars.RustLinkCrates = "$RUST_LINK_CRATES";
+      vars.RustNativeObjects = "$RUST_NATIVE_OBJECTS";
     }
 
     std::string responseFlag;
@@ -1276,15 +1283,64 @@ void cmNinjaNormalTargetGenerator::WriteLinkStatement(
         gt->IsExecutableWithExports()) {
       linkBuild.Outputs.push_back(vars["SWIFT_MODULE"]);
     }
+  } else if (this->TargetLinkLanguage(config) == "Rust") {
+    // Use one-step build/link for Rust.
+    // Compute specific libraries to link with.
+    cmLocalGenerator const* lg = this->GetLocalGenerator();
+
+    linkBuild.ExplicitDeps = this->GetObjects(config);
+
+    // First we handle Rust rlib and normal native objects.
+    std::stringstream rlibs;
+    std::stringstream objects;
+    for (auto const& obj : linkBuild.ExplicitDeps) {
+      cm::filesystem::path const objPath(obj);
+      if (objPath.extension() == ".rlib") {
+        // Drop the "lib..." prefix and the ".rs" suffix. The prefix is
+        // required by Rust on the crate rlib file, but is hidden from the user
+        // when using the crate from Rust source code, so we drop it to be
+        // consistent with common usage in Rust.
+        std::string objStem = objPath.stem().string();
+        objStem = objStem.substr(3, objStem.length() - 6);
+        rlibs << " --extern=" << objStem << "="
+              << lg->ConvertToOutputFormat(obj, cmOutputConverter::SHELL);
+      } else {
+        objects << " -Clink-arg="
+                << lg->ConvertToOutputFormat(obj, cmOutputConverter::SHELL);
+      }
+    }
+    vars["RUST_LINK_CRATES"] = rlibs.str();
+    vars["RUST_NATIVE_OBJECTS"] = objects.str();
+
+    // Then, we handle the main crate root that is build as part of the link
+    // step.
+    std::vector<cmSourceFile const*> mainCrateRoot;
+    gt->GetRustMainCrateRoot(mainCrateRoot, config);
+    if (mainCrateRoot.size() != 1) {
+      this->Makefile->IssueMessage(
+        MessageType::FATAL_ERROR,
+        "Target " + gt->GetName() +
+          " has none or more than one main crate root.");
+      return;
+    }
+    std::string mainCrateRootPath =
+      this->GetCompiledSourceNinjaPath(mainCrateRoot[0]);
+    linkBuild.ExplicitDeps.emplace_back(mainCrateRootPath);
+    mainCrateRootPath =
+      lg->ConvertToOutputFormat(mainCrateRootPath, cmOutputConverter::SHELL);
+    vars["RUST_MAIN_CRATE_ROOT"] = mainCrateRootPath;
   } else {
     linkBuild.ExplicitDeps = this->GetObjects(config);
   }
 
-  std::vector<std::string> extraISPCObjects =
+  auto extraISPCObjects =
     this->GetGeneratorTarget()->GetGeneratedISPCObjects(config);
-  std::transform(extraISPCObjects.begin(), extraISPCObjects.end(),
-                 std::back_inserter(linkBuild.ExplicitDeps),
-                 this->MapToNinjaPath());
+  auto const mapToNinjaPath = this->MapToNinjaPath();
+  std::transform(
+    extraISPCObjects.begin(), extraISPCObjects.end(),
+    std::back_inserter(linkBuild.ExplicitDeps),
+    [&mapToNinjaPath](std::pair<cmSourceFile const*, std::string> const& obj)
+      -> std::string { return mapToNinjaPath(obj.second); });
 
   linkBuild.ImplicitDeps =
     this->ComputeLinkDeps(this->TargetLinkLanguage(config), config);
@@ -1458,7 +1514,7 @@ void cmNinjaNormalTargetGenerator::WriteLinkStatement(
         std::transform(
           ccByproducts.begin(), ccByproducts.end(),
           std::back_inserter(globalGen->GetByproductsForCleanTarget()),
-          this->MapToNinjaPath());
+          mapToNinjaPath);
       }
     }
   }
@@ -1583,16 +1639,25 @@ void cmNinjaNormalTargetGenerator::WriteLinkStatement(
     if (cmComputeLinkInformation* cli =
           this->GeneratorTarget->GetLinkInformation(config)) {
       for (auto const& dependency : cli->GetItems()) {
-        // Both the current target and the linked target must be swift targets
-        // in order for there to be a swiftmodule to depend on
+        // Only depend on swiftmodule from targets that actually compile
+        // Swift sources. A C/C++ target may have Swift as its linker
+        // language (due to language propagation) without producing one.
         if (dependency.Target &&
-            dependency.Target->GetLinkerLanguage(config) == "Swift") {
+            dependency.Target->IsLanguageUsed("Swift", config)) {
           std::string swiftmodule = this->ConvertToNinjaPath(
             dependency.Target->GetSwiftModulePath(config));
           linkBuild.ImplicitDeps.emplace_back(swiftmodule);
         }
       }
     }
+  }
+
+  // For split Swift builds, ensure the link edge depends on the target's own
+  // .swiftmodule so the emit-module edge runs even when no other target in
+  // the build depends on it (e.g. install-only targets).
+  std::string swiftModuleOutput = this->GetSwiftModuleOutput(config);
+  if (!swiftModuleOutput.empty()) {
+    linkBuild.ImplicitDeps.emplace_back(std::move(swiftModuleOutput));
   }
 
   // Ninja should restat after linking if and only if there are byproducts.

@@ -16,6 +16,8 @@
 #include "cmsys/FStream.hxx"
 
 #include "cmFileSet.h"
+#include "cmFileSetMetadata.h"
+#include "cmGeneratedFileStream.h"
 #include "cmJSONState.h"
 #include "cmListFileCache.h"
 #include "cmStringAlgorithms.h"
@@ -69,8 +71,39 @@ bool ParsePreprocessorDefine(Json::Value& dval,
     out.Undef = dval["undef"].asBool();
   }
 
-  if (dval.isMember("vendor")) {
-    out.Vendor = std::move(dval["vendor"]);
+  return true;
+}
+
+bool ParseCMakeLocalArgumentsVendor(
+  Json::Value& cmlav, cmCxxModuleMetadata::LocalArgumentsData& out,
+  cmJSONState* state)
+{
+
+  if (!cmlav.isObject()) {
+    state->AddErrorAtValue("'vendor' must be an object", &cmlav);
+    return false;
+  }
+
+  if (cmlav.isMember("compile-options")) {
+    if (!JsonIsStringArray(cmlav["compile-options"])) {
+      state->AddErrorAtValue("'compile-options' must be an array of strings",
+                             &cmlav["compile-options"]);
+      return false;
+    }
+    for (auto const& s : cmlav["compile-options"]) {
+      out.CompileOptions.push_back(s.asString());
+    }
+  }
+
+  if (cmlav.isMember("compile-features")) {
+    if (!JsonIsStringArray(cmlav["compile-features"])) {
+      state->AddErrorAtValue("'compile-features' must be an array of strings",
+                             &cmlav["compile-features"]);
+      return false;
+    }
+    for (auto const& s : cmlav["compile-features"]) {
+      out.CompileFeatures.push_back(s.asString());
+    }
   }
 
   return true;
@@ -124,7 +157,9 @@ bool ParseLocalArguments(Json::Value& lav,
   }
 
   if (lav.isMember("vendor")) {
-    out.Vendor = std::move(lav["vendor"]);
+    if (!ParseCMakeLocalArgumentsVendor(lav["vendor"], out, state)) {
+      return false;
+    }
   }
 
   return true;
@@ -186,10 +221,6 @@ bool ParseModule(Json::Value& mval, cmCxxModuleMetadata::ModuleData& mod,
     }
   }
 
-  if (mval.isMember("vendor")) {
-    mod.Vendor = std::move(mval["vendor"]);
-  }
-
   return true;
 }
 
@@ -212,6 +243,14 @@ bool ParseRoot(Json::Value& root, cmCxxModuleMetadata& meta,
     meta.Revision = root["revision"].asInt();
   }
 
+  if (meta.Version != 1) {
+    state->AddErrorAtValue(cmStrCat("Module manifest version number, '",
+                                    meta.Version, '.', meta.Revision,
+                                    "' is newer than max supported (1.1)"),
+                           &root);
+    return false;
+  }
+
   if (root.isMember("modules")) {
     if (!root["modules"].isArray()) {
       state->AddErrorAtValue("'modules' must be an array", &root["modules"]);
@@ -223,13 +262,6 @@ bool ParseRoot(Json::Value& root, cmCxxModuleMetadata& meta,
         return false;
       }
     }
-  }
-
-  for (std::string& key : root.getMemberNames()) {
-    if (key == "version" || key == "revision" || key == "modules") {
-      continue;
-    }
-    meta.Extensions.emplace(std::move(key), std::move(root[key]));
   }
 
   return true;
@@ -269,14 +301,33 @@ Json::Value SerializePreprocessorDefine(
   dv["name"] = d.Name;
   if (d.Value) {
     dv["value"] = *d.Value;
-  } else {
-    dv["value"] = Json::Value::null;
   }
-  dv["undef"] = d.Undef;
-  if (d.Vendor) {
-    dv["vendor"] = *d.Vendor;
+  if (d.Undef) {
+    dv["undef"] = d.Undef;
   }
   return dv;
+}
+
+Json::Value SerializeCMakeLocalArgumentsVendor(
+  cmCxxModuleMetadata::LocalArgumentsData const& la)
+{
+  Json::Value vend(Json::objectValue);
+
+  if (!la.CompileOptions.empty()) {
+    Json::Value& opts = vend["compile-options"] = Json::arrayValue;
+    for (auto const& s : la.CompileOptions) {
+      opts.append(s);
+    }
+  }
+
+  if (!la.CompileFeatures.empty()) {
+    Json::Value& feats = vend["compile-features"] = Json::arrayValue;
+    for (auto const& s : la.CompileFeatures) {
+      feats.append(s);
+    }
+  }
+
+  return vend;
 }
 
 Json::Value SerializeLocalArguments(
@@ -305,27 +356,31 @@ Json::Value SerializeLocalArguments(
     }
   }
 
-  if (la.Vendor) {
-    lav["vendor"] = *la.Vendor;
+  Json::Value vend = SerializeCMakeLocalArgumentsVendor(la);
+  if (!vend.empty()) {
+    Json::Value& cmvend = lav["vendor"] = Json::objectValue;
+    cmvend["cmake"] = std::move(vend);
   }
 
   return lav;
 }
 
-Json::Value SerializeModule(cmCxxModuleMetadata::ModuleData const& m)
+Json::Value SerializeModule(std::string& manifestRoot,
+                            cmCxxModuleMetadata::ModuleData const& m)
 {
   Json::Value mv(Json::objectValue);
   mv["logical-name"] = m.LogicalName;
-  mv["source-path"] = m.SourcePath;
+  if (cmSystemTools::FileIsFullPath(m.SourcePath)) {
+    mv["source-path"] = m.SourcePath;
+  } else {
+    mv["source-path"] = cmSystemTools::ForceToRelativePath(
+      manifestRoot, cmStrCat('/', m.SourcePath));
+  }
   mv["is-interface"] = m.IsInterface;
   mv["is-std-library"] = m.IsStdLibrary;
 
   if (m.LocalArguments) {
     mv["local-arguments"] = SerializeLocalArguments(*m.LocalArguments);
-  }
-
-  if (m.Vendor) {
-    mv["vendor"] = *m.Vendor;
   }
 
   return mv;
@@ -341,12 +396,15 @@ Json::Value cmCxxModuleMetadata::ToJsonValue(cmCxxModuleMetadata const& meta)
   root["revision"] = meta.Revision;
 
   Json::Value& modules = root["modules"] = Json::arrayValue;
-  for (auto const& m : meta.Modules) {
-    modules.append(SerializeModule(m));
+  std::string manifestRoot =
+    cmSystemTools::GetFilenamePath(meta.MetadataFilePath);
+
+  if (!cmSystemTools::FileIsFullPath(meta.MetadataFilePath)) {
+    manifestRoot = cmStrCat('/', manifestRoot);
   }
 
-  for (auto const& kv : meta.Extensions) {
-    root[kv.first] = kv.second;
+  for (auto const& m : meta.Modules) {
+    modules.append(SerializeModule(manifestRoot, m));
   }
 
   return root;
@@ -357,15 +415,17 @@ cmCxxModuleMetadata::SaveResult cmCxxModuleMetadata::SaveToFile(
 {
   SaveResult st;
 
-  cmsys::ofstream ofs(path.c_str());
+  cmGeneratedFileStream ofs(path);
   if (!ofs.is_open()) {
-    st.Error = cmStrCat("Unable to open file for writing: "_s, path);
+    st.Error = "Unable to open temp file for writing";
     return st;
   }
 
   Json::StreamWriterBuilder wbuilder;
   wbuilder["indentation"] = "  ";
   ofs << Json::writeString(wbuilder, ToJsonValue(meta));
+
+  ofs.Close();
 
   if (!ofs.good()) {
     st.Error = cmStrCat("Write failed for file: "_s, path);
@@ -376,77 +436,142 @@ cmCxxModuleMetadata::SaveResult cmCxxModuleMetadata::SaveToFile(
   return st;
 }
 
-void cmCxxModuleMetadata::PopulateTarget(
-  cmTarget& target, cmCxxModuleMetadata const& meta,
-  std::vector<std::string> const& configs)
+namespace {
+
+struct MetaDataProperties
 {
-  std::vector<cm::string_view> allIncludeDirectories;
-  std::vector<std::string> allCompileDefinitions;
-  std::set<std::string> baseDirs;
+  std::string MetadataDir;
+  std::set<cm::string_view> AllCompileFeatures;
+  std::set<cm::string_view> AllCompileOptions;
+  std::set<std::string> AllIncludeDirectories;
+  std::set<std::string> AllCompileDefinitions;
+  std::set<std::string> BaseDirs;
+  std::set<std::string> Sources;
 
-  std::string metadataDir =
-    cmSystemTools::GetFilenamePath(meta.MetadataFilePath);
+  std::string NormalizePath(std::string const& in) const
+  {
+    std::string out = in;
+    if (!cmSystemTools::FileIsFullPath(in)) {
+      out = cmStrCat(MetadataDir, '/', in);
+    }
+    return cmSystemTools::CollapseFullPath(out);
+  }
+};
 
-  auto fileSet = target.GetOrCreateFileSet("CXX_MODULES", "CXX_MODULES",
-                                           cmFileSetVisibility::Interface);
+MetaDataProperties CollectMetaProperties(cmCxxModuleMetadata const& meta)
+{
+  MetaDataProperties props;
+
+  props.MetadataDir = cmSystemTools::GetFilenamePath(meta.MetadataFilePath);
 
   for (auto const& module : meta.Modules) {
-    std::string sourcePath = module.SourcePath;
-    if (!cmSystemTools::FileIsFullPath(sourcePath)) {
-      sourcePath = cmStrCat(metadataDir, '/', sourcePath);
-    }
+    std::string sourcePath = props.NormalizePath(module.SourcePath);
+    props.Sources.insert(sourcePath);
 
     // Module metadata files can reference files in different roots,
     // just use the immediate parent directory as a base directory
-    baseDirs.insert(cmSystemTools::GetFilenamePath(sourcePath));
-
-    fileSet.first->AddFileEntry(sourcePath);
+    props.BaseDirs.insert(cmSystemTools::GetFilenamePath(sourcePath));
 
     if (module.LocalArguments) {
       for (auto const& incDir : module.LocalArguments->IncludeDirectories) {
-        allIncludeDirectories.push_back(incDir);
+        props.AllIncludeDirectories.emplace(props.NormalizePath(incDir));
       }
       for (auto const& sysIncDir :
            module.LocalArguments->SystemIncludeDirectories) {
-        allIncludeDirectories.push_back(sysIncDir);
+        props.AllIncludeDirectories.emplace(props.NormalizePath(sysIncDir));
+      }
+      for (auto const& opt : module.LocalArguments->CompileOptions) {
+        props.AllCompileOptions.emplace(opt);
+      }
+      for (auto const& opt : module.LocalArguments->CompileFeatures) {
+        props.AllCompileFeatures.emplace(opt);
       }
 
       for (auto const& def : module.LocalArguments->Definitions) {
         if (!def.Undef) {
           if (def.Value) {
-            allCompileDefinitions.push_back(
+            props.AllCompileDefinitions.emplace(
               cmStrCat(def.Name, "="_s, *def.Value));
           } else {
-            allCompileDefinitions.push_back(def.Name);
+            props.AllCompileDefinitions.emplace(def.Name);
           }
         }
       }
     }
   }
 
-  for (auto const& baseDir : baseDirs) {
+  return props;
+}
+
+void PopulateFileSet(cmTarget& target, MetaDataProperties const& props)
+{
+  auto fileSet =
+    target.GetOrCreateFileSet(std::string{ cm::FileSetMetadata::CXX_MODULES },
+                              std::string{ cm::FileSetMetadata::CXX_MODULES },
+                              cm::FileSetMetadata::Visibility::Public);
+
+  for (auto const& source : props.Sources) {
+    fileSet.first->AddFileEntry(source);
+  }
+
+  for (auto const& baseDir : props.BaseDirs) {
     fileSet.first->AddDirectoryEntry(baseDir);
   }
+}
 
-  if (!allIncludeDirectories.empty()) {
-    target.SetProperty("IMPORTED_CXX_MODULES_INCLUDE_DIRECTORIES",
-                       cmJoin(allIncludeDirectories, ";"));
+void PopulateLocalTarget(cmTarget& target, MetaDataProperties const& props)
+{
+  if (!props.AllIncludeDirectories.empty()) {
+    target.AppendProperty("INCLUDE_DIRECTORIES",
+                          cmJoin(props.AllIncludeDirectories, ";"));
   }
 
-  if (!allCompileDefinitions.empty()) {
+  if (!props.AllCompileDefinitions.empty()) {
+    target.AppendProperty("COMPILE_DEFINITIONS",
+                          cmJoin(props.AllCompileDefinitions, ";"));
+  }
+
+  if (!props.AllCompileOptions.empty()) {
+    target.AppendProperty("COMPILE_OPTIONS",
+                          cmJoin(props.AllCompileOptions, ";"));
+  }
+
+  if (!props.AllCompileFeatures.empty()) {
+    target.AppendProperty("COMPILE_FEATURES",
+                          cmJoin(props.AllCompileFeatures, ";"));
+  }
+}
+
+void PopulateImportedTarget(cmTarget& target, MetaDataProperties const& props,
+                            cmCxxModuleMetadata const& meta,
+                            std::vector<std::string> const& configs)
+{
+  if (!props.AllIncludeDirectories.empty()) {
+    target.SetProperty("IMPORTED_CXX_MODULES_INCLUDE_DIRECTORIES",
+                       cmJoin(props.AllIncludeDirectories, ";"));
+  }
+
+  if (!props.AllCompileDefinitions.empty()) {
     target.SetProperty("IMPORTED_CXX_MODULES_COMPILE_DEFINITIONS",
-                       cmJoin(allCompileDefinitions, ";"));
+                       cmJoin(props.AllCompileDefinitions, ";"));
+  }
+
+  if (!props.AllCompileOptions.empty()) {
+    target.SetProperty("IMPORTED_CXX_MODULES_COMPILE_OPTIONS",
+                       cmJoin(props.AllCompileOptions, ";"));
+  }
+
+  if (!props.AllCompileFeatures.empty()) {
+    target.SetProperty("IMPORTED_CXX_MODULES_COMPILE_FEATURES",
+                       cmJoin(props.AllCompileFeatures, ";"));
   }
 
   for (auto const& config : configs) {
     std::vector<std::string> moduleList;
     for (auto const& module : meta.Modules) {
       if (module.IsInterface) {
-        std::string sourcePath = module.SourcePath;
-        if (!cmSystemTools::FileIsFullPath(sourcePath)) {
-          sourcePath = cmStrCat(metadataDir, '/', sourcePath);
-        }
-        moduleList.push_back(cmStrCat(module.LogicalName, "="_s, sourcePath));
+        moduleList.push_back(cmStrCat(module.LogicalName, "="_s,
+                                      props.NormalizePath(module.SourcePath)));
       }
     }
 
@@ -456,5 +581,21 @@ void cmCxxModuleMetadata::PopulateTarget(
         cmStrCat("IMPORTED_CXX_MODULES_"_s, upperConfig);
       target.SetProperty(propertyName, cmJoin(moduleList, ";"));
     }
+  }
+}
+
+} // namespace
+
+void cmCxxModuleMetadata::PopulateTarget(
+  cmTarget& target, cmCxxModuleMetadata const& meta,
+  std::vector<std::string> const& configs)
+{
+  auto props = CollectMetaProperties(meta);
+  PopulateFileSet(target, props);
+
+  if (target.IsImported()) {
+    PopulateImportedTarget(target, props, meta, configs);
+  } else {
+    PopulateLocalTarget(target, props);
   }
 }

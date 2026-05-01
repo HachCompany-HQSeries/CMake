@@ -27,6 +27,8 @@
 #include "cmFastbuildTargetGenerator.h"
 #include "cmGeneratedFileStream.h"
 #include "cmGeneratorExpression.h"
+#include "cmGeneratorFileSet.h"
+#include "cmGeneratorFileSets.h"
 #include "cmGeneratorTarget.h"
 #include "cmGlobalCommonGenerator.h"
 #include "cmGlobalFastbuildGenerator.h"
@@ -68,6 +70,12 @@ std::string const UNITY_BUILD_BATCH_SIZE("UNITY_BUILD_BATCH_SIZE");
 std::string const SKIP_UNITY_BUILD_INCLUSION("SKIP_UNITY_BUILD_INCLUSION");
 std::string const UNITY_GROUP("UNITY_GROUP");
 
+#ifdef _WIN32
+char const kPATH_SLASH = '\\';
+#else
+char const kPATH_SLASH = '/';
+#endif
+
 } // anonymous namespace
 
 cmFastbuildNormalTargetGenerator::cmFastbuildNormalTargetGenerator(
@@ -91,8 +99,8 @@ cmFastbuildNormalTargetGenerator::cmFastbuildNormalTargetGenerator(
     "\"" FASTBUILD_DOLLAR_TAG "TargetOutputImplib" FASTBUILD_DOLLAR_TAG "\"");
   for (auto const& lang : Languages) {
     TargetIncludesByLanguage[lang] = this->GetIncludes(lang, Config);
-    LogMessage("targetIncludes for lang " + lang + " = " +
-               TargetIncludesByLanguage[lang]);
+    LogMessage(cmStrCat("targetIncludes for lang ", lang, " = ",
+                        TargetIncludesByLanguage[lang]));
 
     for (auto const& arch : this->GetArches()) {
       auto& flags = CompileFlagsByLangAndArch[std::make_pair(lang, arch)];
@@ -111,7 +119,20 @@ std::string cmFastbuildNormalTargetGenerator::DetectCompilerFlags(
   cmGeneratorExpressionInterpreter genexInterpreter(
     this->GetLocalGenerator(), Config, this->GeneratorTarget, language);
 
+  auto const* fileSet =
+    this->GeneratorTarget->GetGeneratorFileSets()->GetFileSetForSource(
+      this->Config, &srcFile);
+
   std::vector<std::string> sourceIncludesVec;
+  if (fileSet) {
+    auto fsIncludes = fileSet->BelongsTo(this->GeneratorTarget)
+      ? fileSet->GetIncludeDirectories(this->Config, language)
+      : fileSet->GetInterfaceIncludeDirectories(this->Config, language);
+    if (!fsIncludes.empty()) {
+      this->LocalGenerator->AppendIncludeDirectories(
+        sourceIncludesVec, cm::remove_BT(fsIncludes), srcFile);
+    }
+  }
   if (cmValue cincludes = srcFile.GetProperty(INCLUDE_DIRECTORIES)) {
     this->LocalGenerator->AppendIncludeDirectories(
       sourceIncludesVec,
@@ -134,6 +155,17 @@ std::string cmFastbuildNormalTargetGenerator::DetectCompilerFlags(
     this->LocalGenerator->AppendCompileOptions(
       compileFlags, genexInterpreter.Evaluate(*coptions, COMPILE_OPTIONS));
   }
+  // Add flags from file set properties.
+  if (fileSet) {
+    auto options = fileSet->BelongsTo(this->GeneratorTarget)
+      ? fileSet->GetCompileOptions(this->Config, language)
+      : fileSet->GetInterfaceCompileOptions(this->Config, language);
+    if (!options.empty()) {
+      this->LocalGenerator->AppendCompileOptions(compileFlags,
+                                                 cm::remove_BT(options));
+    }
+  }
+
   // Source includes take precedence over target includes.
   this->LocalGenerator->AppendFlags(compileFlags, sourceIncludesStr);
   this->LocalGenerator->AppendFlags(compileFlags,
@@ -271,8 +303,7 @@ bool cmFastbuildNormalTargetGenerator::DetectBaseLinkerCommand(
   vars.CMTargetType = cmState::GetTargetTypeName(targetType).c_str();
   vars.Config = Config.c_str();
   vars.Language = linkLanguage.c_str();
-  std::string const manifests =
-    cmJoin(this->GetManifestsAsFastbuildPath(), " ");
+  std::string const manifests = this->GetManifests(Config);
   vars.Manifests = manifests.c_str();
 
   std::string const stdLibString = this->Makefile->GetSafeDefinition(
@@ -406,6 +437,17 @@ std::string cmFastbuildNormalTargetGenerator::ComputeDefines(
       genexInterpreter.Evaluate(*config_compile_defs, COMPILE_DEFINITIONS));
   }
 
+  if (auto const* fileSet =
+        this->GeneratorTarget->GetGeneratorFileSets()->GetFileSetForSource(
+          this->Config, &srcFile)) {
+    auto fsDefines = fileSet->BelongsTo(this->GeneratorTarget)
+      ? fileSet->GetCompileDefinitions(this->Config, language)
+      : fileSet->GetInterfaceCompileDefinitions(this->Config, language);
+    if (!fsDefines.empty()) {
+      this->LocalGenerator->AppendDefines(defines, fsDefines);
+    }
+  }
+
   std::string definesString = this->GetDefines(language, Config);
   LogMessage(cmStrCat("TARGET DEFINES = ", definesString));
   this->GetLocalGenerator()->JoinDefines(defines, definesString, language);
@@ -521,6 +563,12 @@ void cmFastbuildNormalTargetGenerator::EnsureDirectoryExists(
     fullPath += path;
     cmSystemTools::MakeDirectory(fullPath);
   }
+}
+
+void cmFastbuildNormalTargetGenerator::EnsureParentDirectoryExists(
+  std::string const& path) const
+{
+  this->EnsureDirectoryExists(cmSystemTools::GetParentDirectory(path));
 }
 
 std::vector<std::string>
@@ -804,24 +852,31 @@ void cmFastbuildNormalTargetGenerator::ComputePaths(
         this->ConvertToFastbuildPath(linkerPDB));
     }
   }
-  if (GeneratorTarget->GetType() <= cmStateEnums::OBJECT_LIBRARY) {
-    std::string const pdbDir = GeneratorTarget->GetCompilePDBDirectory(Config);
-    LogMessage("GetCompilePDBDirectory: " + pdbDir);
-    EnsureDirectoryExists(pdbDir);
-    std::string pdbName = this->GeneratorTarget->GetCompilePDBName(Config);
-    LogMessage("GetCompilePDBName: " + pdbDir);
-    // If we don't have Compiler's PDB, we must add a trailing slash to satisfy
-    // MSVC.
-    bool needTrailingSlash = false;
-    if (pdbName.empty()) {
-      needTrailingSlash = true;
+  std::string const compilerPDB = this->ComputeTargetCompilePDB(this->Config);
+  if (!compilerPDB.empty()) {
+    LogMessage("ComputeTargetCompilePDB: " + compilerPDB);
+    std::string compilerPDBArg = cmSystemTools::ConvertToOutputPath(
+      this->ConvertToFastbuildPath(compilerPDB));
+    if (cmHasSuffix(compilerPDB, '/')) {
+      // The compiler will choose the .pdb file name.
+      this->EnsureDirectoryExists(compilerPDB);
+      // ConvertToFastbuildPath dropped the trailing slash.  Add it back.
+      // We do this after ConvertToOutputPath so that we can use a forward
+      // slash in the case that the argument is quoted.
+      if (cmHasSuffix(compilerPDBArg, '"')) {
+        // A quoted trailing backslash requires escaping, e.g., `/Fd"dir\\"`,
+        // but fbuild does not parse such arguments correctly as of 1.15.
+        // Always use a forward slash.
+        compilerPDBArg.insert(compilerPDBArg.size() - 1, 1, '/');
+      } else {
+        // An unquoted trailing slash or backslash is fine.
+        compilerPDBArg.push_back(kPATH_SLASH);
+      }
+    } else {
+      // We have an explicit .pdb path with file name.
+      this->EnsureParentDirectoryExists(compilerPDB);
     }
-    std::string const compilerPDB = cmStrCat(pdbDir, '\\', pdbName);
-    if (!compilerPDB.empty()) {
-      target.Variables["CompilerPDB"] = cmSystemTools::ConvertToOutputPath(
-        this->ConvertToFastbuildPath(compilerPDB) +
-        (needTrailingSlash ? "\\ " : ""));
-    }
+    target.Variables["CompilerPDB"] = std::move(compilerPDBArg);
   }
   std::string const impLibFullPath =
     GeneratorTarget->GetFullPath(Config, cmStateEnums::ImportLibraryArtifact);
@@ -838,6 +893,12 @@ void cmFastbuildNormalTargetGenerator::Generate()
   this->GeneratorTarget->CheckCxxModuleStatus(Config);
 
   FastbuildTarget fastbuildTarget;
+  auto const addUtilDepToTarget = [&fastbuildTarget](std::string depName) {
+    FastbuildTargetDep dep{ depName };
+    dep.Type = FastbuildTargetDepType::UTIL;
+    fastbuildTarget.PreBuildDependencies.emplace(std::move(dep));
+  };
+
   fastbuildTarget.Name = GetTargetName();
   fastbuildTarget.BaseName = this->GeneratorTarget->GetName();
 
@@ -863,7 +924,7 @@ void cmFastbuildNormalTargetGenerator::Generate()
 
   for (auto& cc : GenerateCommands(FastbuildBuildStep::PRE_BUILD).Nodes) {
     fastbuildTarget.PreBuildExecNodes.PreBuildDependencies.emplace(cc.Name);
-    fastbuildTarget.PreBuildDependencies.emplace(cc.Name);
+    addUtilDepToTarget(cc.Name);
     this->GetGlobalGenerator()->AddTarget(std::move(cc));
   }
   for (auto& cc : GenerateCommands(FastbuildBuildStep::PRE_LINK).Nodes) {
@@ -981,27 +1042,15 @@ void cmFastbuildNormalTargetGenerator::ProcessManifests(
   if (this->GetGlobalGenerator()->GetCMakeInstance()->GetIsInTryCompile()) {
     return;
   }
-  auto manifests = this->GetManifestsAsFastbuildPath();
-  if (manifests.empty()) {
-    return;
-  }
+  std::vector<std::string> const manifests =
+    this->GetManifestsAsFastbuildPath();
   // Manifests should always be in .Libraries2, so we re-link when needed.
   // Tested in RunCMake.BuildDepends
+  linkerNode.Libraries2.reserve(linkerNode.Libraries2.size() +
+                                manifests.size());
   for (auto const& manifest : manifests) {
     linkerNode.Libraries2.emplace_back(manifest);
   }
-
-  if (this->Makefile->GetSafeDefinition("CMAKE_C_COMPILER_ID") != "MSVC") {
-    return;
-  }
-
-  for (auto const& manifest : manifests) {
-    linkerNode.LinkerOptions =
-      cmStrCat("/MANIFESTINPUT:", manifest, ' ', linkerNode.LinkerOptions);
-  }
-  // /MANIFESTINPUT only works with /MANIFEST:EMBED
-  linkerNode.LinkerOptions =
-    cmStrCat("/MANIFEST:EMBED ", linkerNode.LinkerOptions);
 }
 
 void cmFastbuildNormalTargetGenerator::AddStampExeIfApplicable(
@@ -1374,9 +1423,11 @@ void cmFastbuildNormalTargetGenerator::GenerateObjects(FastbuildTarget& target)
 
     cmSourceFile const& srcFile = *source;
     std::string const pathToFile = srcFile.GetFullPath();
+    bool fileUsesUnity = useUnity;
     if (useUnity) {
       // Check if the source should be added to "UnityInputIsolatedFiles".
       if (srcFile.GetPropertyAsBool(SKIP_UNITY_BUILD_INCLUSION)) {
+        fileUsesUnity = false;
         isolatedFromUnity.emplace(pathToFile);
       }
       std::string const perFileUnityGroup =
@@ -1416,11 +1467,17 @@ void cmFastbuildNormalTargetGenerator::GenerateObjects(FastbuildTarget& target)
 
       // If object should be placed in some subdir in the output
       // path. Tested in "SourceGroups" test.
-      auto const subdir = cmSystemTools::GetFilenamePath(
-        this->GeneratorTarget->GetObjectName(source));
-      if (!subdir.empty()) {
-        objOutDirWithPossibleSubdir += "/";
-        objOutDirWithPossibleSubdir += subdir;
+      // Not necessary for files in unity buckets because they are
+      // built into a single unity object file. Executing this logic
+      // for unity bucketed files prevents buckets from containing
+      // source files in different subdirectories.
+      if (!fileUsesUnity) {
+        auto const subdir = cmSystemTools::GetFilenamePath(
+          this->GeneratorTarget->GetObjectName(source));
+        if (!subdir.empty()) {
+          objOutDirWithPossibleSubdir += "/";
+          objOutDirWithPossibleSubdir += subdir;
+        }
       }
 
       std::string const objectListHash = hash.HashString(cmStrCat(
@@ -1765,7 +1822,8 @@ void cmFastbuildNormalTargetGenerator::AppendTargetDep(
       // Tested in "RunCMake.Framework - ImportedFrameworkConsumption".
       std::string const decorated =
         item.GetFormattedItem(item.Value.Value).Value;
-      LogMessage("Adding framework dep <" + decorated + "> to command line");
+      LogMessage(
+        cmStrCat("Adding framework dep <", decorated, "> to command line"));
       linkerNode.LinkerOptions += (" " + decorated);
       return;
     }
@@ -1802,8 +1860,9 @@ void cmFastbuildNormalTargetGenerator::AppendTargetDep(
       // It moves the dep outside of FASTBuild control, so the binary won't
       // be re-built if the shared lib has changed.
       // Tested in "BuildDepends" test.
-      LogMessage("LINK_DEPENDS_NO_SHARED is set on the target, adding dep" +
-                 item.Value.Value + " as is");
+      LogMessage(
+        cmStrCat("LINK_DEPENDS_NO_SHARED is set on the target, adding dep",
+                 item.Value.Value, " as is"));
       linkerNode.LinkerOptions +=
         (" " + cmGlobalFastbuildGenerator::QuoteIfHasSpaces(item.Value.Value));
       return;
@@ -1811,6 +1870,9 @@ void cmFastbuildNormalTargetGenerator::AppendTargetDep(
     // Just add path to binary artifact to command line (except for OBJECT
     // libraries which we will link directly).
     if (UsingCommandLine && depType != cmStateEnums::OBJECT_LIBRARY) {
+      // Take transitively linked objects into account,
+      // so we don't link them again.
+      AppendTransitivelyLinkedObjects(*item.Target, linkedObjects);
       AppendCommandLineDep(linkerNode, item);
       return;
     }
@@ -1838,7 +1900,7 @@ void cmFastbuildNormalTargetGenerator::AppendTargetDep(
     // inject any properties in between). Tested in
     // "RunCMake.target_link_libraries-LINK_LIBRARY" test.
     if (isFeature) {
-      LogMessage("AppendTargetDep: " + dep + " as prebuild");
+      LogMessage(cmStrCat("AppendTargetDep: ", dep, " as prebuild"));
       linkerNode.PreBuildDependencies.emplace(dep);
       return;
     }
@@ -1879,7 +1941,7 @@ void cmFastbuildNormalTargetGenerator::AppendPrebuildDeps(
       linkerNode.PreBuildDependencies.insert(std::move(fastbuildTargetName));
     } else {
       if (!cmIsNOTFOUND(linkDep)) {
-        LogMessage("Adding dep " + linkDep + " for sorting");
+        LogMessage(cmStrCat("Adding dep ", linkDep, " for sorting"));
         linkerNode.PreBuildDependencies.insert(linkDep);
       }
     }
@@ -1927,7 +1989,8 @@ void cmFastbuildNormalTargetGenerator::AppendCommandLineDep(
   }
   formatted = this->ConvertToFastbuildPath(formatted);
 
-  LogMessage("Unknown link dep: " + formatted + ", adding to command line");
+  LogMessage(
+    cmStrCat("Unknown link dep: ", formatted, ", adding to command line"));
 
   // Only add real artifacts to .Libraries2, otherwise Fastbuild will always
   // consider the target out-of-date (since its input doesn't exist).
@@ -1949,7 +2012,7 @@ void cmFastbuildNormalTargetGenerator::AppendToLibraries2IfApplicable(
   // target out-of-date (since it never exists).
   if (this->GeneratorTarget->IsApple() &&
       cmSystemTools::StringStartsWith(dep, "-framework")) {
-    LogMessage("Not adding framework: " + dep + " to .Libraries2");
+    LogMessage(cmStrCat("Not adding framework: ", dep, " to .Libraries2"));
     return;
   }
 
@@ -1959,13 +2022,13 @@ void cmFastbuildNormalTargetGenerator::AppendToLibraries2IfApplicable(
   if (this->GeneratorTarget->IsApple() && target &&
       !target->LinkerNode.empty() &&
       target->LinkerNode[0].Type == FastbuildLinkerNode::EXECUTABLE) {
-    LogMessage("Not adding DLL/Executable(" + linkerNode.Name +
-               " to .Libraries2");
+    LogMessage(cmStrCat("Not adding DLL/Executable(", linkerNode.Name,
+                        " to .Libraries2"));
     return;
   }
 
-  // Additing to .Libraries2 for tracking.
-  LogMessage("Adding " + dep + " .Libraries2");
+  // Adding to .Libraries2 for tracking.
+  LogMessage(cmStrCat("Adding ", dep, " .Libraries2"));
   linkerNode.Libraries2.emplace_back(std::move(dep));
 }
 
@@ -1989,8 +2052,8 @@ void cmFastbuildNormalTargetGenerator::AppendLINK_DEPENDS(
 void cmFastbuildNormalTargetGenerator::AppendLinkDep(
   FastbuildLinkerNode& linkerNode, std::string dep) const
 {
-  LogMessage("AppendLinkDep: " + dep +
-             " to .LibrarianAdditionalInputs/.Libraries");
+  LogMessage(cmStrCat("AppendLinkDep: ", dep,
+                      " to .LibrarianAdditionalInputs/.Libraries"));
   linkerNode.LibrarianAdditionalInputs.emplace_back(std::move(dep));
 }
 
@@ -2054,6 +2117,8 @@ void cmFastbuildNormalTargetGenerator::AppendLinkDeps(
   for (cmComputeLinkInformation::Item const& item : items) {
     std::string const feature = item.GetFeatureName();
     LogMessage("GetFeatureName: " + feature);
+    std::string const formatted =
+      item.GetFormattedItem(item.Value.Value).Value;
     if (!feature.empty()) {
       LogMessage("GetFormattedItem: " +
                  item.GetFormattedItem(item.Value.Value).Value);
@@ -2064,17 +2129,30 @@ void cmFastbuildNormalTargetGenerator::AppendLinkDeps(
     if (item.ObjectSource &&
         linkerNode.Type != FastbuildLinkerNode::STATIC_LIBRARY) {
       // Tested in "ObjectLibrary" test.
-      auto libName = item.ObjectSource->GetObjectLibrary();
+      std::string const libName = item.ObjectSource->GetObjectLibrary();
       std::string dep = libName + FASTBUILD_OBJECTS_ALIAS_POSTFIX;
       if (linkedObjects.emplace(dep).second) {
-        FastbuildTargetDep targetDep{ std::move(libName) };
+        FastbuildTargetDep targetDep{ libName };
         targetDep.Type = FastbuildTargetDepType::ORDER_ONLY;
         preBuildDeps.emplace(std::move(targetDep));
-        linkerNode.LibrarianAdditionalInputs.emplace_back(std::move(dep));
+
+        cmTarget const* importedTarget =
+          this->LocalGenerator->GetMakefile()->FindImportedTarget(libName);
+        // Add direct path to the object for imported target
+        // since such targets are not defined in fbuild.bff file.
+        if (importedTarget) {
+          LogMessage(
+            cmStrCat("Adding ", formatted, " to LibrarianAdditionalInputs"));
+          linkerNode.LibrarianAdditionalInputs.emplace_back(formatted);
+        } else {
+          LogMessage(
+            cmStrCat("Adding ", dep, " to LibrarianAdditionalInputs"));
+          linkerNode.LibrarianAdditionalInputs.emplace_back(std::move(dep));
+        }
       }
     } else if (linkerNode.Type == FastbuildLinkerNode::STATIC_LIBRARY) {
-      LogMessage("Skipping linking to STATIC_LIBRARY (" + linkerNode.Name +
-                 ")");
+      LogMessage(cmStrCat("Skipping linking to STATIC_LIBRARY (",
+                          linkerNode.Name, ')'));
       continue;
     }
     // We're linked to exact target.
@@ -2120,8 +2198,8 @@ void cmFastbuildNormalTargetGenerator::AddLipoCommand(FastbuildTarget& target)
   for (auto const& ArchSpecificTarget : target.LinkerNode) {
     exec.ExecInput.emplace_back(ArchSpecificTarget.LinkerOutput);
   }
-  exec.ExecArguments +=
-    "-create -output " + target.RealOutput + " " + cmJoin(exec.ExecInput, " ");
+  exec.ExecArguments += cmStrCat("-create -output ", target.RealOutput, " ",
+                                 cmJoin(exec.ExecInput, " "));
   target.PostBuildExecNodes.Alias.PreBuildDependencies.emplace(
     exec.ExecOutput);
   target.PostBuildExecNodes.Nodes.emplace_back(std::move(exec));
@@ -2211,9 +2289,7 @@ void cmFastbuildNormalTargetGenerator::GenerateLink(
       std::string outpath = GeneratorTarget->GetDirectory(Config);
       this->OSXBundleGenerator->CreateAppBundle(targetNames.Output, outpath,
                                                 Config);
-      targetOutputReal = outpath;
-      targetOutputReal += "/";
-      targetOutputReal += outputReal;
+      targetOutputReal = cmStrCat(outpath, '/', outputReal);
       targetOutputReal = this->ConvertToFastbuildPath(targetOutputReal);
     } else if (GeneratorTarget->IsFrameworkOnApple()) {
       // Create the library framework.
@@ -2305,17 +2381,17 @@ cmFastbuildNormalTargetGenerator::GetSymlinkExecs() const
       if (from.empty() || to.empty() || from == to) {
         return;
       }
-      LogMessage("Symlinking " + from + " -> " + to);
+      LogMessage(cmStrCat("Symlinking ", from, " -> ", to));
       FastbuildExecNode postBuildExecNode;
       postBuildExecNode.Name = "cmake_symlink_" + to;
       postBuildExecNode.ExecOutput =
         cmJoin({ GeneratorTarget->GetDirectory(Config), to }, "/");
       postBuildExecNode.ExecExecutable = cmSystemTools::GetCMakeCommand();
-      postBuildExecNode.ExecArguments =
-        "-E cmake_symlink_executable " +
-        cmGlobalFastbuildGenerator::QuoteIfHasSpaces(from) + " " +
+      postBuildExecNode.ExecArguments = cmStrCat(
+        "-E cmake_symlink_executable ",
+        cmGlobalFastbuildGenerator::QuoteIfHasSpaces(from), ' ',
         cmGlobalFastbuildGenerator::QuoteIfHasSpaces(
-          this->ConvertToFastbuildPath(postBuildExecNode.ExecOutput));
+          this->ConvertToFastbuildPath(postBuildExecNode.ExecOutput)));
       res.emplace_back(std::move(postBuildExecNode));
     };
     generateSymlinkCommand(targetNames.Real, targetNames.Output);

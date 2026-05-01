@@ -61,6 +61,11 @@ are accessible under the ``cm/`` directory.  The headers under ``cm/`` can
 be used in place of the standard ones when extended features are needed.
 For example ``<cm/memory>`` can be used in place of ``<memory>``.
 
+The class ``cm::filesystem::path``, from the ``<cm/filesystem>`` header, is
+fully compatible with the class ``std::filesystem::path`` regarding the API but
+is a specific implementation (derived from the ``std::filesystem::path`` class)
+to ensure a behavior independent of the current locale.
+
 Available features are:
 
 * From ``C++14``:
@@ -204,6 +209,9 @@ Available features are:
   * ``<cm/map>`` :
     ``cm::erase_if``, ``cm::ssize``
 
+  * ``<cm/ranges>``:
+    ``cm::ranges::views::keys``, ``cm::ranges::views::values``
+
   * ``<cm/set>`` :
     ``cm::erase_if``, ``cm::ssize``
 
@@ -239,6 +247,14 @@ These are:
   * ``cm::contains``:
     Checks if element or key is contained in container.
 
+  * ``cm::keys``
+    Extract keys from associative container or sequence container with tuple as
+    element
+
+  * ``cm::values``
+    Extract values from associative container or sequence container with tuple as
+    element
+
 * ``<cmext/enum_set>``
 
   * ``cm::enum_set``:
@@ -269,6 +285,12 @@ These are:
     Apply a ``dynamic_cast`` to a smart pointer.
 
 * ``<cmext/type_traits>``:
+
+  * ``cm::is_pair``:
+   Checks if a type is a std::pair<> type.
+
+  * ``cm::is_tuple``:
+   Checks if a type is a std::tuple<> type.
 
   * ``cm::is_container``:
     Checks if a type is a container type.

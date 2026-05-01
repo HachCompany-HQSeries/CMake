@@ -4,7 +4,6 @@
 
 #include <array>
 #include <cstdio>
-#include <cstring>
 #include <functional>
 #include <set>
 #include <sstream>
@@ -19,15 +18,16 @@
 
 #include "cmArgumentParser.h"
 #include "cmConfigureLog.h"
+#include "cmDiagnostics.h"
 #include "cmExperimental.h"
 #include "cmExportTryCompileFileGenerator.h"
 #include "cmGlobalGenerator.h"
 #include "cmList.h"
 #include "cmMakefile.h"
 #include "cmMessageType.h"
-#include "cmOutputConverter.h"
 #include "cmPolicies.h"
 #include "cmRange.h"
+#include "cmScriptGenerator.h"
 #include "cmState.h"
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
@@ -85,7 +85,6 @@ std::string const kCMAKE_TRY_COMPILE_OSX_ARCHITECTURES =
   "CMAKE_TRY_COMPILE_OSX_ARCHITECTURES";
 std::string const kCMAKE_TRY_COMPILE_PLATFORM_VARIABLES =
   "CMAKE_TRY_COMPILE_PLATFORM_VARIABLES";
-std::string const kCMAKE_WARN_DEPRECATED = "CMAKE_WARN_DEPRECATED";
 std::string const kCMAKE_WATCOM_RUNTIME_LIBRARY_DEFAULT =
   "CMAKE_WATCOM_RUNTIME_LIBRARY_DEFAULT";
 std::string const kCMAKE_MSVC_DEBUG_INFORMATION_FORMAT_DEFAULT =
@@ -249,7 +248,7 @@ Arguments cmCoreTryCompile::ParseArgs(
     for (auto const& i : unparsedArguments) {
       m = cmStrCat(m, "\n  \"", i, '"');
     }
-    this->Makefile->IssueMessage(MessageType::AUTHOR_WARNING, m);
+    this->Makefile->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, m);
   }
   return arguments;
 }
@@ -575,9 +574,9 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
     for (auto const& source : sources) {
       auto const& si = source.first;
       std::string ext = cmSystemTools::GetFilenameLastExtension(si);
-      std::string lang = gg->GetLanguageFromExtension(ext.c_str());
+      cm::string_view lang = gg->GetLanguageFromExtension(ext);
       if (!lang.empty()) {
-        testLangs.insert(lang);
+        testLangs.insert(std::string(lang));
       } else {
         std::ostringstream err;
         err << "Unknown extension \"" << ext
@@ -738,7 +737,7 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
       std::string langFlags = cmStrCat("CMAKE_", li, "_FLAGS");
       cmValue flags = this->Makefile->GetDefinition(langFlags);
       fprintf(fout, "set(CMAKE_%s_FLAGS %s)\n", li.c_str(),
-              cmOutputConverter::EscapeForCMake(*flags).c_str());
+              cmScriptGenerator::Quote(*flags).str().c_str());
       fprintf(fout,
               "set(CMAKE_%s_FLAGS \"${CMAKE_%s_FLAGS}"
               " ${COMPILE_DEFINITIONS}\")\n",
@@ -759,7 +758,7 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
             "(e.g. CMAKE_C_FLAGS_DEBUG) in the test project."
             ;
           /* clang-format on */
-          this->Makefile->IssueMessage(MessageType::AUTHOR_WARNING, w.str());
+          this->Makefile->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, w.str());
         }
         CM_FALLTHROUGH;
       case cmPolicies::OLD:
@@ -775,7 +774,7 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
             cmStrCat("CMAKE_", li, "_FLAGS_", cfg);
           cmValue flagsCfg = this->Makefile->GetDefinition(langFlagsCfg);
           fprintf(fout, "set(%s %s)\n", langFlagsCfg.c_str(),
-                  cmOutputConverter::EscapeForCMake(*flagsCfg).c_str());
+                  cmScriptGenerator::Quote(*flagsCfg).str().c_str());
           if (flagsCfg) {
             cmakeVariables.emplace(langFlagsCfg, *flagsCfg);
           }
@@ -786,7 +785,7 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
       cmValue exeLinkFlags =
         this->Makefile->GetDefinition("CMAKE_EXE_LINKER_FLAGS");
       fprintf(fout, "set(CMAKE_EXE_LINKER_FLAGS %s)\n",
-              cmOutputConverter::EscapeForCMake(*exeLinkFlags).c_str());
+              cmScriptGenerator::Quote(*exeLinkFlags).str().c_str());
       if (exeLinkFlags) {
         cmakeVariables.emplace("CMAKE_EXE_LINKER_FLAGS", *exeLinkFlags);
       }
@@ -794,6 +793,43 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
     fprintf(fout,
             "set(CMAKE_EXE_LINKER_FLAGS \"${CMAKE_EXE_LINKER_FLAGS}"
             " ${EXE_LINKER_FLAGS}\")\n");
+
+    switch (this->Makefile->GetPolicyStatus(cmPolicies::CMP0210)) {
+      case cmPolicies::WARN:
+        // This policy does WARN, but not during try_compile.
+        CM_FALLTHROUGH;
+      case cmPolicies::OLD:
+        // OLD behavior is to do nothing here. CMAKE_<LANG>_LINK_FLAGS was
+        // previously used internally by executables only, and not during
+        // try_compile.
+        break;
+      case cmPolicies::NEW:
+        // NEW behavior is to propagate language-specific link flags (stored
+        // in both the default and per-configuration variables, similar to the
+        // NEW behavior of CMP0066) to the test project.
+        for (std::string const& li : testLangs) {
+          std::string langLinkFlags = cmStrCat("CMAKE_", li, "_LINK_FLAGS");
+          cmValue flags = this->Makefile->GetDefinition(langLinkFlags);
+          fprintf(fout, "set(CMAKE_%s_LINK_FLAGS %s)\n", li.c_str(),
+                  cmScriptGenerator::Quote(*flags).str().c_str());
+          std::string langLinkFlagsConfig =
+            cmStrCat("CMAKE_", li, "_LINK_FLAGS_", tcConfig);
+          cmValue flagsConfig =
+            this->Makefile->GetDefinition(langLinkFlagsConfig);
+          fprintf(fout, "set(CMAKE_%s_LINK_FLAGS_%s %s)\n", li.c_str(),
+                  tcConfig.c_str(),
+                  cmScriptGenerator::Quote(*flagsConfig).str().c_str());
+
+          if (flags) {
+            cmakeVariables.emplace(langLinkFlags, *flags);
+          }
+          if (flagsConfig) {
+            cmakeVariables.emplace(langLinkFlagsConfig, *flagsConfig);
+          }
+        }
+        break;
+    }
+
     fprintf(fout, "include_directories(${INCLUDE_DIRECTORIES})\n");
     fprintf(fout, "set(CMAKE_SUPPRESS_REGENERATION 1)\n");
     fprintf(fout, "link_directories(${LINK_DIRECTORIES})\n");
@@ -832,8 +868,9 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
               fprintf(fout, "add_executable(\"%s\" ALIAS \"%s\")\n", i.c_str(),
                       alias->second.c_str());
             } else {
-              // Other cases like UTILITY and GLOBAL_TARGET are excluded when
-              // arguments.LinkLibraries is initially parsed in this function.
+              // Other cases like UTILITY and GLOBAL_TARGET are excluded
+              // when arguments.LinkLibraries is initially parsed in this
+              // function.
               fprintf(fout, "add_library(\"%s\" ALIAS \"%s\")\n", i.c_str(),
                       alias->second.c_str());
             }
@@ -865,7 +902,8 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
         ? "OLD"
         : "NEW");
 
-    /* Set the appropriate policy information for the LINKER: prefix expansion
+    /* Set the appropriate policy information for the LINKER: prefix
+     * expansion
      */
     fprintf(fout, "cmake_policy(SET CMP0181 %s)\n",
             this->Makefile->GetPolicyStatus(cmPolicies::CMP0181) ==
@@ -873,8 +911,17 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
               ? "NEW"
               : "OLD");
 
-    // Workaround for -Wl,-headerpad_max_install_names issue until we can avoid
-    // adding that flag in the platform and compiler language files
+    /* Set the appropriate policy information for passing
+     * CMAKE_<LANG>_LINK_FLAGS
+     */
+    fprintf(fout, "cmake_policy(SET CMP0210 %s)\n",
+            this->Makefile->GetPolicyStatus(cmPolicies::CMP0210) ==
+                cmPolicies::NEW
+              ? "NEW"
+              : "OLD");
+
+    // Workaround for -Wl,-headerpad_max_install_names issue until we can
+    // avoid adding that flag in the platform and compiler language files
     fprintf(fout,
             "include(\"${CMAKE_ROOT}/Modules/Internal/"
             "HeaderpadWorkaround.cmake\")\n");
@@ -1001,7 +1048,7 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
       for (std::string const& vi : warnCMP0067Variables) {
         w << "  " << vi << "\n";
       }
-      this->Makefile->IssueMessage(MessageType::AUTHOR_WARNING, w.str());
+      this->Makefile->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, w.str());
     }
 
     for (auto const& p : arguments.LangProps) {
@@ -1010,15 +1057,15 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
       }
       fprintf(fout, "set_property(TARGET %s PROPERTY %s %s)\n",
               targetName.c_str(),
-              cmOutputConverter::EscapeForCMake(p.first).c_str(),
-              cmOutputConverter::EscapeForCMake(p.second).c_str());
+              cmScriptGenerator::Quote(p.first).str().c_str(),
+              cmScriptGenerator::Quote(p.second).str().c_str());
     }
 
     if (!arguments.LinkOptions.empty()) {
       std::vector<std::string> options;
       options.reserve(arguments.LinkOptions.size());
       for (auto const& option : arguments.LinkOptions) {
-        options.emplace_back(cmOutputConverter::EscapeForCMake(option));
+        options.emplace_back(cmScriptGenerator::Quote(option));
       }
 
       if (targetType == cmStateEnums::STATIC_LIBRARY) {
@@ -1089,7 +1136,6 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
     vars.insert(kCMAKE_SYSROOT);
     vars.insert(kCMAKE_SYSROOT_COMPILE);
     vars.insert(kCMAKE_SYSROOT_LINK);
-    vars.insert(kCMAKE_WARN_DEPRECATED);
     vars.emplace("CMAKE_MSVC_RUNTIME_LIBRARY"_s);
     vars.emplace("CMAKE_WATCOM_RUNTIME_LIBRARY"_s);
     vars.emplace("CMAKE_MSVC_DEBUG_INFORMATION_FORMAT"_s);
@@ -1232,8 +1278,20 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
 
     if ((res == 0) && arguments.CopyFileTo) {
       std::string const& copyFile = *arguments.CopyFileTo;
+      std::string outputFile = this->OutputFile;
+
+      // Emscripten `.js` executables have an adjacent `.wasm` file with the
+      // actual compiled binary.  Our COPY_FILE clients need the latter.
+      if (cmHasLiteralSuffix(outputFile, ".js")) {
+        std::string wasmOutput =
+          cmStrCat(outputFile.substr(0, outputFile.length() - 3), ".wasm");
+        if (cmSystemTools::FileExists(wasmOutput)) {
+          outputFile = std::move(wasmOutput);
+        }
+      }
+
       cmsys::SystemTools::CopyStatus status =
-        cmSystemTools::CopyFileAlways(this->OutputFile, copyFile);
+        cmSystemTools::CopyFileAlways(outputFile, copyFile);
       if (!status) {
         std::string err = status.GetString();
         switch (status.Path) {
@@ -1249,7 +1307,7 @@ cm::optional<cmTryCompileResult> cmCoreTryCompile::TryCompileCode(
         /* clang-format off */
         err = cmStrCat(
           "Cannot copy output executable\n"
-          "  '", this->OutputFile, "'\n"
+          "  '", outputFile, "'\n"
           "to destination specified by COPY_FILE:\n"
           "  '", copyFile, "'\n"
           "because:\n"
@@ -1308,8 +1366,8 @@ void cmCoreTryCompile::CleanupFiles(std::string const& binDir)
   dir.Load(binDir);
   std::set<std::string> deletedFiles;
   for (unsigned long i = 0; i < dir.GetNumberOfFiles(); ++i) {
-    char const* fileName = dir.GetFile(i);
-    if (strcmp(fileName, ".") != 0 && strcmp(fileName, "..") != 0 &&
+    std::string const& fileName = dir.GetFileName(i);
+    if (fileName != "." && fileName != ".." &&
         // Do not delete NFS temporary files.
         !cmHasPrefix(fileName, ".nfs")) {
       if (deletedFiles.insert(fileName).second) {
@@ -1386,14 +1444,6 @@ void cmCoreTryCompile::FindOutputFile(std::string const& targetName)
     emsg << cmStrCat("  ", outputFileLocation, '\n');
     this->FindErrorMessage = emsg.str();
     return;
-  }
-
-  if (cmHasLiteralSuffix(outputFileLocation, ".js")) {
-    std::string wasmOutputLocation = cmStrCat(
-      outputFileLocation.substr(0, outputFileLocation.length() - 3), ".wasm");
-    if (cmSystemTools::FileExists(wasmOutputLocation)) {
-      outputFileLocation = wasmOutputLocation;
-    }
   }
 
   this->OutputFile = cmSystemTools::CollapseFullPath(outputFileLocation);

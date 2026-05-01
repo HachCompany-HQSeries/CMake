@@ -72,7 +72,8 @@ void cmFileAPI::ReadQueries()
 {
   std::string const query_dir = cmStrCat(this->APIv1, "/query");
   std::string const user_query_dir = cmStrCat(this->UserAPIv1, "/query");
-  this->QueryExists = cmSystemTools::FileIsDirectory(query_dir);
+  this->QueryExists =
+    this->QueryExists || cmSystemTools::FileIsDirectory(query_dir);
   if (!this->UserAPIv1.empty()) {
     this->QueryExists =
       this->QueryExists || cmSystemTools::FileIsDirectory(user_query_dir);
@@ -147,10 +148,11 @@ std::vector<std::string> cmFileAPI::LoadDir(std::string const& dir)
   std::vector<std::string> files;
   cmsys::Directory d;
   d.Load(dir);
+  files.reserve(d.GetNumberOfFiles());
   for (unsigned int i = 0; i < d.GetNumberOfFiles(); ++i) {
-    std::string f = d.GetFile(i);
+    std::string const& f = d.GetFileName(i);
     if (f != "." && f != "..") {
-      files.push_back(std::move(f));
+      files.push_back(f);
     }
   }
   std::sort(files.begin(), files.end());
@@ -391,7 +393,7 @@ bool cmFileAPI::ReadQuery(std::string const& query,
 void cmFileAPI::ReadClient(std::string const& client)
 {
   // Load queries for the client.
-  std::string clientDir = this->APIv1 + "/query/" + client;
+  std::string clientDir = cmStrCat(this->APIv1, "/query/", client);
   std::vector<std::string> queries = this->LoadDir(clientDir);
 
   // Read the queries and save for later.
@@ -409,7 +411,8 @@ void cmFileAPI::ReadClient(std::string const& client)
 void cmFileAPI::ReadClientQuery(std::string const& client, ClientQueryJson& q)
 {
   // Read the query.json file.
-  std::string queryFile = this->APIv1 + "/query/" + client + "/query.json";
+  std::string queryFile =
+    cmStrCat(this->APIv1, "/query/", client, "/query.json");
   Json::Value query;
   if (!this->ReadJsonFile(queryFile, query, q.Error)) {
     return;
@@ -640,7 +643,7 @@ cmFileAPI::ClientRequest cmFileAPI::BuildClientRequest(
   } else if (kindName == this->ObjectKindName(ObjectKind::InternalTest)) {
     r.Kind = ObjectKind::InternalTest;
   } else {
-    r.Error = "unknown request kind '" + kindName + "'";
+    r.Error = cmStrCat("unknown request kind '", kindName, '\'');
     return r;
   }
 
@@ -820,7 +823,7 @@ std::string cmFileAPI::NoSupportedVersion(
 // Update the following files as well when updating this constant:
 //   Help/manual/cmake-file-api.7.rst
 //   Tests/RunCMake/FileAPI/codemodel-v2-check.py (check_objects())
-static unsigned int const CodeModelV2Minor = 9;
+static unsigned int const CodeModelV2Minor = 10;
 
 void cmFileAPI::BuildClientRequestCodeModel(
   ClientRequest& r, std::vector<RequestVersion> const& versions)
@@ -959,7 +962,7 @@ Json::Value cmFileAPI::BuildCMakeFiles(Object object)
 
 // The "toolchains" object kind.
 
-static unsigned int const ToolchainsV1Minor = 0;
+static unsigned int const ToolchainsV1Minor = 1;
 
 void cmFileAPI::BuildClientRequestToolchains(
   ClientRequest& r, std::vector<RequestVersion> const& versions)

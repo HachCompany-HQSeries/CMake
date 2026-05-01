@@ -115,6 +115,7 @@ add_library(
   cmBinUtilsWindowsPELinker.h
   cmBinUtilsWindowsPEObjdumpGetRuntimeDependenciesTool.cxx
   cmBinUtilsWindowsPEObjdumpGetRuntimeDependenciesTool.h
+  cmBuildArgs.h
   cmBuildDatabase.cxx
   cmBuildDatabase.h
   cmBuildOptions.h
@@ -124,6 +125,7 @@ add_library(
   cmCLocaleEnvironmentScope.cxx
   cmCMakePath.h
   cmCMakePath.cxx
+  cmCMakePresetsArgs.h
   cmCMakePresetsErrors.cxx
   cmCMakePresetsErrors.h
   cmCMakePresetsGraph.cxx
@@ -135,6 +137,7 @@ add_library(
   cmCMakePresetsGraphReadJSONPackagePresets.cxx
   cmCMakePresetsGraphReadJSONTestPresets.cxx
   cmCMakePresetsGraphReadJSONWorkflowPresets.cxx
+  cmCMakePresetsGraphResolve.cxx
   cmCMakeString.hxx
   cmCMakeString.cxx
   cmCommandLineArgument.h
@@ -150,6 +153,8 @@ add_library(
   cmComputeTargetDepends.cxx
   cmConfigureLog.h
   cmConfigureLog.cxx
+  cmConstStack.h
+  cmConstStack.tcc
   cmCPackPropertiesGenerator.h
   cmCPackPropertiesGenerator.cxx
   cmCryptoHash.cxx
@@ -184,12 +189,16 @@ add_library(
   cmDependsJavaParserHelper.h
   cmDependsCompiler.cxx
   cmDependsCompiler.h
+  cmDiagnostics.h
+  cmDiagnostics.cxx
   cmDocumentation.cxx
   cmDocumentationFormatter.cxx
   cmDyndepCollation.cxx
   cmDyndepCollation.h
   cmELF.h
   cmELF.cxx
+  cmEnvironment.cxx
+  cmEnvironment.h
   cmEvaluatedTargetProperty.cxx
   cmEvaluatedTargetProperty.h
   cmExprParserHelper.cxx
@@ -203,6 +212,8 @@ add_library(
   cmExportBuildFileGenerator.cxx
   cmExportBuildPackageInfoGenerator.h
   cmExportBuildPackageInfoGenerator.cxx
+  cmExportBuildSbomGenerator.h
+  cmExportBuildSbomGenerator.cxx
   cmExportCMakeConfigGenerator.h
   cmExportCMakeConfigGenerator.cxx
   cmExportFileGenerator.h
@@ -215,10 +226,14 @@ add_library(
   cmExportInstallFileGenerator.cxx
   cmExportInstallPackageInfoGenerator.h
   cmExportInstallPackageInfoGenerator.cxx
+  cmExportInstallSbomGenerator.h
+  cmExportInstallSbomGenerator.cxx
   cmExportPackageInfoGenerator.h
   cmExportPackageInfoGenerator.cxx
   cmExportTryCompileFileGenerator.h
   cmExportTryCompileFileGenerator.cxx
+  cmExportSbomGenerator.h
+  cmExportSbomGenerator.cxx
   cmExportSet.h
   cmExportSet.cxx
   cmExternalMakefileProjectGenerator.cxx
@@ -261,6 +276,8 @@ add_library(
   cmFilePathChecksum.h
   cmFileSet.cxx
   cmFileSet.h
+  cmFileSetMetadata.cxx
+  cmFileSetMetadata.h
   cmFileTime.cxx
   cmFileTime.h
   cmFileTimeCache.cxx
@@ -293,15 +310,19 @@ add_library(
   cmGeneratorExpressionParser.h
   cmGeneratorExpression.cxx
   cmGeneratorExpression.h
+  cmGeneratorFileSet.cxx
+  cmGeneratorFileSet.h
+  cmGeneratorFileSets.cxx
+  cmGeneratorFileSets.h
   cmGeneratorTarget.cxx
   cmGeneratorTarget.h
   cmGeneratorTarget_CompatibleInterface.cxx
+  cmGeneratorTarget_HeaderSetVerification.cxx
   cmGeneratorTarget_IncludeDirectories.cxx
   cmGeneratorTarget_Link.cxx
   cmGeneratorTarget_LinkDirectories.cxx
   cmGeneratorTarget_Options.cxx
   cmGeneratorTarget_Sources.cxx
-  cmGeneratorTarget_TargetPropertyEntry.cxx
   cmGeneratorTarget_TransitiveProperty.cxx
   cmLinkItemGraphVisitor.cxx
   cmLinkItemGraphVisitor.h
@@ -325,6 +346,8 @@ add_library(
   cmInstallAndroidMKExportGenerator.h
   cmInstallCMakeConfigExportGenerator.cxx
   cmInstallCMakeConfigExportGenerator.h
+  cmInstallDirs.cxx
+  cmInstallDirs.h
   cmInstallGenerator.h
   cmInstallGenerator.cxx
   cmInstallGetRuntimeDependenciesGenerator.h
@@ -344,6 +367,8 @@ add_library(
   cmInstallRuntimeDependencySet.cxx
   cmInstallRuntimeDependencySetGenerator.h
   cmInstallRuntimeDependencySetGenerator.cxx
+  cmInstallSbomExportGenerator.h
+  cmInstallSbomExportGenerator.cxx
   cmInstallScriptGenerator.h
   cmInstallScriptGenerator.cxx
   cmInstallSubdirectoryGenerator.h
@@ -392,7 +417,6 @@ add_library(
   cmRulePlaceholderExpander.cxx
   cmRulePlaceholderExpander.h
   cmLocalUnixMakefileGenerator3.cxx
-  cmLocale.h
   cmMakefile.cxx
   cmMakefile.h
   cmMakefileTargetGenerator.cxx
@@ -430,6 +454,8 @@ add_library(
   cmProcessOutput.h
   cmProcessTools.cxx
   cmProcessTools.h
+  cmProjectInfoArguments.cxx
+  cmProjectInfoArguments.h
   cmValue.cxx
   cmValue.h
   cmProperty.h
@@ -464,8 +490,6 @@ add_library(
   cmSourceFileLocationKind.h
   cmSourceGroup.cxx
   cmSourceGroup.h
-  cmStack.h
-  cmStack.tcc
   cmStandardLevel.h
   cmStandardLevelResolver.cxx
   cmStandardLevelResolver.h
@@ -493,6 +517,8 @@ add_library(
   cmTarget.h
   cmTargetPropertyComputer.cxx
   cmTargetPropertyComputer.h
+  cmTargetPropertyEntry.cxx
+  cmTargetPropertyEntry.h
   cmTargetExport.h
   cmTargetTraceDependencies.cxx
   cmTargetTraceDependencies.h
@@ -511,6 +537,7 @@ add_library(
   cmUVStreambuf.h
   cmVariableWatch.cxx
   cmVariableWatch.h
+  cmVersion_Dependencies.cxx
   cmVersion.cxx
   cmVersion.h
   cmWindowsRegistry.cxx
@@ -560,6 +587,8 @@ add_library(
   cmBreakCommand.h
   cmBuildCommand.cxx
   cmBuildCommand.h
+  cmCMakeDiagnosticCommand.cxx
+  cmCMakeDiagnosticCommand.h
   cmCMakeHostSystemInformationCommand.cxx
   cmCMakeHostSystemInformationCommand.h
   cmCMakeLanguageCommand.cxx
@@ -584,6 +613,8 @@ add_library(
   cmCreateTestSourceList.h
   cmDefinePropertyCommand.cxx
   cmDefinePropertyCommand.h
+  cmDiscoverTestsCommand.cxx
+  cmDiscoverTestsCommand.h
   cmEnableLanguageCommand.cxx
   cmEnableLanguageCommand.h
   cmEnableTestingCommand.cxx
@@ -705,6 +736,8 @@ add_library(
   cmRemoveDefinitionsCommand.h
   cmReturnCommand.cxx
   cmReturnCommand.h
+  cmSbomArguments.h
+  cmSbomArguments.cxx
   cmSbomObject.h
   cmSbomSerializer.h
   cmSearchPath.cxx
@@ -1114,6 +1147,7 @@ add_library(
   CTest/cmCTestCoverageCommand.cxx
   CTest/cmCTestCoverageHandler.cxx
   CTest/cmCTestCurl.cxx
+  CTest/cmCTestDiscoverTests.cxx
   CTest/cmParseMumpsCoverage.cxx
   CTest/cmParseCacheCoverage.cxx
   CTest/cmParseGTMCoverage.cxx

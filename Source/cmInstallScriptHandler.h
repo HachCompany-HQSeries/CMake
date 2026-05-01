@@ -8,9 +8,12 @@
 #include <string>
 #include <vector>
 
-#include "cmUVHandlePtr.h"
 #include "cmUVProcessChain.h"
 #include "cmUVStream.h"
+
+namespace cm {
+class uv_loop_ptr;
+}
 
 class cmInstrumentation;
 
@@ -18,7 +21,7 @@ class cmInstallScriptHandler
 {
 public:
   cmInstallScriptHandler() = default;
-  cmInstallScriptHandler(std::string, std::string, std::string,
+  cmInstallScriptHandler(std::string, std::vector<std::string>, std::string,
                          std::vector<std::string>&);
   bool IsParallel();
   int Install(unsigned int j, cmInstrumentation& instrumentation);
@@ -42,14 +45,13 @@ public:
     std::string name;
     std::unique_ptr<cmUVProcessChain> chain;
     std::unique_ptr<cmUVStreamReadHandle> streamHandler;
-    cm::uv_pipe_ptr pipe;
   };
 
 private:
   std::vector<InstallScript> scripts;
   std::vector<std::string> configs;
   std::vector<std::string> directories;
+  std::vector<std::string> components;
   std::string binaryDir;
-  std::string component;
   bool parallel;
 };

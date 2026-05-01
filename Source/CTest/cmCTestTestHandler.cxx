@@ -15,6 +15,7 @@
 #include <ratio>
 #include <set>
 #include <sstream>
+#include <string>
 #include <utility>
 
 #ifndef _WIN32
@@ -33,7 +34,9 @@
 
 #include "cm_utf8.h"
 
+#include "cmArgumentParser.h"
 #include "cmCTest.h"
+#include "cmCTestDiscoverTests.h"
 #include "cmCTestMultiProcessHandler.h"
 #include "cmCTestResourceGroupsLexerHelper.h"
 #include "cmCTestTestMeasurementXMLParser.h"
@@ -49,6 +52,7 @@
 #include "cmStateSnapshot.h"
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
+#include "cmTestDiscovery.h"
 #include "cmTimestamp.h"
 #include "cmValue.h"
 #include "cmWorkingDirectory.h"
@@ -182,6 +186,34 @@ bool cmCTestAddTestCommand::InitialPass(std::vector<std::string> const& args,
     return false;
   }
   return this->TestHandler->AddTest(args);
+}
+
+class cmCTestDiscoverTestsCommand : public cmCTestCommand
+{
+public:
+  using cmCTestCommand::cmCTestCommand;
+  bool InitialPass(std::vector<std::string> const& args,
+                   cmExecutionStatus& status) override;
+};
+
+bool cmCTestDiscoverTestsCommand::InitialPass(
+  std::vector<std::string> const& args, cmExecutionStatus& status)
+{
+  using Arguments = cmTestDiscoveryArgs;
+  static auto const parser = cmTestDiscoveryParser<Arguments>();
+
+  auto unparsed = std::vector<std::string>{};
+  Arguments const arguments = parser.Parse(args, &unparsed);
+  if (arguments.MaybeReportError(status.GetMakefile())) {
+    return true;
+  }
+
+  if (!unparsed.empty()) {
+    status.SetError(" given unknown argument \"" + unparsed.front() + "\".");
+    return false;
+  }
+
+  return cmCTestDiscoverTests(arguments, this->TestHandler, status);
 }
 
 class cmCTestSetTestsPropertiesCommand : public cmCTestCommand
@@ -359,7 +391,7 @@ int cmCTestTestHandler::ProcessHandler()
                        << cmSystemTools::GetLogicalWorkingDirectory()
                        << std::endl,
                      this->Quiet);
-  if (!this->PreProcessHandler()) {
+  if (!this->CTest->GetShowOnly() && !this->PreProcessHandler()) {
     return -1;
   }
 
@@ -428,7 +460,7 @@ int cmCTestTestHandler::ProcessHandler()
     return 1;
   }
 
-  if (!this->PostProcessHandler()) {
+  if (!this->CTest->GetShowOnly() && !this->PostProcessHandler()) {
     this->LogFile = nullptr;
     return -1;
   }
@@ -547,13 +579,21 @@ void cmCTestTestHandler::LogTestSummary(std::vector<std::string> const& passed,
   } else {
     failedColorCode = this->CTest->GetColorCode(cmCTest::Color::RED);
   }
-  cmCTestLog(this->CTest, HANDLER_OUTPUT,
-             std::endl
-               << passColorCode << std::lround(percent) << "% tests passed"
-               << this->CTest->GetColorCode(cmCTest::Color::CLEAR_COLOR)
-               << ", " << failedColorCode << failed.size() << " tests failed"
-               << this->CTest->GetColorCode(cmCTest::Color::CLEAR_COLOR)
-               << " out of " << total << std::endl);
+  if (failed.empty()) {
+    cmCTestLog(this->CTest, HANDLER_OUTPUT,
+               std::endl
+                 << passColorCode << std::lround(percent) << "% tests passed"
+                 << this->CTest->GetColorCode(cmCTest::Color::CLEAR_COLOR)
+                 << " out of " << total << std::endl);
+  } else {
+    cmCTestLog(this->CTest, HANDLER_OUTPUT,
+               std::endl
+                 << passColorCode << std::lround(percent) << "% tests passed"
+                 << this->CTest->GetColorCode(cmCTest::Color::CLEAR_COLOR)
+                 << ", " << failedColorCode << failed.size() << " tests failed"
+                 << this->CTest->GetColorCode(cmCTest::Color::CLEAR_COLOR)
+                 << " out of " << total << std::endl);
+  }
   if ((!this->CTest->GetLabelsForSubprojects().empty() &&
        this->CTest->GetSubprojectSummary())) {
     this->PrintLabelOrSubprojectSummary(true);
@@ -652,6 +692,12 @@ bool cmCTestTestHandler::GenerateXML()
       this->LogFile = nullptr;
       return false;
     }
+
+    // We represent some times as a double-precision floating-point number
+    // of seconds since the epoch.  Print them with microsecond precision.
+    // Representable values differ by hundreds of nanoseconds anyway.
+    xmlfile << std::fixed << std::setprecision(6);
+
     cmXMLWriter xml(xmlfile);
     this->GenerateCTestXML(xml);
   }
@@ -1525,6 +1571,9 @@ void cmCTestTestHandler::WriteTestResultHeader(cmXMLWriter& xml,
   xml.Element("Path", this->CTest->GetShortPathToFile(result.Path));
   xml.Element("FullName", this->CTest->GetShortPathToFile(testPath));
   xml.Element("FullCommandLine", result.FullCommandLine);
+  if (result.StartTestTime) {
+    xml.Element("StartTestTime", *result.StartTestTime);
+  }
 }
 
 void cmCTestTestHandler::WriteTestResultFooter(cmXMLWriter& xml,
@@ -1763,6 +1812,10 @@ bool cmCTestTestHandler::GetListOfTests()
   // Add handler for ADD_TEST
   cm.GetState()->AddBuiltinCommand("add_test", cmCTestAddTestCommand(this));
 
+  // Add handler for DISCOVER_TESTS
+  cm.GetState()->AddBuiltinCommand("discover_tests",
+                                   cmCTestDiscoverTestsCommand(this));
+
   // Add handler for SUBDIRS
   cm.GetState()->AddBuiltinCommand("subdirs", cmCTestSubdirCommand);
 
@@ -1924,15 +1977,11 @@ void cmCTestTestHandler::ExpandTestsToRunInformationForRerunFailed()
 
   int numFiles =
     static_cast<int>(cmsys::Directory::GetNumberOfFilesInDirectory(dirName));
-  std::string pattern = "LastTestsFailed";
   std::string logName;
 
   for (int i = 0; i < numFiles; ++i) {
-    std::string fileName = directory.GetFile(i);
-    // bcc crashes if we attempt a normal substring comparison,
-    // hence the following workaround
-    std::string fileNameSubstring = fileName.substr(0, pattern.length());
-    if (fileNameSubstring != pattern) {
+    std::string const& fileName = directory.GetFileName(i);
+    if (!cmHasLiteralPrefix(fileName, "LastTestsFailed")) {
       continue;
     }
     if (logName.empty()) {
@@ -2432,36 +2481,13 @@ bool cmCTestTestHandler::AddTest(std::vector<std::string> const& args)
       this->ExcludeTestsRegularExpression.find(testname)) {
     return true;
   }
-  if (this->MemCheck) {
-    std::vector<std::string>::iterator it;
-    bool found = false;
-    for (it = this->CustomTestsIgnore.begin();
-         it != this->CustomTestsIgnore.end(); ++it) {
-      if (*it == testname) {
-        found = true;
-        break;
-      }
-    }
-    if (found) {
-      cmCTestOptionalLog(this->CTest, HANDLER_VERBOSE_OUTPUT,
-                         "Ignore memcheck: " << *it << std::endl, this->Quiet);
-      return true;
-    }
-  } else {
-    std::vector<std::string>::iterator it;
-    bool found = false;
-    for (it = this->CustomTestsIgnore.begin();
-         it != this->CustomTestsIgnore.end(); ++it) {
-      if (*it == testname) {
-        found = true;
-        break;
-      }
-    }
-    if (found) {
-      cmCTestOptionalLog(this->CTest, HANDLER_VERBOSE_OUTPUT,
-                         "Ignore test: " << *it << std::endl, this->Quiet);
-      return true;
-    }
+
+  if (cm::contains(this->CustomTestsIgnore, testname)) {
+    cmCTestOptionalLog(this->CTest, HANDLER_VERBOSE_OUTPUT,
+                       "Ignore " << (this->MemCheck ? "memcheck" : "test")
+                                 << ": " << testname << std::endl,
+                       this->Quiet);
+    return true;
   }
 
   cmCTestTestProperties test;
@@ -2478,7 +2504,7 @@ bool cmCTestTestHandler::AddTest(std::vector<std::string> const& args)
         this->ExcludeTestsRegularExpression.find(testname)))) {
     test.IsInBasedOnREOptions = false;
   }
-  this->TestList.push_back(test);
+  this->TestList.push_back(std::move(test));
   return true;
 }
 
@@ -2612,7 +2638,7 @@ bool cmCTestTestHandler::WriteJUnitXML()
       // be ok to put it here as a cmake-list.
       xml.Attribute("value", cmList::to_string(result.Properties->Labels));
       // if we export more properties, this should be done the same way,
-      // i.e. prefix the property name with "cmake_", and it it can be
+      // i.e. prefix the property name with "cmake_", and it can be
       // a list, write it cmake-formatted.
       xml.EndElement(); // </property>
     }

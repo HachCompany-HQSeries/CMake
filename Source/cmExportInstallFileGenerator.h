@@ -12,12 +12,14 @@
 
 #include <cm/string_view>
 
+#include "cmDiagnostics.h"
 #include "cmExportFileGenerator.h"
 #include "cmGeneratorExpression.h"
 #include "cmInstallExportGenerator.h"
 #include "cmStateTypes.h"
 
 class cmGeneratorTarget;
+class cmGeneratorFileSet;
 class cmInstallTargetGenerator;
 class cmTargetExport;
 
@@ -94,7 +96,10 @@ protected:
 
   ExportInfo FindExportInfo(cmGeneratorTarget const* target) const override;
 
-  void ReportError(std::string const& errorMessage) const override;
+  void IssueMessage(MessageType type,
+                    std::string const& message) const override;
+  void IssueDiagnostic(cmDiagnosticCategory category,
+                       std::string const& message) const override;
 
   /** Generate a per-configuration file for the targets.  */
   virtual bool GenerateImportFileConfig(std::string const& config);
@@ -134,6 +139,14 @@ protected:
                                 ImportPropertyMap& properties,
                                 std::set<std::string>& importedLocations);
 
+  using cmExportFileGenerator::PopulateFileSetInterfaceProperties;
+  bool PopulateFileSetInterfaceProperties(
+    cmTargetExport const* targetExport, ImportFileSetPropertyMap& properties);
+
+  virtual bool CheckInterfaceDirs(std::string const& prepro,
+                                  cmGeneratorTarget const* target,
+                                  std::string const& prop) const;
+
   cmInstallExportGenerator* IEGen;
 
   // The import file generated for each configuration.
@@ -144,9 +157,6 @@ protected:
   std::map<std::string, std::vector<std::string>> ConfigCxxModuleTargetFiles;
 
 private:
-  bool CheckInterfaceDirs(std::string const& prepro,
-                          cmGeneratorTarget const* target,
-                          std::string const& prop) const;
   void PopulateCompatibleInterfaceProperties(cmGeneratorTarget const* target,
                                              ImportPropertyMap& properties);
   void PopulateCustomTransitiveInterfaceProperties(
@@ -172,6 +182,11 @@ private:
     ImportPropertyMap& properties);
   void PopulateLinkDependsInterface(
     cmGeneratorTarget const* target,
+    cmGeneratorExpression::PreprocessContext preprocessRule,
+    ImportPropertyMap& properties);
+
+  void PopulateFileSetIncludeDirectoriesInterface(
+    cmGeneratorTarget const* target, cmGeneratorFileSet const* fileSet,
     cmGeneratorExpression::PreprocessContext preprocessRule,
     ImportPropertyMap& properties);
 };

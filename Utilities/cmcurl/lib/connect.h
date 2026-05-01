@@ -25,37 +25,37 @@
  ***************************************************************************/
 #include "curl_setup.h"
 
-#include "curlx/nonblock.h" /* for curlx_nonblock() */
-#include "sockaddr.h"
+#include "hostip.h"
 #include "curlx/timeval.h"
 
 struct Curl_dns_entry;
 struct ip_quadruple;
+struct Curl_str;
 
-enum alpnid Curl_alpn2alpnid(const char *name, size_t len);
+enum alpnid Curl_alpn2alpnid(const unsigned char *name, size_t len);
+enum alpnid Curl_str2alpnid(const struct Curl_str *cstr);
 
 /* generic function that returns how much time there is left to run, according
    to the timeouts set */
-timediff_t Curl_timeleft(struct Curl_easy *data,
-                         struct curltime *nowp,
-                         bool duringconnect);
+timediff_t Curl_timeleft_ms(struct Curl_easy *data);
 
 #define DEFAULT_CONNECT_TIMEOUT 300000 /* milliseconds == five minutes */
 
 #define DEFAULT_SHUTDOWN_TIMEOUT_MS   (2 * 1000)
 
 void Curl_shutdown_start(struct Curl_easy *data, int sockindex,
-                         int timeout_ms, struct curltime *nowp);
+                         int timeout_ms);
 
 /* return how much time there is left to shutdown the connection at
  * sockindex. Returns 0 if there is no limit or shutdown has not started. */
-timediff_t Curl_shutdown_timeleft(struct connectdata *conn, int sockindex,
-                                  struct curltime *nowp);
+timediff_t Curl_shutdown_timeleft(struct Curl_easy *data,
+                                  struct connectdata *conn,
+                                  int sockindex);
 
 /* return how much time there is left to shutdown the connection.
  * Returns 0 if there is no limit or shutdown has not started. */
-timediff_t Curl_conn_shutdown_timeleft(struct connectdata *conn,
-                                       struct curltime *nowp);
+timediff_t Curl_conn_shutdown_timeleft(struct Curl_easy *data,
+                                       struct connectdata *conn);
 
 void Curl_shutdown_clear(struct Curl_easy *data, int sockindex);
 
@@ -72,10 +72,10 @@ curl_socket_t Curl_getconnectinfo(struct Curl_easy *data,
                                   struct connectdata **connp);
 
 bool Curl_addr2string(struct sockaddr *sa, curl_socklen_t salen,
-                      char *addr, int *port);
+                      char *addr, uint16_t *port);
 
 /*
- * Curl_conncontrol() marks the end of a connection/stream. The 'closeit'
+ * Curl_conncontrol() marks the end of a connection/stream. The 'ctrl'
  * argument specifies if it is the end of a connection or a stream.
  *
  * For stream-based protocols (such as HTTP/2), a stream close will not cause
@@ -91,25 +91,25 @@ bool Curl_addr2string(struct sockaddr *sa, curl_socklen_t salen,
 #define CONNCTRL_STREAM 2
 
 void Curl_conncontrol(struct connectdata *conn,
-                      int closeit
-#if defined(DEBUGBUILD) && !defined(CURL_DISABLE_VERBOSE_STRINGS)
+                      int ctrl
+#if defined(DEBUGBUILD) && defined(CURLVERBOSE)
                       , const char *reason
 #endif
   );
 
-#if defined(DEBUGBUILD) && !defined(CURL_DISABLE_VERBOSE_STRINGS)
-#define streamclose(x,y) Curl_conncontrol(x, CONNCTRL_STREAM, y)
-#define connclose(x,y) Curl_conncontrol(x, CONNCTRL_CONNECTION, y)
-#define connkeep(x,y) Curl_conncontrol(x, CONNCTRL_KEEP, y)
-#else /* if !DEBUGBUILD || CURL_DISABLE_VERBOSE_STRINGS */
-#define streamclose(x,y) Curl_conncontrol(x, CONNCTRL_STREAM)
-#define connclose(x,y) Curl_conncontrol(x, CONNCTRL_CONNECTION)
-#define connkeep(x,y) Curl_conncontrol(x, CONNCTRL_KEEP)
+#if defined(DEBUGBUILD) && defined(CURLVERBOSE)
+#define streamclose(x, y) Curl_conncontrol(x, CONNCTRL_STREAM, y)
+#define connclose(x, y) Curl_conncontrol(x, CONNCTRL_CONNECTION, y)
+#define connkeep(x, y) Curl_conncontrol(x, CONNCTRL_KEEP, y)
+#else /* !DEBUGBUILD || !CURLVERBOSE */
+#define streamclose(x, y) Curl_conncontrol(x, CONNCTRL_STREAM)
+#define connclose(x, y) Curl_conncontrol(x, CONNCTRL_CONNECTION)
+#define connkeep(x, y) Curl_conncontrol(x, CONNCTRL_KEEP)
 #endif
 
 CURLcode Curl_cf_setup_insert_after(struct Curl_cfilter *cf_at,
                                     struct Curl_easy *data,
-                                    int transport,
+                                    uint8_t transport,
                                     int ssl_mode);
 
 /**
@@ -125,6 +125,15 @@ CURLcode Curl_conn_setup(struct Curl_easy *data,
 
 /* Set conn to allow multiplexing. */
 void Curl_conn_set_multiplex(struct connectdata *conn);
+
+#ifdef USE_UNIX_SOCKETS
+#ifndef CURL_DISABLE_PROXY
+#define UNIX_SOCKET_PREFIX "localhost"
+#endif
+const char *Curl_conn_get_unix_path(struct connectdata *conn);
+#else
+#define Curl_conn_get_unix_path(c)      NULL
+#endif
 
 extern struct Curl_cftype Curl_cft_setup;
 

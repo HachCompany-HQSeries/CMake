@@ -5,11 +5,11 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
-#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
 #include <iterator>
+#include <queue>
 #include <sstream>
 #include <unordered_set>
 #include <utility>
@@ -22,6 +22,7 @@
 #include <cmext/string_view>
 
 #include "cmsys/RegularExpression.hxx"
+#include "cmsys/String.h"
 
 #include "cmAlgorithms.h"
 #include "cmCMakePath.h"
@@ -47,9 +48,11 @@
 #include "cmObjectLocation.h"
 #include "cmRange.h"
 #include "cmRulePlaceholderExpander.h"
+#include "cmScriptGenerator.h"
 #include "cmSourceFile.h"
 #include "cmSourceFileLocation.h"
 #include "cmSourceFileLocationKind.h"
+#include "cmSourceGroup.h"
 #include "cmStandardLevelResolver.h"
 #include "cmState.h"
 #include "cmStateDirectory.h"
@@ -229,15 +232,25 @@ cmLocalGenerator::CreateRulePlaceholderExpander(cmBuildStep buildStep) const
 {
   return cm::make_unique<cmRulePlaceholderExpander>(
     buildStep, this->Compilers, this->VariableMappings, this->CompilerSysroot,
-    this->LinkerSysroot);
+    this->LinkerSysroot,
+    this->GetState()->UseWatcomWMake() || this->GetState()->UseBorlandMake()
+      ? cmRulePlaceholderExpander::UseShortPaths::Yes
+      : cmRulePlaceholderExpander::UseShortPaths::No);
 }
 
 cmLocalGenerator::~cmLocalGenerator() = default;
 
-void cmLocalGenerator::IssueMessage(MessageType t,
-                                    std::string const& text) const
+void cmLocalGenerator::IssueMessage(MessageType type, std::string const& text,
+                                    cmListFileBacktrace const& bt) const
 {
-  this->GetCMakeInstance()->IssueMessage(t, text, this->DirectoryBacktrace);
+  this->GetMakefile()->IssueMessage(type, text, bt);
+}
+
+void cmLocalGenerator::IssueDiagnostic(cmDiagnosticCategory category,
+                                       std::string const& text,
+                                       cmListFileBacktrace const& bt) const
+{
+  this->GetMakefile()->IssueDiagnostic(category, text, bt);
 }
 
 void cmLocalGenerator::ComputeObjectMaxPath()
@@ -259,14 +272,14 @@ void cmLocalGenerator::ComputeObjectMaxPath()
         w << "CMAKE_OBJECT_PATH_MAX is set to " << pmax
           << ", which is less than the minimum of 128.  "
              "The value will be ignored.";
-        this->IssueMessage(MessageType::AUTHOR_WARNING, w.str());
+        this->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, w.str());
       }
     } else {
       std::ostringstream w;
       w << "CMAKE_OBJECT_PATH_MAX is set to \"" << *plen
         << "\", which fails to parse as a positive integer.  "
            "The value will be ignored.";
-      this->IssueMessage(MessageType::AUTHOR_WARNING, w.str());
+      this->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, w.str());
     }
   }
   this->ObjectMaxPathViolations.clear();
@@ -318,6 +331,13 @@ void cmLocalGenerator::TraceDependencies() const
     target->TraceDependencies();
   }
 }
+
+#ifndef CMAKE_BOOTSTRAP
+void cmLocalGenerator::ResolveSourceGroupGenex()
+{
+  this->Makefile->ResolveSourceGroupGenex(this);
+}
+#endif
 
 void cmLocalGenerator::GenerateTestFiles()
 {
@@ -380,8 +400,7 @@ void cmLocalGenerator::GenerateTestFiles()
     // TODO: Use add_subdirectory instead?
     std::string outP = i.GetDirectory().GetCurrentBinary();
     outP = this->MaybeRelativeToCurBinDir(outP);
-    outP = cmOutputConverter::EscapeForCMake(outP);
-    fout << "subdirs(" << outP << ")\n";
+    fout << "subdirs(" << cmScriptGenerator::Quote(outP) << ")\n";
   }
 
   // Add directory labels property
@@ -392,13 +411,13 @@ void cmLocalGenerator::GenerateTestFiles()
   if (labels || directoryLabels) {
     fout << "set_directory_properties(PROPERTIES LABELS ";
     if (labels) {
-      fout << cmOutputConverter::EscapeForCMake(*labels);
+      fout << cmScriptGenerator::Quote(*labels);
     }
     if (labels && directoryLabels) {
       fout << ";";
     }
     if (directoryLabels) {
-      fout << cmOutputConverter::EscapeForCMake(*directoryLabels);
+      fout << cmScriptGenerator::Quote(*directoryLabels);
     }
     fout << ")\n";
   }
@@ -700,7 +719,7 @@ void cmLocalGenerator::GenerateInstallRules()
             "CMAKE_POLICY_WARNING_CMP0082")) {
         std::ostringstream e;
         e << cmPolicies::GetPolicyWarning(cmPolicies::CMP0082) << "\n";
-        this->IssueMessage(MessageType::AUTHOR_WARNING, e.str());
+        this->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, e.str());
       }
       CM_FALLTHROUGH;
     case cmPolicies::OLD: {
@@ -1396,24 +1415,18 @@ std::vector<BT<std::string>> cmLocalGenerator::GetStaticLibraryFlags(
   std::string const& config, std::string const& linkLanguage,
   cmGeneratorTarget* target)
 {
-  std::string const configUpper = cmSystemTools::UpperCase(config);
   std::vector<BT<std::string>> flags;
   if (linkLanguage != "Swift" && !this->IsSplitSwiftBuild()) {
     std::string staticLibFlags;
-    this->AppendFlags(
-      staticLibFlags,
-      this->Makefile->GetSafeDefinition("CMAKE_STATIC_LINKER_FLAGS"));
-    if (!configUpper.empty()) {
-      std::string name = "CMAKE_STATIC_LINKER_FLAGS_" + configUpper;
-      this->AppendFlags(staticLibFlags,
-                        this->Makefile->GetSafeDefinition(name));
-    }
+    this->AddConfigVariableFlags(staticLibFlags, "CMAKE_STATIC_LINKER_FLAGS",
+                                 config);
     if (!staticLibFlags.empty()) {
       flags.emplace_back(std::move(staticLibFlags));
     }
   }
 
   std::string staticLibFlags;
+  std::string const configUpper = cmSystemTools::UpperCase(config);
   this->AppendFlags(staticLibFlags,
                     target->GetSafeProperty("STATIC_LIBRARY_FLAGS"));
   if (!configUpper.empty()) {
@@ -1495,8 +1508,6 @@ void cmLocalGenerator::GetTargetFlags(
 {
   std::string const configUpper = cmSystemTools::UpperCase(config);
   cmComputeLinkInformation* pcli = target->GetLinkInformation(config);
-  char const* libraryLinkVariable =
-    "CMAKE_SHARED_LINKER_FLAGS"; // default to shared library
 
   std::string const linkLanguage =
     linkLineComputer->GetLinkerLanguage(target, config);
@@ -1514,33 +1525,25 @@ void cmLocalGenerator::GetTargetFlags(
       linkFlags = this->GetStaticLibraryFlags(config, linkLanguage, target);
       break;
     case cmStateEnums::MODULE_LIBRARY:
-      libraryLinkVariable = "CMAKE_MODULE_LINKER_FLAGS";
       CM_FALLTHROUGH;
     case cmStateEnums::SHARED_LIBRARY: {
       if (this->IsSplitSwiftBuild() || linkLanguage != "Swift") {
         std::string libFlags;
-        this->AddConfigVariableFlags(libFlags, libraryLinkVariable, target,
-                                     cmBuildStep::Link, linkLanguage, config);
+        this->AddTargetTypeLinkerFlags(libFlags, target, linkLanguage, config);
         if (!libFlags.empty()) {
           linkFlags.emplace_back(std::move(libFlags));
         }
       }
 
-      std::string sharedLibFlags;
-      cmValue targetLinkFlags = target->GetProperty("LINK_FLAGS");
-      if (targetLinkFlags) {
-        sharedLibFlags += *targetLinkFlags;
-        sharedLibFlags += " ";
-      }
-      if (!configUpper.empty()) {
-        targetLinkFlags =
-          target->GetProperty(cmStrCat("LINK_FLAGS_", configUpper));
-        if (targetLinkFlags) {
-          sharedLibFlags += *targetLinkFlags;
-          sharedLibFlags += " ";
-        }
+      std::string langLinkFlags;
+      this->AddPerLanguageLinkFlags(langLinkFlags, target, linkLanguage,
+                                    config);
+      if (!langLinkFlags.empty()) {
+        linkFlags.emplace_back(std::move(langLinkFlags));
       }
 
+      std::string sharedLibFlags;
+      this->AddTargetPropertyLinkFlags(sharedLibFlags, target, config);
       if (!sharedLibFlags.empty()) {
         this->GetGlobalGenerator()->EncodeLiteral(sharedLibFlags);
         linkFlags.emplace_back(std::move(sharedLibFlags));
@@ -1559,21 +1562,21 @@ void cmLocalGenerator::GetTargetFlags(
       }
     } break;
     case cmStateEnums::EXECUTABLE: {
-      if (linkLanguage.empty()) {
-        cmSystemTools::Error(
-          "CMake can not determine linker language for target: " +
-          target->GetName());
-        return;
-      }
-
-      if (linkLanguage != "Swift") {
+      if (linkLanguage != "Swift" ||
+          (this->IsSplitSwiftBuild() &&
+           target->GetPolicyStatusCMP0214() == cmPolicies::NEW)) {
         std::string exeFlags;
-        this->AddConfigVariableFlags(exeFlags, "CMAKE_EXE_LINKER_FLAGS",
-                                     target, cmBuildStep::Link, linkLanguage,
-                                     config);
+        this->AddTargetTypeLinkerFlags(exeFlags, target, linkLanguage, config);
         if (!exeFlags.empty()) {
           linkFlags.emplace_back(std::move(exeFlags));
         }
+      }
+
+      std::string langLinkFlags;
+      this->AddPerLanguageLinkFlags(langLinkFlags, target, linkLanguage,
+                                    config);
+      if (!langLinkFlags.empty()) {
+        linkFlags.emplace_back(std::move(langLinkFlags));
       }
 
       {
@@ -1614,19 +1617,7 @@ void cmLocalGenerator::GetTargetFlags(
         exeFlags += " ";
       }
 
-      cmValue targetLinkFlags = target->GetProperty("LINK_FLAGS");
-      if (targetLinkFlags) {
-        exeFlags += *targetLinkFlags;
-        exeFlags += " ";
-      }
-      if (!configUpper.empty()) {
-        targetLinkFlags =
-          target->GetProperty(cmStrCat("LINK_FLAGS_", configUpper));
-        if (targetLinkFlags) {
-          exeFlags += *targetLinkFlags;
-          exeFlags += " ";
-        }
-      }
+      this->AddTargetPropertyLinkFlags(exeFlags, target, config);
 
       if (!exeFlags.empty()) {
         this->GetGlobalGenerator()->EncodeLiteral(exeFlags);
@@ -1717,8 +1708,8 @@ std::vector<BT<std::string>> cmLocalGenerator::GetTargetCompileFlags(
         case cmSwiftCompileMode::Singlefile:
           break;
         case cmSwiftCompileMode::Unknown: {
-          this->IssueMessage(
-            MessageType::AUTHOR_WARNING,
+          this->IssueDiagnostic(
+            cmDiagnostics::CMD_AUTHOR,
             cmStrCat("Unknown Swift_COMPILATION_MODE on target '",
                      target->GetName(), '\''));
         }
@@ -2124,14 +2115,7 @@ void cmLocalGenerator::AddLanguageFlags(std::string& flags,
     (compilerId == "OpenWatcom" || compilerSimulateId == "OpenWatcom");
 
   if (lang == "Swift") {
-    if (cmValue v = target->GetProperty("Swift_LANGUAGE_VERSION")) {
-      if (cmSystemTools::VersionCompare(
-            cmSystemTools::OP_GREATER_EQUAL,
-            this->Makefile->GetDefinition("CMAKE_Swift_COMPILER_VERSION"),
-            "4.2")) {
-        this->AppendFlags(flags, "-swift-version " + *v);
-      }
-    }
+    target->AddSwiftTargetFlags(flags);
   } else if (lang == "CUDA") {
     target->AddCUDAArchitectureFlags(compileOrLink, config, flags);
     target->AddCUDAToolkitFlags(flags);
@@ -2151,6 +2135,8 @@ void cmLocalGenerator::AddLanguageFlags(std::string& flags,
     }
   } else if (lang == "HIP") {
     target->AddHIPArchitectureFlags(compileOrLink, config, flags);
+  } else if (lang == "Rust") {
+    target->AddRustTargetFlags(flags);
   }
 
   // Add VFS Overlay for Clang compilers
@@ -2328,7 +2314,8 @@ cmGeneratorTarget* cmLocalGenerator::FindGeneratorTargetToUse(
 
 bool cmLocalGenerator::GetRealDependency(std::string const& inName,
                                          std::string const& config,
-                                         std::string& dep)
+                                         std::string& dep,
+                                         cmPolicies::PolicyStatus cmp0212)
 {
   // Older CMake code may specify the dependency using the target
   // output file rather than the target name.  Such code would have
@@ -2342,12 +2329,21 @@ bool cmLocalGenerator::GetRealDependency(std::string const& inName,
   if (name.empty()) {
     return false;
   }
-  if (cmSystemTools::GetFilenameLastExtension(name) == ".exe") {
-    name = cmSystemTools::GetFilenameWithoutLastExtension(name);
-  }
 
   // Look for a CMake target with the given name.
-  if (cmGeneratorTarget* target = this->FindGeneratorTargetToUse(name)) {
+  cmGeneratorTarget* target = this->FindGeneratorTargetToUse(name);
+  if (!target && cmHasSuffix(name, ".exe"_s) && cmp0212 != cmPolicies::NEW) {
+    // If it doesn't exist, try to strip the `.exe` suffix per CMP0212.
+    std::string strippedName =
+      cmSystemTools::GetFilenameWithoutLastExtension(name);
+    if (cmGeneratorTarget* strippedTarget =
+          this->FindGeneratorTargetToUse(strippedName)) {
+      name = strippedName;
+      target = strippedTarget;
+    }
+  }
+
+  if (target) {
     // make sure it is not just a coincidence that the target name
     // found is part of the inName
     if (cmSystemTools::FileIsFullPath(inName)) {
@@ -2577,7 +2573,8 @@ void cmLocalGenerator::AddConfigVariableFlags(std::string& flags,
 void cmLocalGenerator::AppendFlags(std::string& flags,
                                    std::string const& newFlags) const
 {
-  bool allSpaces = std::all_of(newFlags.begin(), newFlags.end(), cmIsSpace);
+  bool allSpaces =
+    std::all_of(newFlags.begin(), newFlags.end(), cmsysString_isspace);
 
   if (!newFlags.empty() && !allSpaces) {
     if (!flags.empty()) {
@@ -2603,6 +2600,25 @@ void cmLocalGenerator::AppendFlagEscape(std::string& flags,
     this->EscapeForShell(rawFlag, false, false, false, this->IsNinjaMulti()));
 }
 
+void cmLocalGenerator::AppendLinkFlagsWithParsing(
+  std::string& flags, std::string const& newFlags,
+  cmGeneratorTarget const* target, std::string const& language)
+{
+  std::vector<std::string> options;
+  cmSystemTools::ParseUnixCommandLine(newFlags.c_str(), options);
+  this->SetLinkScriptShell(this->GlobalGenerator->GetUseLinkScript());
+  std::vector<BT<std::string>> optionsWithBT{ options.size() };
+  std::transform(options.cbegin(), options.cend(), optionsWithBT.begin(),
+                 [](std::string const& item) -> BT<std::string> {
+                   return BT<std::string>{ item };
+                 });
+  target->ResolveLinkerWrapper(optionsWithBT, language);
+  for (auto const& item : optionsWithBT) {
+    this->AppendFlagEscape(flags, item.Value);
+  }
+  this->SetLinkScriptShell(false);
+}
+
 void cmLocalGenerator::AppendFlags(std::string& flags,
                                    std::string const& newFlags,
                                    std::string const& name,
@@ -2615,8 +2631,8 @@ void cmLocalGenerator::AppendFlags(std::string& flags,
       if (!this->Makefile->GetCMakeInstance()->GetIsInTryCompile() &&
           this->Makefile->PolicyOptionalWarningEnabled(
             "CMAKE_POLICY_WARNING_CMP0181")) {
-        this->Makefile->GetCMakeInstance()->IssueMessage(
-          MessageType::AUTHOR_WARNING,
+        this->Makefile->IssueDiagnostic(
+          cmDiagnostics::CMD_AUTHOR,
           cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0181),
                    "\nSince the policy is not set, the contents of variable '",
                    name,
@@ -2631,19 +2647,7 @@ void cmLocalGenerator::AppendFlags(std::string& flags,
       break;
     case cmPolicies::NEW:
       if (compileOrLink == cmBuildStep::Link) {
-        std::vector<std::string> options;
-        cmSystemTools::ParseUnixCommandLine(newFlags.c_str(), options);
-        this->SetLinkScriptShell(this->GlobalGenerator->GetUseLinkScript());
-        std::vector<BT<std::string>> optionsWithBT{ options.size() };
-        std::transform(options.cbegin(), options.cend(), optionsWithBT.begin(),
-                       [](std::string const& item) -> BT<std::string> {
-                         return BT<std::string>{ item };
-                       });
-        target->ResolveLinkerWrapper(optionsWithBT, language);
-        for (auto const& item : optionsWithBT) {
-          this->AppendFlagEscape(flags, item.Value);
-        }
-        this->SetLinkScriptShell(false);
+        this->AppendLinkFlagsWithParsing(flags, newFlags, target, language);
       } else {
         this->AppendFlags(flags, newFlags);
       }
@@ -2698,8 +2702,11 @@ void cmLocalGenerator::AddISPCDependencies(cmGeneratorTarget* target)
           cmStrCat(headerDir, '/', ispcSource, *ispcHeaderSuffixProp);
         target->AddISPCGeneratedHeader(headerPath, config);
         if (extra_objects) {
-          std::vector<std::string> objs = detail::ComputeISPCExtraObjects(
-            objectName, rootObjectDir, ispcArchSuffixes);
+          std::vector<std::pair<cmSourceFile const*, std::string>> objs;
+          for (auto& obj : detail::ComputeISPCExtraObjects(
+                 objectName, rootObjectDir, ispcArchSuffixes)) {
+            objs.push_back({ sf, std::move(obj) });
+          }
           target->AddISPCGeneratedObject(std::move(objs), config);
         }
       }
@@ -2914,6 +2921,7 @@ void cmLocalGenerator::CopyPchCompilePdb(
   std::string const copy_script = cmStrCat(target->GetSupportDirectory(),
                                            "/copy_idb_pdb_", config, ".cmake");
   cmGeneratedFileStream file(copy_script);
+  file.SetCopyIfDifferent(true);
 
   file << "# CMake generated file\n";
 
@@ -3370,6 +3378,67 @@ void cmLocalGenerator::AddUnityBuild(cmGeneratorTarget* target)
   }
 }
 
+void cmLocalGenerator::AddPerLanguageLinkFlags(std::string& flags,
+                                               cmGeneratorTarget const* target,
+                                               std::string const& lang,
+                                               std::string const& config)
+{
+  switch (target->GetType()) {
+    case cmStateEnums::MODULE_LIBRARY:
+    case cmStateEnums::SHARED_LIBRARY:
+    case cmStateEnums::EXECUTABLE:
+      break;
+    default:
+      return;
+  }
+
+  std::string langLinkFlags =
+    this->Makefile->GetSafeDefinition(cmStrCat("CMAKE_", lang, "_LINK_FLAGS"));
+
+  switch (target->GetPolicyStatusCMP0210()) {
+    case cmPolicies::WARN:
+      // WARN only when CMAKE_<LANG>_LINK_FLAGS is set, and when the current
+      // target is not an executable, and CMAKE_<LANG>_LINK_FLAGS is not equal
+      // to CMAKE_EXECUTABLE_CREATE_<LANG>_FLAGS. This warns users trying to
+      // use the NEW behavior on old projects (since CMake will be ignoring
+      // their wishes), while also exempting cases when the latter variable
+      // (substituted for the former spelling under the NEW behavior) is being
+      // used legitimately by CMake.
+      // Additionally, WARN at most once per language, instead of on every
+      // target.
+      if (!langLinkFlags.empty() &&
+          target->GetType() != cmStateEnums::EXECUTABLE &&
+          langLinkFlags !=
+            this->Makefile->GetSafeDefinition(
+              cmStrCat("CMAKE_EXECUTABLE_CREATE_", lang, "_FLAGS")) &&
+          this->GlobalGenerator->ShouldWarnCMP0210(lang)) {
+        this->IssueDiagnostic(
+          cmDiagnostics::CMD_AUTHOR,
+          cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0210), "\n",
+                   "For compatibility with older versions of CMake, ",
+                   "CMAKE_", lang, "_LINK_FLAGS will be ignored for all ",
+                   "non-EXECUTABLE targets which use these flags."));
+      }
+      CM_FALLTHROUGH;
+    case cmPolicies::OLD:
+      // OLD behavior is to do nothing here, since the use of
+      // CMAKE_<LANG>_LINK_FLAGS for EXECUTABLEs is handled elsewhere.
+      break;
+    case cmPolicies::NEW:
+      // NEW behavior is to support per-language link flags for all target
+      // types.
+      this->AppendLinkFlagsWithParsing(flags, langLinkFlags, target, lang);
+      if (!config.empty()) {
+        std::string lankLinkFlagsConfig =
+          this->Makefile->GetSafeDefinition(cmStrCat(
+            "CMAKE_", lang, "_LINK_FLAGS_", cmSystemTools::UpperCase(config)));
+        this->AppendLinkFlagsWithParsing(flags, lankLinkFlagsConfig, target,
+                                         lang);
+      }
+      break;
+  }
+}
+
 void cmLocalGenerator::AppendTargetCreationLinkFlags(
   std::string& flags, cmGeneratorTarget const* target,
   std::string const& linkLanguage)
@@ -3393,7 +3462,9 @@ void cmLocalGenerator::AppendTargetCreationLinkFlags(
       }
       break;
     case cmStateEnums::EXECUTABLE:
-      createFlagsVar = cmStrCat("CMAKE_", linkLanguage, "_LINK_FLAGS");
+      createFlagsVar = target->GetPolicyStatusCMP0210() == cmPolicies::NEW
+        ? cmStrCat("CMAKE_EXECUTABLE_CREATE_", linkLanguage, "_FLAGS")
+        : cmStrCat("CMAKE_", linkLanguage, "_LINK_FLAGS");
       createFlagsVal = this->Makefile->GetDefinition(createFlagsVar);
       break;
     default:
@@ -3443,8 +3514,7 @@ void cmLocalGenerator::AppendLinkerTypeFlags(std::string& flags,
     }
   } else if (linkerType != "DEFAULT"_s) {
     auto isCMakeLinkerType = [](std::string const& type) -> bool {
-      return std::all_of(type.cbegin(), type.cend(),
-                         [](char c) { return std::isupper(c); });
+      return std::all_of(type.cbegin(), type.cend(), cmsysString_isupper);
     };
     if (isCMakeLinkerType(linkerType)) {
       this->IssueMessage(
@@ -3457,6 +3527,45 @@ void cmLocalGenerator::AppendLinkerTypeFlags(std::string& flags,
         cmStrCat("LINKER_TYPE '", linkerType,
                  "' is unknown. Did you forget to define the '", usingLinker,
                  "' variable?"));
+    }
+  }
+}
+
+void cmLocalGenerator::AddTargetTypeLinkerFlags(
+  std::string& flags, cmGeneratorTarget const* target, std::string const& lang,
+  std::string const& config)
+{
+  std::string linkerFlagsVar;
+  switch (target->GetType()) {
+    case cmStateEnums::EXECUTABLE:
+      linkerFlagsVar = "CMAKE_EXE_LINKER_FLAGS";
+      break;
+    case cmStateEnums::SHARED_LIBRARY:
+      linkerFlagsVar = "CMAKE_SHARED_LINKER_FLAGS";
+      break;
+    case cmStateEnums::MODULE_LIBRARY:
+      linkerFlagsVar = "CMAKE_MODULE_LINKER_FLAGS";
+      break;
+    default:
+      return;
+  }
+  this->AddConfigVariableFlags(flags, linkerFlagsVar, target,
+                               cmBuildStep::Link, lang, config);
+}
+
+void cmLocalGenerator::AddTargetPropertyLinkFlags(
+  std::string& flags, cmGeneratorTarget const* target,
+  std::string const& config)
+{
+  cmValue targetLinkFlags = target->GetProperty("LINK_FLAGS");
+  if (targetLinkFlags) {
+    this->AppendFlags(flags, *targetLinkFlags);
+  }
+  if (!config.empty()) {
+    cmValue targetLinkFlagsConfig = target->GetProperty(
+      cmStrCat("LINK_FLAGS_", cmSystemTools::UpperCase(config)));
+    if (targetLinkFlagsConfig) {
+      this->AppendFlags(flags, *targetLinkFlagsConfig);
     }
   }
 }
@@ -3501,8 +3610,12 @@ void cmLocalGenerator::AppendPositionIndependentLinkerFlags(
   }
 
   char const* PICValue = target->GetLinkPIEProperty(config);
-  if (!PICValue) {
-    // POSITION_INDEPENDENT_CODE is not set
+  if (!PICValue && lang != "Rust") {
+    // POSITION_INDEPENDENT_CODE is not set, note that for Rust we do not
+    // return as the compiler tends to enable PIE all the time, which is the
+    // opposite of what C & C++ compilers do. So instead of letting the rust
+    // compiler decide on its own whether PIE should be enabled, we explicit
+    // set it.
     return;
   }
 
@@ -3791,6 +3904,17 @@ void cmLocalGenerator::AppendDefines(std::set<std::string>& defines,
 {
   std::set<BT<std::string>> tmp;
   this->AppendDefines(tmp, cmExpandListWithBacktrace(defines_list));
+  for (BT<std::string> const& i : tmp) {
+    defines.emplace(i.Value);
+  }
+}
+
+void cmLocalGenerator::AppendDefines(
+  std::set<std::string>& defines,
+  std::vector<BT<std::string>> const& defines_vec) const
+{
+  std::set<BT<std::string>> tmp;
+  this->AppendDefines(tmp, defines_vec);
   for (BT<std::string> const& i : tmp) {
     defines.emplace(i.Value);
   }
@@ -4094,6 +4218,54 @@ std::string cmLocalGenerator::CreateSafeObjectFileName(
   std::replace(ssin.begin(), ssin.end(), ' ', '_');
 
   return ssin;
+}
+
+void cmLocalGenerator::ComputeSourceGroupSearchIndex()
+{
+#if !defined(CMAKE_BOOTSTRAP)
+  SourceGroupVector const& sourceGroups = this->Makefile->GetSourceGroups();
+
+  // Build lookup index from sources to source groups
+  std::queue<cmSourceGroup*> sgToVisit;
+  for (auto const& group : sourceGroups) {
+    cmSourceGroup* cmSourceGroup = group.get();
+    sgToVisit.emplace(cmSourceGroup);
+  }
+
+  while (!sgToVisit.empty()) {
+    cmSourceGroup* sourceGroup = sgToVisit.front();
+    sgToVisit.pop();
+    for (auto const& sgChild : sourceGroup->GetGroupChildren()) {
+      sgToVisit.emplace(sgChild.get());
+    }
+    for (std::string const& source : sourceGroup->GetGroupFiles()) {
+      this->SourceGroupSearchIndex.emplace(source, sourceGroup);
+    }
+  }
+#endif
+}
+
+cmSourceGroup* cmLocalGenerator::FindSourceGroup(std::string const& source)
+{
+#if !defined(CMAKE_BOOTSTRAP)
+  auto const indexIt = SourceGroupSearchIndex.find(source);
+  if (indexIt != SourceGroupSearchIndex.cend()) {
+    if (cmSourceGroup* result = indexIt->second) {
+      return result;
+    }
+  }
+
+  cmSourceGroup* sourceGroup =
+    cmSourceGroup::FindSourceGroup(source, this->Makefile->GetSourceGroups());
+  if (sourceGroup) {
+    // Update index if we have a miss
+    SourceGroupSearchIndex.emplace(source, sourceGroup);
+  }
+  return sourceGroup;
+#else
+  static_cast<void>(source);
+  return nullptr;
+#endif
 }
 
 std::string& cmLocalGenerator::CreateSafeUniqueObjectFileName(
@@ -4531,6 +4703,20 @@ std::string cmLocalGenerator::GetObjectFileNameWithoutTarget(
     *hasSourceExtension = keptSourceExtension;
   }
 
+  if (source.GetLanguage() == "Rust") {
+    cmValue const rustEmit = source.GetRustEmitProperty();
+    // Rust requires any rlib to start with lib prefix on all platforms to
+    // allow linking to them as crate. So we enforce having lib prefix for rust
+    // "object" files.
+    if (rustEmit == "link") {
+      cmCMakePath objectPath(objectName);
+      std::string const objectFileName =
+        "lib" + objectPath.GetFileName().String();
+      objectPath.ReplaceFileName(objectFileName);
+      objectName = objectPath.String();
+    }
+  }
+
   // Convert to a safe name.
   return this->CreateSafeUniqueObjectFileName(objectName, dir_max);
 }
@@ -4560,8 +4746,6 @@ std::string cmLocalGenerator::GetShortObjectFileName(
   cmSourceFile const& source) const
 {
   std::string objectName = this->GetRelativeSourceFileName(source);
-  std::string objectFileName =
-    cmSystemTools::GetFilenameName(source.GetFullPath());
   cmCryptoHash objNameHasher(cmCryptoHash::AlgoSHA3_512);
   std::string terseObjectName =
     objNameHasher.HashString(objectName).substr(0, 8);
@@ -5049,9 +5233,15 @@ std::vector<std::string> ComputeISPCObjectSuffixes(cmGeneratorTarget* target)
       // transform targets into the suffixes
       auto pos = ispcTarget.find('-');
       auto target_suffix = ispcTarget.substr(0, pos);
+      // ISPC uses underscores in output file suffixes where the target name
+      // has dots (e.g. "avx10.2dmr" produces files with "_avx10_2dmr" suffix)
+      std::replace(target_suffix.begin(), target_suffix.end(), '.', '_');
       if (target_suffix ==
           "avx1") { // when targeting avx1 ISPC uses the 'avx' output string
         target_suffix = "avx";
+      } else if (target_suffix == "sse4_1" || target_suffix == "sse4_2") {
+        // when targeting sse4.1 or sse4.2 ISPC uses the 'sse4' output string
+        target_suffix = "sse4";
       }
       ispcTarget = target_suffix;
     }
@@ -5067,7 +5257,7 @@ std::vector<std::string> ComputeISPCExtraObjects(
   std::vector<std::string> computedObjects;
   computedObjects.reserve(ispcSuffixes.size());
 
-  auto extension = cmSystemTools::GetFilenameLastExtension(objectName);
+  auto extension = cmSystemTools::GetFilenameLastExtensionView(objectName);
 
   // We can't use cmSystemTools::GetFilenameWithoutLastExtension as it
   // drops any directories in objectName

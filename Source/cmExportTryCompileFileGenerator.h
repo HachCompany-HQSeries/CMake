@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "cmDiagnostics.h"
 #include "cmExportCMakeConfigGenerator.h"
 
 class cmGeneratorTarget;
@@ -30,7 +31,10 @@ protected:
   // Implement virtual methods from the superclass.
   void ComplainAboutDuplicateTarget(
     std::string const& /*targetName*/) const override {};
-  void ReportError(std::string const& errorMessage) const override;
+  void IssueMessage(MessageType type,
+                    std::string const& message) const override;
+  void IssueDiagnostic(cmDiagnosticCategory category,
+                       std::string const& message) const override;
 
   bool GenerateMainFile(std::ostream& os) override;
 
@@ -56,10 +60,11 @@ protected:
                              std::string const& config) override;
 
   std::string GetFileSetDirectories(cmGeneratorTarget* target,
-                                    cmFileSet* fileSet,
+                                    cmGeneratorFileSet const* fileSet,
                                     cmTargetExport const* te) override;
 
-  std::string GetFileSetFiles(cmGeneratorTarget* target, cmFileSet* fileSet,
+  std::string GetFileSetFiles(cmGeneratorTarget* target,
+                              cmGeneratorFileSet const* fileSet,
                               cmTargetExport const* te) override;
 
   std::string GetCxxModulesDirectory() const override { return {}; }
