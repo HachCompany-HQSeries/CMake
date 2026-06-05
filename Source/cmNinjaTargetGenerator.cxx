@@ -249,9 +249,11 @@ std::string cmNinjaTargetGenerator::ComputeFlagsForObject(
       flags, genexInterpreter.Evaluate(*coptions, COMPILE_OPTIONS));
   }
 
-  if (auto const* fileSet =
-        this->GeneratorTarget->GetGeneratorFileSets()->GetFileSetForSource(
-          config, source)) {
+  auto const* const fileSet =
+    this->GeneratorTarget->GetGeneratorFileSets()->GetFileSetForSource(config,
+                                                                       source);
+
+  if (fileSet) {
     auto options = fileSet->BelongsTo(this->GeneratorTarget)
       ? fileSet->GetCompileOptions(config, language)
       : fileSet->GetInterfaceCompileOptions(config, language);
@@ -262,7 +264,9 @@ std::string cmNinjaTargetGenerator::ComputeFlagsForObject(
   }
 
   // Add precompile headers compile options.
-  if (!pchSources.empty() && !source->GetProperty("SKIP_PRECOMPILE_HEADERS")) {
+  if (!pchSources.empty() &&
+      !((fileSet && fileSet->GetProperty("SKIP_PRECOMPILE_HEADERS")) ||
+        source->GetProperty("SKIP_PRECOMPILE_HEADERS"))) {
     std::string pchOptions;
     auto pchIt = pchSources.find(source->GetFullPath());
     if (pchIt != pchSources.end()) {
@@ -277,14 +281,13 @@ std::string cmNinjaTargetGenerator::ComputeFlagsForObject(
       flags, genexInterpreter.Evaluate(pchOptions, COMPILE_OPTIONS));
   }
 
-  auto const* fs = this->GeneratorTarget->GetFileSetForSource(config, source);
-  if (fs && fs->GetType() == cm::FileSetMetadata::CXX_MODULES) {
+  if (fileSet && fileSet->GetType() == cm::FileSetMetadata::CXX_MODULES) {
     if (source->GetLanguage() != "CXX"_s) {
       this->GetMakefile()->IssueMessage(
         MessageType::FATAL_ERROR,
         cmStrCat("Target \"", this->GeneratorTarget->Target->GetName(),
                  "\" contains the source\n  ", source->GetFullPath(),
-                 "\nin a file set of type \"", fs->GetType(),
+                 "\nin a file set of type \"", fileSet->GetType(),
                  R"(" but the source is not classified as a "CXX" source.)"));
     }
 
@@ -580,9 +583,16 @@ bool cmNinjaTargetGenerator::SetMsvcTargetPdbVariable(
   cmNinjaVars& vars, std::string const& config) const
 {
   cmMakefile* mf = this->GetMakefile();
-  if (mf->GetDefinition("MSVC_C_ARCHITECTURE_ID") ||
-      mf->GetDefinition("MSVC_CXX_ARCHITECTURE_ID") ||
-      mf->GetDefinition("MSVC_CUDA_ARCHITECTURE_ID")) {
+  bool supportsPDB = mf->GetDefinition("MSVC_C_ARCHITECTURE_ID") ||
+    mf->GetDefinition("MSVC_CXX_ARCHITECTURE_ID") ||
+    mf->GetDefinition("MSVC_CUDA_ARCHITECTURE_ID");
+  if (!supportsPDB) {
+    std::string const linkLanguage =
+      this->GeneratorTarget->GetLinkerLanguage(config);
+    supportsPDB =
+      mf->IsOn(cmStrCat("CMAKE_", linkLanguage, "_LINKER_SUPPORTS_PDB"));
+  }
+  if (supportsPDB) {
     std::string pdbPath;
     std::string compilePdbPath = this->ComputeTargetCompilePDB(config);
     if (this->GeneratorTarget->GetType() == cmStateEnums::EXECUTABLE ||
@@ -1585,10 +1595,17 @@ void cmNinjaTargetGenerator::WriteObjectBuildStatement(
 
   auto compilerLauncher = this->GetCompilerLauncher(language, config);
 
+  cmGeneratorFileSet const* fileSet =
+    this->GeneratorTarget->GetFileSetForSource(config, source);
+
+  cmValue const fsSkipCodeCheckVal =
+    fileSet ? fileSet->GetProperty("SKIP_LINTING") : nullptr;
   cmValue const srcSkipCodeCheckVal = source->GetProperty("SKIP_LINTING");
-  bool const skipCodeCheck = srcSkipCodeCheckVal.IsSet()
-    ? srcSkipCodeCheckVal.IsOn()
-    : this->GetGeneratorTarget()->GetPropertyAsBool("SKIP_LINTING");
+  bool const skipCodeCheck = fsSkipCodeCheckVal.IsSet()
+    ? fsSkipCodeCheckVal.IsOn()
+    : (srcSkipCodeCheckVal.IsSet()
+         ? srcSkipCodeCheckVal.IsOn()
+         : this->GetGeneratorTarget()->GetPropertyAsBool("SKIP_LINTING"));
 
   if (!skipCodeCheck) {
     auto const cmakeCmd =
@@ -1664,7 +1681,9 @@ void cmNinjaTargetGenerator::WriteObjectBuildStatement(
     }
   }
 
-  if (!pchSources.empty() && !source->GetProperty("SKIP_PRECOMPILE_HEADERS")) {
+  if (!pchSources.empty() &&
+      !((fileSet && fileSet->GetProperty("SKIP_PRECOMPILE_HEADERS")) ||
+        source->GetProperty("SKIP_PRECOMPILE_HEADERS"))) {
     for (std::string const& arch : pchArchs) {
       depList.push_back(
         this->GeneratorTarget->GetPchHeader(config, language, arch));
@@ -1780,8 +1799,9 @@ void cmNinjaTargetGenerator::WriteObjectBuildStatement(
       scanningFiles.ScanningOutput = cmStrCat(objectFileName, ".ddi");
     }
 
-    this->addPoolNinjaVariable("JOB_POOL_COMPILE", this->GetGeneratorTarget(),
-                               source, ppBuild.Variables);
+    this->addPoolNinjaVariable("JOB_POOL_COMPILE", config,
+                               this->GetGeneratorTarget(), source,
+                               ppBuild.Variables);
 
     this->GetGlobalGenerator()->WriteBuild(this->GetImplFileStream(fileConfig),
                                            ppBuild, commandLineLengthLimit);
@@ -1814,13 +1834,15 @@ void cmNinjaTargetGenerator::WriteObjectBuildStatement(
     this->ConvertToOutputFormatForShell(targetSupportDir);
   vars["OBJECT_FILE_DIR"] = this->ConvertToOutputFormatForShell(objectFileDir);
 
-  this->addPoolNinjaVariable("JOB_POOL_COMPILE", this->GetGeneratorTarget(),
-                             source, vars);
+  this->addPoolNinjaVariable("JOB_POOL_COMPILE", config,
+                             this->GetGeneratorTarget(), source, vars);
 
-  if (!pchSources.empty() && !source->GetProperty("SKIP_PRECOMPILE_HEADERS")) {
+  if (!pchSources.empty() &&
+      !((fileSet && fileSet->GetProperty("SKIP_PRECOMPILE_HEADERS")) ||
+        source->GetProperty("SKIP_PRECOMPILE_HEADERS"))) {
     auto pchIt = pchSources.find(source->GetFullPath());
     if (pchIt != pchSources.end()) {
-      this->addPoolNinjaVariable("JOB_POOL_PRECOMPILE_HEADER",
+      this->addPoolNinjaVariable("JOB_POOL_PRECOMPILE_HEADER", config,
                                  this->GetGeneratorTarget(), nullptr, vars);
     }
   }
@@ -2017,8 +2039,9 @@ void cmNinjaTargetGenerator::WriteCxxModuleBmiBuildStatement(
       scanningFiles.ScanningOutput = cmStrCat(bmiFileName, ".ddi");
     }
 
-    this->addPoolNinjaVariable("JOB_POOL_COMPILE", this->GetGeneratorTarget(),
-                               source, ppBuild.Variables);
+    this->addPoolNinjaVariable("JOB_POOL_COMPILE", config,
+                               this->GetGeneratorTarget(), source,
+                               ppBuild.Variables);
 
     this->GetGlobalGenerator()->WriteBuild(this->GetImplFileStream(fileConfig),
                                            ppBuild, commandLineLengthLimit);
@@ -2046,8 +2069,8 @@ void cmNinjaTargetGenerator::WriteCxxModuleBmiBuildStatement(
     this->ConvertToOutputFormatForShell(targetSupportDir);
   vars["OBJECT_FILE_DIR"] = this->ConvertToOutputFormatForShell(bmiFileDir);
 
-  this->addPoolNinjaVariable("JOB_POOL_COMPILE", this->GetGeneratorTarget(),
-                             source, vars);
+  this->addPoolNinjaVariable("JOB_POOL_COMPILE", config,
+                             this->GetGeneratorTarget(), source, vars);
 
   bmiBuild.RspFile = cmStrCat(bmiFileName, ".rsp");
 
@@ -2768,15 +2791,22 @@ void cmNinjaTargetGenerator::RemoveDepfileBinding(cmNinjaVars& vars) const
 }
 
 void cmNinjaTargetGenerator::addPoolNinjaVariable(
-  std::string const& pool_property, cmGeneratorTarget* target,
-  cmSourceFile const* source, cmNinjaVars& vars)
+  std::string const& pool_property, std::string const& config,
+  cmGeneratorTarget* target, cmSourceFile const* source, cmNinjaVars& vars)
 {
-  // First check the current source properties, then if not found, its target
-  // ones. Allows to override a target-wide compile pool with a source-specific
-  // one.
+  // First check file set properties, then if not found the current source
+  // properties, then if not found, its target ones. Allows to override a
+  // target-wide compile pool with file set-specific or source-specific one.
   cmValue pool = {};
   if (source) {
-    pool = source->GetProperty(pool_property);
+    cmGeneratorFileSet const* fileSet =
+      target->GetFileSetForSource(config, source);
+    if (fileSet) {
+      pool = fileSet->GetProperty(pool_property);
+    }
+    if (!pool) {
+      pool = source->GetProperty(pool_property);
+    }
   }
   if (!pool) {
     pool = target->GetProperty(pool_property);

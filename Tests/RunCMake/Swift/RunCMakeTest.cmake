@@ -74,6 +74,11 @@ block()
   endif()
 endblock()
 
+if(CMAKE_Swift_COMPILER_VERSION VERSION_GREATER_EQUAL 6.2
+    OR XCODE_VERSION VERSION_GREATER_EQUAL 26)
+  run_cmake(SwiftPtrSize)
+endif()
+
 if(RunCMake_GENERATOR MATCHES "Ninja")
   block()
     if (CMAKE_SYSTEM_NAME MATCHES "Windows")
@@ -196,6 +201,26 @@ if(RunCMake_GENERATOR MATCHES "Ninja")
       run_cmake(ImportLibraryFlags)
       set(RunCMake_TEST_NO_CLEAN 1)
       run_cmake_command(ImportLibraryFlags-check ${CMAKE_COMMAND} --build . -- -n -v)
+    endif()
+  endblock()
+
+  block()
+    if(CMAKE_SYSTEM_NAME MATCHES Windows)
+      set(RunCMake_TEST_BINARY_DIR ${RunCMake_BINARY_DIR}/TargetPDBFile-build)
+      run_cmake(TargetPDBFile)
+      set(RunCMake_TEST_NO_CLEAN 1)
+      run_cmake_command(TargetPDBFile-build ${CMAKE_COMMAND} --build . -- -n -v)
+    endif()
+  endblock()
+
+  block()
+    if(CMAKE_SYSTEM_NAME MATCHES Windows)
+      set(RunCMake_TEST_BINARY_DIR ${RunCMake_BINARY_DIR}/TargetPDBFileDwarf-build)
+      run_cmake(TargetPDBFileDwarf)
+      set(RunCMake_TEST_NO_CLEAN 1)
+      run_cmake_command(TargetPDBFileDwarf-build ${CMAKE_COMMAND} --build . -- -v)
+      run_cmake_command(TargetPDBFileDwarf-install ${CMAKE_COMMAND} --install .
+        --prefix "${RunCMake_TEST_BINARY_DIR}/install")
     endif()
   endblock()
 

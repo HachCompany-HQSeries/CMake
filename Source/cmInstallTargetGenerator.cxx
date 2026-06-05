@@ -15,11 +15,13 @@
 #include <cm/optional>
 
 #include "cmComputeLinkInformation.h"
+#include "cmDiagnosticContext.h"
 #include "cmDiagnostics.h"
 #include "cmGeneratorExpression.h"
 #include "cmGeneratorTarget.h"
 #include "cmGlobalGenerator.h"
 #include "cmInstallType.h"
+#include "cmListFileCache.h"
 #include "cmLocalGenerator.h"
 #include "cmMakefile.h"
 #include "cmMessageType.h"
@@ -128,13 +130,13 @@ void computeFilesToInstall(
 
 cmInstallTargetGenerator::cmInstallTargetGenerator(
   std::string targetName, std::string const& dest, bool implib,
-  std::string file_permissions, std::vector<std::string> const& configurations,
-  std::string const& component, MessageLevel message, bool exclude_from_all,
-  bool optional, cmListFileBacktrace backtrace)
+  std::string filePermissions, std::vector<std::string> const& configurations,
+  std::string const& component, MessageLevel message, bool excludeFromAll,
+  bool optional, cmDiagnosticContext context)
   : cmInstallGenerator(dest, configurations, component, message,
-                       exclude_from_all, false, std::move(backtrace))
+                       excludeFromAll, false, std::move(context))
   , TargetName(std::move(targetName))
-  , FilePermissions(std::move(file_permissions))
+  , FilePermissions(std::move(filePermissions))
   , ImportLibrary(implib)
   , Optional(optional)
 {
@@ -177,9 +179,9 @@ void cmInstallTargetGenerator::GenerateScriptForConfig(
   // Write code to install the target file.
   char const* no_dir_permissions = nullptr;
   bool optional = this->Optional || this->ImportLibrary;
-  std::string literal_args;
+  std::string literalArgs;
   if (files.UseSourcePermissions) {
-    literal_args += " USE_SOURCE_PERMISSIONS";
+    literalArgs += " USE_SOURCE_PERMISSIONS";
   }
   if (files.Rename) {
     if (files.From.size() != files.To.size()) {
@@ -199,16 +201,16 @@ void cmInstallTargetGenerator::GenerateScriptForConfig(
       }
       this->AddInstallRule(os, dest, files.Type, FileNames, optional,
                            this->FilePermissions.c_str(), no_dir_permissions,
-                           files.To[i].c_str(), literal_args.c_str(), indent);
+                           files.To[i].c_str(), literalArgs.c_str(), indent);
     }
   } else {
     char const* no_rename = nullptr;
     if (!files.FromDir.empty()) {
-      literal_args += " FILES_FROM_DIR \"" + files.FromDir + "\"";
+      literalArgs += " FILES_FROM_DIR \"" + files.FromDir + "\"";
     }
     this->AddInstallRule(os, dest, files.Type, files.From, optional,
                          this->FilePermissions.c_str(), no_dir_permissions,
-                         no_rename, literal_args.c_str(), indent);
+                         no_rename, literalArgs.c_str(), indent);
   }
 
   // Add post-installation tweaks.
@@ -482,7 +484,7 @@ std::string cmInstallTargetGenerator::GetDestination(
   cmLocalGenerator* lg = this->Target->GetLocalGenerator();
   std::string dest =
     cmGeneratorExpression::Evaluate(this->Destination, lg, config);
-  cmInstallGenerator::CheckAbsoluteDestination(dest, lg, this->Backtrace);
+  this->CheckAbsoluteDestination(dest, lg);
   return dest;
 }
 
@@ -986,7 +988,7 @@ void cmInstallTargetGenerator::IssueCMP0095Warning(
     w << "RPATH entries for target '" << this->Target->GetName() << "' "
       << "will not be escaped in the intermediary "
       << "cmake_install.cmake script.";
-    cm->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, w.str(),
+    cm->IssueDiagnostic(cmDiagnostics::CMD_POLICY, w.str(),
                         this->GetBacktrace());
   }
 }

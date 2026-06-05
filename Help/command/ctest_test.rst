@@ -28,6 +28,8 @@ Perform the :ref:`CTest Test Step` as a :ref:`Dashboard Client`.
              [CAPTURE_CMAKE_ERROR <result-var>]
              [REPEAT <mode>:<n>]
              [OUTPUT_JUNIT <file>]
+             [PRESET <preset>]
+             [PRESETS_FILE <file>]
              [QUIET]
              )
 
@@ -182,6 +184,39 @@ The options are:
   already exists, it will be overwritten. Note that the resulting JUnit XML
   file is **not** uploaded to CDash because it would be redundant with
   CTest's ``Test.xml`` file.
+
+``COVERAGE_TOOL <tool>``
+  .. versionadded:: 4.4
+
+  Specify the ``<tool>`` used for collecting coverage during the running
+  of the tests.  See the CTest :ref:`CoverageTool <ctest-CoverageTool>`
+  setting for details.
+
+``PRESET <preset>``
+  .. versionadded:: 4.4
+
+  Specify a :manual:`preset <cmake-presets(7)>` to use when running tests.
+  Any value set in the CTest script will take priority over a corresponding
+  setting from the preset.  For example, the ``INCLUDE`` argument will override
+  the :preset:`filter.include.name <testPresets.filter.include.name>` setting
+  from the chosen preset.
+
+  This option also applies to the :command:`ctest_memcheck` command.
+  See also the :variable:`CTEST_TEST_PRESET` and
+  :variable:`CTEST_PRESET` variables.
+
+``PRESETS_FILE <file>``
+  .. versionadded:: 4.4
+
+  Specify a :manual:`presets <cmake-presets(7)>` file to use instead of the
+  default ``CMakePresets.json`` in the source directory.
+  A relative path is interpreted relative to the source directory.
+  Has no effect unless a preset is selected via the ``PRESET`` argument
+  or the :variable:`CTEST_TEST_PRESET` or :variable:`CTEST_PRESET`
+  variables.
+
+  This option also applies to the :command:`ctest_memcheck` command.
+  See also the :variable:`CTEST_PRESETS_FILE` variable.
 
 ``QUIET``
   .. versionadded:: 3.3

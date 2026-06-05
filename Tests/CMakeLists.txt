@@ -264,6 +264,22 @@ if(BUILD_TESTING)
     unset(_sysctl_stdout)
   endif()
 
+  if(NOT DEFINED CMake_TEST_FILESYSTEM_CASE)
+    if(CMAKE_HOST_WIN32)
+      set(CMake_TEST_FILESYSTEM_CASE 1)
+    elseif(CMAKE_HOST_APPLE)
+      execute_process(
+        COMMAND sw_vers -productVersion
+        OUTPUT_VARIABLE sw_vers_productVersion
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _sw_vers_result
+      )
+      if(sw_vers_productVersion VERSION_GREATER_EQUAL 10.11)
+        set(CMake_TEST_FILESYSTEM_CASE 1)
+      endif()
+    endif()
+  endif()
+
   if(CMake_TEST_CUDA AND NOT CMake_TEST_CUDA MATCHES "^(NVIDIA|Clang)$")
     message(FATAL_ERROR "CMake_TEST_CUDA should be \"NVIDIA\" or \"Clang\", got \"${CMake_TEST_CUDA}\"")
   endif()
@@ -1218,7 +1234,8 @@ if(BUILD_TESTING)
         execute_process(COMMAND ${CMAKE_COMMAND} -E env LC_ALL=C ${SHLIBDEPS_EXECUTABLE} --version
           OUTPUT_VARIABLE _TMP_VERSION
           ERROR_QUIET
-          OUTPUT_STRIP_TRAILING_WHITESPACE)
+          OUTPUT_STRIP_TRAILING_WHITESPACE
+          RESULT_VARIABLE _result_dpkg_version)
         if(_TMP_VERSION MATCHES "dpkg-shlibdeps version ([0-9]+\\.[0-9]+\\.[0-9]+)")
           set(SHLIBDEPS_EXECUTABLE_VERSION "${CMAKE_MATCH_1}")
         else()
@@ -1963,6 +1980,7 @@ if(BUILD_TESTING)
         COMMAND sw_vers -productVersion
         OUTPUT_VARIABLE OSX_VERSION
         OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _sw_vers_result
         )
       if(OSX_VERSION MATCHES "^([0-9]+\\.[0-9]+)")
         set(CMake_TEST_XCTest_DEPLOYMENT_TARGET "${CMAKE_MATCH_1}")
@@ -3209,7 +3227,8 @@ if(BUILD_TESTING)
         AND NOT CMAKE_Fortran_COMPILER_ID STREQUAL "LFortran"
         )
       if(DEFINED CMake_TEST_Fortran_SUBMODULES)
-        list(PREPEND CMake_TEST_FortranModules_BUILD_OPTIONS -DCMake_TEST_Fortran_SUBMODULES:BOOL=${CMake_TEST_Fortran_SUBMODULES})
+        list(INSERT CMake_TEST_FortranModules_BUILD_OPTIONS 0
+          -DCMake_TEST_Fortran_SUBMODULES:BOOL=${CMake_TEST_Fortran_SUBMODULES})
       endif()
       add_test(FortranModules ${CMAKE_CTEST_COMMAND}
         --build-and-test

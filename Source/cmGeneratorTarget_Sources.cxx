@@ -6,6 +6,7 @@
 
 #include "cmConfigure.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <functional>
 #include <map>
@@ -22,7 +23,6 @@
 
 #include "cmsys/RegularExpression.hxx"
 
-#include "cmDiagnostics.h"
 #include "cmEvaluatedTargetProperty.h"
 #include "cmFileSetMetadata.h"
 #include "cmGenExContext.h"
@@ -123,7 +123,7 @@ bool processSources(cmGeneratorTarget const* tgt, std::string const& config,
       std::string fullPath = sf->ResolveFullPath(&e, &w);
       cmLocalGenerator const* const lg = tgt->GetLocalGenerator();
       if (!w.empty()) {
-        lg->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, w, entry.Backtrace);
+        lg->IssuePolicyWarning(cmPolicies::CMP0115, {}, w, entry.Backtrace);
       }
       if (fullPath.empty()) {
         if (!e.empty()) {
@@ -160,14 +160,27 @@ bool processSources(cmGeneratorTarget const* tgt, std::string const& config,
           usedSources += cmStrCat(" * ", src, '\n');
         }
       } else {
-        if (auto const* fileSet =
-              tgt->GetGeneratorFileSets()->GetFileSetForSource(config, src)) {
+        auto const& fileSets =
+          tgt->GetGeneratorFileSets()->GetAllFileSetsForSource(config, src);
+        if (fileSets.empty()) {
+          continue;
+        }
+        auto fileMustBeUnique = [&fileSets]() -> bool {
+          return std::none_of(
+            fileSets.begin(), fileSets.end(),
+            [](cmGeneratorFileSet const* fileSet) {
+              return cm::FileSetMetadata::GetAttributes(fileSet->GetType())
+                .contains(cm::FileSetMetadata::FileSetAttributes::
+                            FilesInMultipleFileSets);
+            });
+        };
+        if (fileMustBeUnique()) {
+          auto const* fileSet = *fileSets.begin();
           switch (tgt->GetPolicyStatusCMP0211()) {
             case cmPolicies::WARN:
-              tgt->GetLocalGenerator()->IssueDiagnostic(
-                cmDiagnostics::CMD_AUTHOR,
-                cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0211),
-                         "\nIn target \"", tgt->GetName(), "\" the file\n  ",
+              tgt->GetLocalGenerator()->IssuePolicyWarning(
+                cmPolicies::CMP0211, {},
+                cmStrCat("In target \"", tgt->GetName(), "\" the file\n  ",
                          src, "\nalready belongs to file set \"",
                          fileSet->GetName(), "\"."));
               CM_FALLTHROUGH;

@@ -930,7 +930,6 @@ void cmGlobalXCodeGenerator::ClearXCodeObjects()
   this->FileRefs.clear();
   this->ExternalLibRefs.clear();
   this->FileRefToBuildFileMap.clear();
-  this->FileRefToEmbedBuildFileMap.clear();
   this->CommandsVisited.clear();
 }
 
@@ -1142,7 +1141,8 @@ cmXCodeObject* cmGlobalXCodeGenerator::CreateXCodeSourceFile(
     }
   }
 
-  if (sf->GetPropertyAsBool("SKIP_PRECOMPILE_HEADERS")) {
+  if ((fileSet && fileSet->GetProperty("SKIP_PRECOMPILE_HEADERS")) ||
+      sf->GetPropertyAsBool("SKIP_PRECOMPILE_HEADERS")) {
     this->AppendDefines(flagsBuild, "CMAKE_SKIP_PRECOMPILE_HEADERS", true);
   }
 
@@ -3907,6 +3907,10 @@ void cmGlobalXCodeGenerator::AddDependAndLinkInformation(cmXCodeObject* target)
             if (!IsLinkPhaseLibraryExtension(libExt)) {
               canUseLinkPhase = false;
             }
+            // We can't add non-absolute PBXFileReferences to the link phase
+            if (!cmSystemTools::FileIsFullPath(libItem.Value.Value)) {
+              canUseLinkPhase = false;
+            }
           }
         }
         if (canUseLinkPhase) {
@@ -4322,7 +4326,8 @@ void cmGlobalXCodeGenerator::AddDependAndLinkInformation(cmXCodeObject* target)
           }
           if ((!libName.Target || libName.Target->IsImported()) &&
               (isFramework || isXcFramework ||
-               IsLinkPhaseLibraryExtension(cleanPath))) {
+               IsLinkPhaseLibraryExtension(cleanPath)) &&
+              cmSystemTools::FileIsFullPath(cleanPath)) {
             // Create file reference for embedding
             auto it = this->ExternalLibRefs.find(cleanPath);
             if (it == this->ExternalLibRefs.end()) {
@@ -4423,14 +4428,9 @@ void cmGlobalXCodeGenerator::AddEmbeddedObjects(
                                       " is missing product reference"));
         continue;
       }
-      auto it = this->FileRefToEmbedBuildFileMap.find(fileRefObject);
-      if (it == this->FileRefToEmbedBuildFileMap.end()) {
-        buildFile = this->CreateObject(cmXCodeObject::PBXBuildFile);
-        buildFile->AddAttribute("fileRef", fileRefObject);
-        this->FileRefToEmbedBuildFileMap[fileRefObject] = buildFile;
-      } else {
-        buildFile = it->second;
-      }
+      buildFile = this->CreateObject(cmXCodeObject::PBXBuildFile);
+      buildFile->SetComment(xcTarget->GetComment());
+      buildFile->AddAttribute("fileRef", fileRefObject);
     } else if (cmSystemTools::IsPathToFramework(relFile) ||
                cmSystemTools::IsPathToMacOSSharedLibrary(relFile) ||
                cmSystemTools::FileIsDirectory(filePath)) {
@@ -4563,7 +4563,7 @@ bool cmGlobalXCodeGenerator::CreateGroups(
 
       auto addSourceToGroup = [this, &gtgt,
                                &generator](std::string const& source) {
-        cmSourceGroup* sourceGroup = generator->FindSourceGroup(source);
+        cmSourceGroup const* sourceGroup = generator->FindSourceGroup(source);
         cmXCodeObject* pbxgroup =
           this->CreateOrGetPBXGroup(gtgt.get(), sourceGroup);
         std::string key = GetGroupMapKeyFromPath(gtgt.get(), source);
@@ -4639,7 +4639,7 @@ cmXCodeObject* cmGlobalXCodeGenerator::CreatePBXGroup(cmXCodeObject* parent,
 }
 
 cmXCodeObject* cmGlobalXCodeGenerator::CreateOrGetPBXGroup(
-  cmGeneratorTarget* gtgt, cmSourceGroup* sg)
+  cmGeneratorTarget* gtgt, cmSourceGroup const* sg)
 {
   std::string s;
   std::string target;

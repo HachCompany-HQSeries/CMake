@@ -20,10 +20,13 @@ Synopsis
        [--test-command <command> [<args>...]]
 
  `Dashboard Client`_
-  ctest -D <dashboard>         [-- <dashboard-options>...]
-  ctest -M <model> -T <action> [-- <dashboard-options>...]
-  ctest -S <script>            [-- <dashboard-options>...]
-  ctest -SP <script>           [-- <dashboard-options>...]
+  ctest -D <dashboard>            [-- <dashboard-options>...]
+  ctest -M <model> -T <action>    [-- <dashboard-options>...]
+  ctest [-M <model>] -T Configure --source-dir <path-to-source>
+                                  [--build-dir <path-to-build>]
+                                  [-- <dashboard-options>...]
+  ctest -S <script>               [-- <dashboard-options>...]
+  ctest -SP <script>              [-- <dashboard-options>...]
 
  `View Help`_
   ctest --help[-<topic>]
@@ -153,7 +156,7 @@ The options for running tests are:
 
  Output anything outputted by the test program if the test should fail.
  This option can also be enabled by setting the
- :envvar:`CTEST_OUTPUT_ON_FAILURE` environment variable
+ :envvar:`CTEST_OUTPUT_ON_FAILURE` environment variable.
 
 .. option:: --stop-on-failure
 
@@ -302,7 +305,8 @@ The options for running tests are:
  The file must contain one exact test name per line.
  Lines that do not exactly match any test names are ignored.
  This option can be combined with the other options like
- ``-R``, ``-E``, ``-L`` or ``-LE``.
+ :ctest-option:`-R`, :ctest-option:`-E`, :ctest-option:`-L`, or
+ :ctest-option:`-LE`.
 
 .. option:: --exclude-from-file <filename>
 
@@ -314,7 +318,8 @@ The options for running tests are:
  The file must contain one exact test name per line.
  Lines that do not exactly match any test names are ignored.
  This option can be combined with the other options like
- ``-R``, ``-E``, ``-L`` or ``-LE``.
+ :ctest-option:`-R`, :ctest-option:`-E`, :ctest-option:`-L`, or
+ :ctest-option:`-LE`.
 
 .. option:: -FA <regex>, --fixture-exclude-any <regex>
 
@@ -446,12 +451,13 @@ The options for running tests are:
 
  See `Label and Subproject Summary`_.
 
-.. option:: --test-dir <dir>
+.. option:: --test-dir <path-to-build>
 
  .. versionadded:: 3.20
 
  Specify the directory in which to look for tests, typically a CMake project
  build directory. If not specified, the current directory is used.
+ See also :ctest-dashboard-option:`--build-dir`.
 
 .. option:: --test-output-size-passed <size>
 
@@ -472,7 +478,7 @@ The options for running tests are:
  Truncate ``tail`` (default), ``middle`` or ``head`` of test output once
  maximum output size is reached.
 
-.. option:: --overwrite
+.. option:: --overwrite <option-name>
 
  Overwrite CTest configuration option.
 
@@ -482,7 +488,7 @@ The options for running tests are:
 .. option:: --force-new-ctest-process
 
  Ignored.  This option once disabled a now-removed optimization
- for tests running ``ctest`` itself.
+ for tests running :program:`ctest` itself.
 
 .. option:: --schedule-random
 
@@ -491,16 +497,16 @@ The options for running tests are:
  This option will run the tests in a random order.  It is commonly
  used to detect implicit dependencies in a test suite.
 
-.. option:: --schedule-random-seed
+.. option:: --schedule-random-seed <seed>
 
  .. versionadded:: 4.1
 
- Override the random order seed
+ Override the random order seed.
 
  This option is used to allow recreating failures owing to
- random order of execution by ``--schedule-random``.
+ random order of execution by :ctest-option:`--schedule-random`.
 
-.. option:: --submit-index
+.. option:: --submit-index <index>
 
  Legacy option for old Dart2 dashboard server feature.
  Do not use.
@@ -694,11 +700,11 @@ be provided to use ``--build-and-test``.  If ``--test-command`` is specified
 then that will be run after the build is complete.  Other options that affect
 this mode include:
 
-.. option:: --build-and-test
+.. option:: --build-and-test <path-to-source> <path-to-build>
 
  Switch into the build and test mode.
 
-.. option:: --build-target
+.. option:: --build-target <tgt>
 
  Specify a specific target to build.  The option can be given multiple times
  with different targets, in which case each target is built in turn.
@@ -709,11 +715,11 @@ this mode include:
 
 .. option:: --build-nocmake
 
- Run the build without running cmake first.
+ Run the build without running :program:`cmake` first.
 
- Skip the cmake step.
+ Skip the :program:`cmake` step.
 
-.. option:: --build-run-dir
+.. option:: --build-run-dir <dir>
 
  Specify directory to run programs from.
 
@@ -723,57 +729,59 @@ this mode include:
 
  Run CMake twice.
 
-.. option:: --build-exe-dir
+.. option:: --build-exe-dir <dir>
 
  Specify the directory for the executable.
 
-.. option:: --build-generator
+.. option:: --build-generator <generator-name>
 
  Specify the generator to use. See the :manual:`cmake-generators(7)` manual.
 
-.. option:: --build-generator-platform
+.. option:: --build-generator-platform <platform-name>
 
  Specify the generator-specific platform.
 
-.. option:: --build-generator-toolset
+.. option:: --build-generator-toolset <toolset-name>
 
  Specify the generator-specific toolset.
 
-.. option:: --build-project
+.. option:: --build-project <project-name>
 
  Specify the name of the project to build.
 
-.. option:: --build-makeprogram
+.. option:: --build-makeprogram <program-name>
 
  Specify the explicit make program to be used by CMake when configuring and
- building the project. Only applicable for Make and Ninja based generators.
+ building the project. Only applicable for :ref:`Makefile Generators` and
+ :ref:`Ninja Generators`.
 
 .. option:: --build-noclean
 
  Skip the make clean step.
 
-.. option:: --build-config-sample
+.. option:: --build-config-sample <exe-name>
 
  A sample executable to use to determine the configuration that
- should be used.  e.g.  ``Debug``, ``Release`` etc.
+ should be used (e.g.  ``Debug``, ``Release``, etc.).
 
-.. option:: --build-options
+.. option:: --build-options [<options>...]
 
- Additional options for configuring the build (i.e. for CMake, not for
- the build tool).  Note that if this is specified, the ``--build-options``
- keyword and its arguments must be the last option given on the command
- line, with the possible exception of ``--test-command``.
+ Additional options for configuring the build (i.e. for :manual:`cmake(1)`,
+ not for the build tool).  Note that if this is specified, the
+ ``--build-options`` keyword and its arguments must be the last option given
+ on the command line, with the possible exception of
+ :ctest-option:`--test-command`.
 
-.. option:: --test-command
+.. option:: --test-command <command>
 
  The command to run as the test step with the
  :ctest-option:`--build-and-test` option.
  All arguments following this keyword will be assumed to be part of the
  test command line, so it must be the last option given.
 
-.. option:: --test-timeout
+.. option:: --test-timeout <timeout>
 
- The time limit in seconds
+ The time limit in seconds.
 
 .. _`Dashboard Client`:
 
@@ -848,20 +856,64 @@ Options for Dashboard Client include:
 
 The available ``<dashboard-options>`` are the following:
 
-.. option:: -D <var>:<type>=<value>
+.. program:: ctest-dashboard
 
- Define a variable for script mode.
+.. option:: -D <var>:<type>=<value>, -D <var>=<value>
 
- Pass in variable values on the command line.  Use in conjunction
- with :ctest-option:`-S` to pass variable values to a dashboard script.
+ Define a variable for dashboard client mode.
+
+ Pass in variable values on the command line.  Use in conjunction with
+ :ctest-option:`-S` to pass variable values to a dashboard script, or with
+ :ctest-option:`-T` to override `Dashboard Client Configuration`_ settings.
  Parsing ``-D`` arguments as variable values is only attempted if the value
  following ``-D`` does not match any of the known dashboard types.
 
+ The ``<var>:<type>=<value>`` form accepts any variable name.  The simpler
+ ``<var>=<value>`` form (without a type) is accepted only for variables whose
+ names begin with ``CTEST_``.  In both cases the value overrides the
+ corresponding setting from the `Dashboard Client Configuration`_ file
+ (e.g., ``DartConfiguration.tcl``) when using :ctest-option:`-T`.
+
+ .. note::
+   These definitions set CTest script variables
+   (e.g., :variable:`CTEST_BUILD_NAME`), not CMake cache variables.
+   To pass CMake cache variables to the configure step, consider using a
+   `CTest Script`_, a :manual:`configure preset <cmake-presets(7)>`, or
+   setting :variable:`CTEST_CONFIGURE_COMMAND`.
+
+.. option:: --source-dir <path-to-source>
+
+ .. versionadded:: 4.4
+
+ Specify the project source directory. When combined with
+ :option:`-T Configure <ctest -T>`, this allows CTest to perform an initial
+ configure step for an empty binary directory.  The binary directory defaults
+ to the current working directory; use :ctest-dashboard-option:`--build-dir` to
+ specify a different location. The binary directory is created automatically
+ if it does not yet exist.
+
+ A CMake generator must also be specified. Use
+ :option:`-D CTEST_CMAKE_GENERATOR=\<gen\> <ctest-dashboard -D>` to supply one,
+ or set :variable:`CTEST_CONFIGURE_PRESET` to specify a
+ :manual:`configure preset <cmake-presets(7)>` that includes a
+ :preset:`generator <configurePresets.generator>`.
+
+ See the `CTest Configure Step`_ settings for more details.
+
+.. option:: --build-dir <path-to-build>
+
+ .. versionadded:: 4.4
+
+ Specify the project binary (build) directory. This is an alias for
+ :ctest-option:`--test-dir` intended for use with
+ :ctest-dashboard-option:`--source-dir` when bootstrapping a build with
+ :option:`-T Configure <ctest -T>`.
+
 .. option:: --group <group>
 
- Specify what group you'd like to submit results to
+ Specify the group to which to submit results.
 
- Submit dashboard to specified group instead of default one.  By
+ Submit dashboard to specified group instead of the default.  By
  default, the dashboard is submitted to Nightly, Experimental, or
  Continuous group, but by specifying this option, the group can be
  arbitrary.
@@ -991,6 +1043,15 @@ to the build tree and use one of these signatures::
   ctest -D <mode>[<step>]
   ctest -M <mode> [-T <step>]...
 
+The :ctest-dashboard-option:`--source-dir` option additionally allows the
+``Configure`` step to be performed on a build tree that does not yet
+exist, in which case the :ctest-dashboard-option:`--build-dir` option specifies
+where to create it::
+
+  ctest [-M <mode>] -T Configure
+      --source-dir <path-to-source> [--build-dir <path-to-build>]
+  ctest --build-and-test <path-to-source> <path-to-build>
+
 The ``<mode>`` must be one of the above `Dashboard Client Modes`_,
 and each ``<step>`` must be one of the above `Dashboard Client Steps`_.
 
@@ -1063,6 +1124,13 @@ Configuration settings include:
 
   * `CTest Script`_ variable: :variable:`CTEST_SOURCE_DIRECTORY`
   * :module:`CTest` module variable: :variable:`PROJECT_SOURCE_DIR`
+
+``CheckoutCommand``
+  Command-line to run before the start step to initialize the source
+  directory, e.g. to perform an initial checkout from version control.
+
+  * `CTest Script`_ variable: :variable:`CTEST_CHECKOUT_COMMAND`
+  * :module:`CTest` module variable: none
 
 .. _`CTest Update Step`:
 
@@ -1224,6 +1292,7 @@ Configuration settings to specify the version control tool include:
   to a different version.
 
   * `CTest Script`_ variable: :variable:`CTEST_UPDATE_VERSION_ONLY`
+  * :command:`ctest_update` option: ``VERSION_ONLY``
 
 .. _`UpdateVersionOverride`:
 
@@ -1237,6 +1306,7 @@ Configuration settings to specify the version control tool include:
   CTest not to update the source tree to a different version.
 
   * `CTest Script`_ variable: :variable:`CTEST_UPDATE_VERSION_OVERRIDE`
+  * :command:`ctest_update` option: ``VERSION_OVERRIDE <version>``
 
 Additional configuration settings include:
 
@@ -1280,6 +1350,27 @@ Configuration settings include:
   * :module:`CTest` module variable: ``CTEST_LABELS_FOR_SUBPROJECTS``
 
   See `Label and Subproject Summary`_.
+
+``CMakeGenerator``
+  The CMake generator to use for the configure step when
+  ``ConfigureCommand`` is not set.
+
+  * `CTest Script`_ variable: ``CTEST_CMAKE_GENERATOR``
+  * :module:`CTest` module variable: none
+
+``CMakeGeneratorPlatform``
+  The CMake generator platform to use for the configure step when
+  ``ConfigureCommand`` is not set.
+
+  * `CTest Script`_ variable: ``CTEST_CMAKE_GENERATOR_PLATFORM``
+  * :module:`CTest` module variable: none
+
+``CMakeGeneratorToolset``
+  The CMake generator toolset to use for the configure step when
+  ``ConfigureCommand`` is not set.
+
+  * `CTest Script`_ variable: ``CTEST_CMAKE_GENERATOR_TOOLSET``
+  * :module:`CTest` module variable: none
 
 .. _`CTest Build Step`:
 
@@ -1338,6 +1429,20 @@ Configuration settings include:
   * `CTest Script`_ variable: :variable:`CTEST_USE_LAUNCHERS`
   * :module:`CTest` module variable: ``CTEST_USE_LAUNCHERS``
 
+``BuildFlags``
+  Additional flags to pass to the build tool when building the project.
+  Only used when ``MakeCommand`` is not set explicitly.
+
+  * `CTest Script`_ variable: ``CTEST_BUILD_FLAGS``
+  * :module:`CTest` module variable: none
+
+``BuildTarget``
+  Specify a specific target to build instead of the default target.
+  Only used when ``MakeCommand`` is not set explicitly.
+
+  * `CTest Script`_ variable: ``CTEST_BUILD_TARGET``
+  * :module:`CTest` module variable: none
+
 .. _`CTest Test Step`:
 
 CTest Test Step
@@ -1383,7 +1488,40 @@ Configuration settings include:
   * `CTest Script`_ variable: :variable:`CTEST_TEST_TIMEOUT`
   * :module:`CTest` module variable: ``DART_TESTING_TIMEOUT``
 
+.. _`ctest-CoverageTool`:
+
+``CoverageTool``
+  .. versionadded:: 4.4
+
+  Specify the tool used for collecting coverage during the running
+  of the tests.  The tool may be one of:
+
+  ``LLVM-COV``
+    This value indicates the usage of Clang's source-based code coverage
+    which "operates on AST and preprocessor information directly".
+    For more information, see the `Clang Source-based Code Coverage`_
+    documentation.
+
+    CTest will run each test with the ``LLVM_PROFILE_FILE`` environment
+    variable set to ``<directory>/<test-name>_<process-id>.profraw``,
+    where ``<directory>`` is the absolute path to the directory where
+    the ``CTestTestfile.cmake`` that describes the test is located.
+    This configures Clang Source-based Code Coverage to uniquely identify
+    the coverage information gathered by each test without any collisions.
+
+    Any existing ``<directory>/<test-name>_*.profraw`` files for a test
+    are removed before running the test.  Any existing ``LLVM_PROFILE_FILE``
+    environment variable is ignored.
+
+  If no value is specified, no work is done and nothing is added to the
+  environment.
+
+  * `CTest Script`_ variable: :variable:`CTEST_TEST_COVERAGE_TOOL`
+  * :module:`CTest` module variable: :variable:`CTEST_TEST_COVERAGE_TOOL`
+
 To report extra test values to CDash, see :ref:`Additional Test Measurements`.
+
+.. _`Clang Source-based Code Coverage`: https://clang.llvm.org/docs/SourceBasedCodeCoverage.html
 
 .. _`CTest Coverage Step`:
 
@@ -1410,6 +1548,13 @@ Configuration settings include:
   * :module:`CTest` module variable: ``COVERAGE_EXTRA_FLAGS``
 
   These options are the first arguments passed to ``CoverageCommand``.
+
+``ExtraCoverageGlob``
+  A semicolon-separated list of glob patterns for additional source files
+  to include in the coverage analysis.
+
+  * `CTest Script`_ variable: :variable:`CTEST_EXTRA_COVERAGE_GLOB`
+  * :module:`CTest` module variable: none
 
 .. _`CTest MemCheck Step`:
 
@@ -1650,6 +1795,35 @@ Configuration settings include:
   * `CTest Script`_ variable: :variable:`CTEST_SUBMIT_INACTIVITY_TIMEOUT`
   * :module:`CTest` module variable: ``CTEST_SUBMIT_INACTIVITY_TIMEOUT``
 
+``NotesFiles``
+  A semicolon-separated list of notes files to upload with the submission.
+
+  * `CTest Script`_ variable: :variable:`CTEST_NOTES_FILES`
+  * :module:`CTest` module variable: none
+
+``ExtraSubmitFiles``
+  A semicolon-separated list of extra ``.xml`` files to upload with the
+  submission.
+
+  * `CTest Script`_ variable: :variable:`CTEST_EXTRA_SUBMIT_FILES`
+  * :module:`CTest` module variable: none
+
+``SubmitParts``
+  A semicolon-separated list of part names to submit.  When set, only the
+  named parts are submitted rather than all available parts.  Valid names
+  are the same as the ``PARTS`` option of :command:`ctest_submit`.
+
+  * `CTest Script`_ variable: :variable:`CTEST_SUBMIT_PARTS`
+  * :module:`CTest` module variable: none
+
+``TimeLimit``
+  Maximum total time (in seconds) allowed for the entire dashboard run.
+  CTest will not start additional steps once the remaining time drops
+  below two minutes.
+
+  * `CTest Script`_ variable: ``CTEST_TIME_LIMIT``
+  * :module:`CTest` module variable: none
+
 ``TLSVersion``
   .. versionadded:: 3.30
 
@@ -1745,8 +1919,8 @@ model is defined as follows:
   ``config``
     Optional field specifying the configuration for which the test will run.
     This will always match the :ctest-option:`-C` option specified on the
-    ``ctest`` command line.  If no such option was given, this field will not
-    be present.
+    :program:`ctest` command line.  If no such option was given, this field
+    will not be present.
   ``command``
     Optional array where the first element is the test command and the
     remaining elements are the command arguments.  Normally, this field should
@@ -1783,11 +1957,11 @@ prevents them from trying to claim resources that are not available.
 When the resource allocation feature is used, CTest will not oversubscribe
 resources. For example, if a resource has 8 slots, CTest will not run tests
 that collectively use more than 8 slots at a time. This has the effect of
-limiting how many tests can run at any given time, even if a high ``-j``
-argument is used, if those tests all use some slots from the same resource.
-In addition, it means that a single test that uses more of a resource than is
-available on a machine will not run at all (and will be reported as
-``Not Run``).
+limiting how many tests can run at any given time, even if a high
+:ctest-option:`-j` argument is used, if those tests all use some slots from the
+same resource. In addition, it means that a single test that uses more of a
+resource than is available on a machine will not run at all (and will be
+reported as ``Not Run``).
 
 A common use case for this feature is for tests that require the use of a GPU.
 Multiple tests can simultaneously allocate memory from a GPU, but if too many
@@ -1825,27 +1999,27 @@ form of a set of
 described below. Using this information to decide which resource to connect to
 is left to the test writer.
 
-The ``RESOURCE_GROUPS`` property tells CTest what resources a test expects
-to use grouped in a way meaningful to the test.  The test itself must read
-the :ref:`environment variables <ctest-resource-environment-variables>` to
+The :prop_test:`RESOURCE_GROUPS` property tells CTest what resources a test
+expects to use grouped in a way meaningful to the test.  The test itself must
+read the :ref:`environment variables <ctest-resource-environment-variables>` to
 determine which resources have been allocated to each group.  For example,
 each group may correspond to a process the test will spawn when executed.
 
-Note that even if a test specifies a ``RESOURCE_GROUPS`` property, it is still
-possible for that to test to run without any resource allocation (and without
-the corresponding
+Note that even if a test specifies a :prop_test:`RESOURCE_GROUPS` property, it
+is still possible for that to test to run without any resource allocation
+(and without the corresponding
 :ref:`environment variables <ctest-resource-environment-variables>`)
 if the user does not pass a resource specification file. Passing this file,
-either through the ``--resource-spec-file`` command-line argument or the
-``RESOURCE_SPEC_FILE`` argument to :command:`ctest_test`, is what activates the
-resource allocation feature. Tests should check the
+either through the :ctest-option:`--resource-spec-file` command-line argument
+or the ``RESOURCE_SPEC_FILE`` argument to :command:`ctest_test`, is what
+activates the resource allocation feature. Tests should check the
 ``CTEST_RESOURCE_GROUP_COUNT`` environment variable to find out whether or not
 resource allocation is activated. This variable will always (and only) be
 defined if resource allocation is activated. If resource allocation is not
 activated, then the ``CTEST_RESOURCE_GROUP_COUNT`` variable will not exist,
-even if it exists for the parent :program:`ctest` process. If a test absolutely must
-have resource allocation, then it can return a failing exit code or use the
-:prop_test:`SKIP_RETURN_CODE` or :prop_test:`SKIP_REGULAR_EXPRESSION`
+even if it exists for the parent :program:`ctest` process. If a test absolutely
+must have resource allocation, then it can return a failing exit code or use
+the :prop_test:`SKIP_RETURN_CODE` or :prop_test:`SKIP_REGULAR_EXPRESSION`
 properties to indicate a skipped test.
 
 .. _`ctest-resource-specification-file`:
@@ -1855,7 +2029,7 @@ Resource Specification File
 
 The resource specification file is a JSON file which is passed to CTest in one
 of a number of ways. It can be specified on the command line with the
-:option:`ctest --resource-spec-file` option, it can be given using the
+:ctest-option:`--resource-spec-file` option, it can be given using the
 ``RESOURCE_SPEC_FILE`` argument of :command:`ctest_test`, or it can be
 generated dynamically as part of test execution (see
 :ref:`ctest-resource-dynamically-generated-spec-file`).
@@ -1985,9 +2159,9 @@ The following variables are passed to the test process:
   * ``CTEST_RESOURCE_GROUP_COUNT=3``
 
   This variable will only be defined if :manual:`ctest(1)` has been given a
-  ``--resource-spec-file``, or if :command:`ctest_test` has been given a
-  ``RESOURCE_SPEC_FILE``. If no resource specification file has been given,
-  this variable will not be defined.
+  :ctest-option:`--resource-spec-file`, or if :command:`ctest_test` has been
+  given a ``RESOURCE_SPEC_FILE``. If no resource specification file has been
+  given, this variable will not be defined.
 
 .. envvar:: CTEST_RESOURCE_GROUP_<num>
 
@@ -2071,8 +2245,8 @@ For example, consider the ``Makefile``:
 .. literalinclude:: CTEST_EXAMPLE_MAKEFILE_JOB_SERVER.make
   :language: make
 
-When invoked via ``make -j 2 test``, ``ctest`` connects to the job server,
-acquires a token for each test, and runs at most 2 tests concurrently.
+When invoked via ``make -j 2 test``, CTest connects to the job server, acquires
+a token for each test, and runs at most 2 tests concurrently.
 
 On Windows systems, job server integration is not yet implemented.
 

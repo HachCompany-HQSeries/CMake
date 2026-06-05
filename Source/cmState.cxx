@@ -390,11 +390,6 @@ std::vector<std::string> cmState::GetEnabledLanguages() const
   return this->EnabledLanguages;
 }
 
-void cmState::SetEnabledLanguages(std::vector<std::string> const& langs)
-{
-  this->EnabledLanguages = langs;
-}
-
 void cmState::ClearEnabledLanguages()
 {
   this->EnabledLanguages.clear();
@@ -471,13 +466,8 @@ void cmState::AddDisallowedCommand(std::string const& name,
                         cmExecutionStatus& status) -> bool {
       cmMakefile& mf = status.GetMakefile();
       switch (mf.GetPolicyStatus(policy)) {
-        case cmPolicies::WARN: {
-          std::string warning = cmPolicies::GetPolicyWarning(policy);
-          if (additionalWarning) {
-            warning = cmStrCat(warning, '\n', additionalWarning);
-          }
-          mf.IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, warning);
-        }
+        case cmPolicies::WARN:
+          mf.IssuePolicyWarning(policy, {}, additionalWarning);
           CM_FALLTHROUGH;
         case cmPolicies::OLD:
           break;
@@ -683,6 +673,9 @@ cmValue cmState::GetGlobalProperty(std::string const& prop)
     this->SetGlobalProperty("ENABLED_LANGUAGES", langs);
   } else if (prop == "CMAKE_ROLE") {
     this->SetGlobalProperty("CMAKE_ROLE", this->GetRoleString());
+  } else if (prop == "_CMAKE_RUNNING_IN_BUILD_TREE") {
+    this->SetGlobalProperty("_CMAKE_RUNNING_IN_BUILD_TREE",
+                            cmSystemTools::GetCMakeInBuildTree() ? "1" : "0");
   }
 #define STRING_LIST_ELEMENT(F) ";" #F
   if (prop == "CMAKE_C_KNOWN_FEATURES") {

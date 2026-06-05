@@ -3,8 +3,11 @@
 #include "cmMessenger.h"
 
 #include <algorithm>
+#include <array>
 #include <sstream>
 #include <utility>
+
+#include <cmext/string_view>
 
 #include "cmDocumentationFormatter.h"
 #include "cmMessageMetadata.h"
@@ -61,6 +64,17 @@ cm::StdIo::TermAttr getMessageColor(MessageType t)
   }
 }
 
+bool isAuthorDiagnostic(cmDiagnosticCategory category)
+{
+  while (category != cmDiagnostics::CMD_NONE) {
+    if (category == cmDiagnostics::CMD_AUTHOR) {
+      return true;
+    }
+    category = cmDiagnostics::CategoryInfo[category].Parent;
+  }
+  return false;
+}
+
 void printMessageText(std::ostream& msg, std::string const& text)
 {
   msg << ":\n";
@@ -72,19 +86,30 @@ void printMessageText(std::ostream& msg, std::string const& text)
 void displayMessage(MessageType type, cmDiagnosticCategory category,
                     std::ostringstream& msg)
 {
-  if (category == cmDiagnostics::CMD_AUTHOR) {
+  if (isAuthorDiagnostic(category)) {
     // Add a note about warning suppression.
+    std::ostringstream text;
     if (type == MessageType::WARNING) {
-      msg << "This warning is for project developers.  "
-             "Use -Wno-author to suppress it.";
+      text << "This warning is for project developers.  "
+              "Use -Wno-author";
+      if (category != cmDiagnostics::CMD_AUTHOR) {
+        text << " or -Wno-" << getDiagnosticCategoryStr(category);
+      }
     } else if (type == MessageType::FATAL_ERROR) {
-      msg << "This error is for project developers.  "
-             "Use -Wno-error=author to suppress it.";
+      text << "This error is for project developers.  "
+              "Use -Wno-error=author";
+      if (category != cmDiagnostics::CMD_AUTHOR) {
+        text << " or -Wno-error=" << getDiagnosticCategoryStr(category);
+      }
     }
-  }
+    text << " to suppress it.";
 
-  // Add a terminating blank line.
-  msg << '\n';
+    cmDocumentationFormatter formatter;
+    formatter.PrintFormatted(msg, text.str());
+  } else {
+    // Add a terminating blank line.
+    msg << '\n';
+  }
 
 #if !defined(CMAKE_BOOTSTRAP)
   // Add a C++ stack trace to internal errors.
@@ -160,10 +185,29 @@ void cmMessenger::IssueMessage(MessageType t, std::string const& text,
 
 void cmMessenger::IssueDiagnostic(cmDiagnosticCategory category,
                                   std::string const& text,
-                                  cmStateSnapshot const& context,
-                                  cmListFileBacktrace const& backtrace) const
+                                  cmStateSnapshot const& fallbackContext,
+                                  cmDiagnosticContext const& context) const
 {
-  cmDiagnosticAction const action = context.GetDiagnostic(category);
+  cmDiagnosticAction const action = [&] {
+    if (context.HasState) {
+      cmDiagnosticAction const ca = context.DiagnosticState[category];
+      if (ca != cmDiagnostics::Undefined) {
+        return ca;
+      }
+
+      // If the context has recorded states, but not the state we want, this
+      // implies that we had the opportunity to record the state and failed to
+      // do so. Ask users to report this.
+      std::string msg =
+        cmStrCat("Stored diagnostic context did not record state for "_s,
+                 cmDiagnostics::GetCategoryString(category),
+                 ".  Please report this as a bug.\n"_s);
+      this->IssueMessage(MessageType::LOG, msg, context.GetBacktrace());
+    }
+
+    return fallbackContext.GetDiagnostic(category);
+  }();
+
   switch (action) {
     case cmDiagnostics::FatalError:
       cmSystemTools::SetFatalErrorOccurred();
@@ -171,10 +215,11 @@ void cmMessenger::IssueDiagnostic(cmDiagnosticCategory category,
     case cmDiagnostics::SendError:
       cmSystemTools::SetErrorOccurred();
       this->DisplayMessage(MessageType::FATAL_ERROR, category, text,
-                           backtrace);
+                           context.GetBacktrace());
       break;
     case cmDiagnostics::Warn:
-      this->DisplayMessage(MessageType::WARNING, category, text, backtrace);
+      this->DisplayMessage(MessageType::WARNING, category, text,
+                           context.GetBacktrace());
       break;
     default:
       return;

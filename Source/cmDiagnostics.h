@@ -28,7 +28,9 @@
 #define CM_FOR_EACH_DIAGNOSTIC_TABLE(ACTION, SELECT)                          \
   SELECT(ACTION, Warn, CMD_NONE, CMD_AUTHOR, 12)                              \
   SELECT(ACTION, Warn, CMD_AUTHOR, CMD_DEPRECATED, 1)                         \
+  SELECT(ACTION, Warn, CMD_AUTHOR, CMD_EXPERIMENTAL, 12)                      \
   SELECT(ACTION, Ignore, CMD_AUTHOR, CMD_INSTALL_ABSOLUTE_DESTINATION, 12)    \
+  SELECT(ACTION, Warn, CMD_AUTHOR, CMD_POLICY, 12)                            \
   SELECT(ACTION, Ignore, CMD_NONE, CMD_UNINITIALIZED, 1)                      \
   SELECT(ACTION, Warn, CMD_NONE, CMD_UNUSED_CLI, 1)
 
@@ -36,7 +38,7 @@
 #define CM_FOR_EACH_DIAGNOSTIC_CATEGORY(ACTION)                               \
   CM_FOR_EACH_DIAGNOSTIC_TABLE(ACTION, CM_SELECT_CATEGORY)
 
-/** \class cmDiagnostic
+/** \class cmDiagnostics
  * \brief Handles CMake diagnostic (warning) behavior
  *
  * See the cmake-diagnostics(7) manual for an overview of this class's purpose.
@@ -101,7 +103,11 @@ public:
     cm::string_view name);
 
   /** Represent a set of diagnostic category actions.  */
-  using DiagnosticMap = std::array<DiagnosticAction, CategoryCount>;
+  struct DiagnosticMap : public std::array<DiagnosticAction, CategoryCount>
+  {
+    DiagnosticMap()
+      : array{} {};
+  };
 };
 
 using cmDiagnosticCategory = cmDiagnostics::DiagnosticCategory;

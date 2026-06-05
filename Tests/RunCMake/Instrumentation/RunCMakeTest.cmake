@@ -16,10 +16,12 @@ function(instrument test)
     "COPY_QUERIES_GENERATED"
     "STATIC_QUERY"
     "DYNAMIC_QUERY"
+    "CAPTURE_OUTPUT_QUERY"
     "TRACE_QUERY"
     "MANUAL_HOOK"
     "PRESERVE_DATA"
     "NO_CONFIGURE"
+    "DISABLE_TEST"
     "FAIL"
     "BAD_QUERY"
   )
@@ -81,7 +83,7 @@ function(instrument test)
         )
         set(cmake_file "${RunCMake_TEST_BINARY_DIR}/${cmake_filename}")
       else ()
-        set(cmake_file ${query_dir}/default.cmake)
+        set(cmake_file "${query_dir}/default.cmake")
       endif()
     endif()
     list(APPEND ARGS_CONFIGURE_ARG "-DINSTRUMENT_COMMAND_FILE=${cmake_file}")
@@ -112,6 +114,9 @@ function(instrument test)
   if (ARGS_FAIL)
     list(APPEND ARGS_CONFIGURE_ARG "-DFAIL=ON")
   endif()
+  if (ARGS_DISABLE_TEST)
+    list(APPEND ARGS_CONFIGURE_ARG "-DDISABLE_TEST=ON")
+  endif()
   set(RunCMake_TEST_SOURCE_DIR ${RunCMake_SOURCE_DIR}/project)
   if(NOT RunCMake_GENERATOR_IS_MULTI_CONFIG)
     set(maybe_CMAKE_BUILD_TYPE -DCMAKE_BUILD_TYPE=Debug)
@@ -129,9 +134,11 @@ function(instrument test)
         COPYONLY
       )
     endforeach()
+    set(RunCMake_QUIET_ERROR 1)
     set(v1 ${RunCMake_TEST_BINARY_DIR}/build/.cmake/instrumentation/v1)
     run_cmake_command(${test}-workflow ${CMAKE_COMMAND} --workflow default)
     set(ARGS_NO_CONFIGURE TRUE)
+    unset(RunCMake_QUIET_ERROR)
   endif()
   if (NOT ARGS_NO_CONFIGURE)
     run_cmake_with_options(${test} ${ARGS_CONFIGURE_ARG} ${maybe_CMAKE_BUILD_TYPE})
@@ -156,19 +163,23 @@ function(instrument test)
       # errors to different places.
       set(RunCMake_TEST_OUTPUT_MERGE 1)
     endif()
+    set(RunCMake_QUIET_ERROR 1)
     run_cmake_command(${test}-build
       ${CMAKE_COMMAND} --build . ${cmake_build_args} -- ${additional_build_args}
     )
+    unset(RunCMake_QUIET_ERROR)
     if (ARGS_FAIL)
       unset(RunCMake_TEST_OUTPUT_MERGE)
     endif()
   endif()
   if (ARGS_BUILD_MAKE_PROGRAM)
     set(RunCMake_TEST_OUTPUT_MERGE 1)
+    set(RunCMake_QUIET_ERROR 1)
     # Force reconfigure to test for double preBuild & postBuild hooks
     file(TOUCH ${RunCMake_TEST_BINARY_DIR}/CMakeCache.txt)
     run_cmake_command(${test}-make-program ${RunCMake_MAKE_PROGRAM})
     unset(RunCMake_TEST_OUTPUT_MERGE)
+    unset(RunCMake_QUIET_ERROR)
   endif()
   if (ARGS_INSTALL)
     run_cmake_command(${test}-install ${CMAKE_COMMAND} --install . --prefix install --config Debug)
@@ -204,6 +215,18 @@ instrument(empty BAD_QUERY
 instrument(bad-version BAD_QUERY
   CHECK_SCRIPT check-query-dir.cmake
 )
+instrument(bad-version-major BAD_QUERY
+  CHECK_SCRIPT check-query-dir.cmake
+)
+instrument(bad-version-minor BAD_QUERY
+  CHECK_SCRIPT check-query-dir.cmake
+)
+instrument(bad-version-object BAD_QUERY
+  CHECK_SCRIPT check-query-dir.cmake
+)
+instrument(hooks-invalid-version-ignored BUILD
+  CHECK_SCRIPT check-hooks-invalid-version-ignored.cmake
+)
 
 # Verify Hooks Run and Index File
 instrument(hooks-1 BUILD INSTALL TEST STATIC_QUERY
@@ -221,12 +244,16 @@ instrument(no-query
   BUILD INSTALL TEST
   CHECK_SCRIPT check-data-dir.cmake
 )
+instrument(disabled-test
+  BUILD TEST DISABLE_TEST
+  CHECK_SCRIPT check-data-dir.cmake
+)
 instrument(dynamic-query
   BUILD INSTALL TEST DYNAMIC_QUERY
   CHECK_SCRIPT check-data-dir.cmake
 )
 instrument(both-query
-  BUILD INSTALL TEST DYNAMIC_QUERY
+  BUILD INSTALL TEST STATIC_QUERY DYNAMIC_QUERY CAPTURE_OUTPUT_QUERY
   CHECK_SCRIPT check-data-dir.cmake
 )
 
@@ -241,6 +268,7 @@ instrument(cmake-command-data
 )
 instrument(cmake-command-bad-api-version)
 instrument(cmake-command-bad-data-version)
+instrument(cmake-command-unsupported-data-version)
 instrument(cmake-command-missing-version)
 instrument(cmake-command-bad-arg)
 instrument(cmake-command-parallel-install
@@ -316,6 +344,12 @@ instrument(cmake-command-trace
 instrument(cmake-command-trace
   BUILD PRESERVE_DATA
   CHECK_SCRIPT check-trace-removed.cmake
+)
+
+# Test capture output
+instrument(cmake-command-capture-output
+  BUILD CAPTURE_OUTPUT_QUERY
+  CHECK_SCRIPT check-data-dir.cmake
 )
 
 # Test make/ninja hooks

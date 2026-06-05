@@ -16,14 +16,15 @@ Perform the :ref:`CTest Build Step` as a :ref:`Dashboard Client`.
               [RETURN_VALUE <result-var>]
               [CAPTURE_CMAKE_ERROR <result-var>]
               [PRESET <preset>]
+              [PRESETS_FILE <file>]
               )
 
 Build the project and store results in ``Build.xml``
 for submission with the :command:`ctest_submit` command.
 
 The :variable:`CTEST_BUILD_COMMAND` variable may be set to explicitly
-specify the build command line.  Otherwise the build command line is
-computed automatically based on the options given.
+specify the build command line when no preset is selected.  Otherwise
+the build command line is computed automatically based on the options given.
 
 The options are:
 
@@ -84,6 +85,24 @@ The options are:
   corresponding setting from the preset.  For example, the ``TARGET``
   argument will override the :preset:`buildPresets.targets` setting from
   the chosen preset.
+
+  When a preset is specified, the :variable:`CTEST_BUILD_COMMAND`
+  variable is ignored so that the preset is always honored.
+
+  See also the :variable:`CTEST_BUILD_PRESET` and
+  :variable:`CTEST_PRESET` variables.
+
+``PRESETS_FILE <file>``
+  .. versionadded:: 4.4
+
+  Specify a :manual:`presets <cmake-presets(7)>` file to use instead of the
+  default ``CMakePresets.json`` in the source directory.
+  A relative path is interpreted relative to the source directory.
+  Has no effect unless a preset is selected via the ``PRESET`` argument
+  or the :variable:`CTEST_BUILD_PRESET` or :variable:`CTEST_PRESET`
+  variables.
+
+  See also the :variable:`CTEST_PRESETS_FILE` variable.
 
 ``RETURN_VALUE <result-var>``
   Store the return value of the native build tool in the given variable.

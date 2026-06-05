@@ -2007,14 +2007,16 @@ void cmVisualStudio10TargetGenerator::WriteGroups()
   std::set<cmSourceGroup const*> groupsUsed;
   for (cmGeneratorTarget::AllConfigSource const& si : sources) {
     std::string const& source = si.Source->GetFullPath();
-    cmSourceGroup* sourceGroup = this->LocalGenerator->FindSourceGroup(source);
+    cmSourceGroup const* sourceGroup =
+      this->LocalGenerator->FindSourceGroup(source);
     groupsUsed.insert(sourceGroup);
   }
 
   if (cmSourceFile const* srcCMakeLists =
         this->LocalGenerator->CreateVCProjBuildRule()) {
     std::string const& source = srcCMakeLists->GetFullPath();
-    cmSourceGroup* sourceGroup = this->LocalGenerator->FindSourceGroup(source);
+    cmSourceGroup const* sourceGroup =
+      this->LocalGenerator->FindSourceGroup(source);
     groupsUsed.insert(sourceGroup);
   }
 
@@ -2173,7 +2175,8 @@ void cmVisualStudio10TargetGenerator::WriteGroupSources(
   for (ToolSource const& s : sources) {
     cmSourceFile const* sf = s.SourceFile;
     std::string const& source = sf->GetFullPath();
-    cmSourceGroup* sourceGroup = this->LocalGenerator->FindSourceGroup(source);
+    cmSourceGroup const* sourceGroup =
+      this->LocalGenerator->FindSourceGroup(source);
     std::string const& filter = sourceGroup->GetFullName();
     std::string path = this->ConvertPath(source, s.RelativePath);
     ConvertToWindowsSlash(path);
@@ -2691,7 +2694,12 @@ void cmVisualStudio10TargetGenerator::WriteAllSources(Elem& e0)
         if (useNativeUnityBuild) {
           e2.Attribute(
             "IncludeInUnityFile",
-            si.Source->GetPropertyAsBool("SKIP_UNITY_BUILD_INCLUSION")
+            ((fs &&
+              (!cm::FileSetMetadata::GetAttributes(fs->GetType())
+                  .contains(
+                    cm::FileSetMetadata::FileSetAttributes::UnityBuild) ||
+               fs->GetProperty("SKIP_UNITY_BUILD_INCLUSION").IsOn())) ||
+             si.Source->GetPropertyAsBool("SKIP_UNITY_BUILD_INCLUSION"))
               ? "false"
               : "true");
           e2.Attribute("CustomUnityFile", "true");
@@ -2702,14 +2710,24 @@ void cmVisualStudio10TargetGenerator::WriteAllSources(Elem& e0)
         } else {
           // Visual Studio versions prior to 2017 15.8 do not know about unity
           // builds, thus we exclude the files already part of unity sources.
-          if (!si.Source->GetPropertyAsBool("SKIP_UNITY_BUILD_INCLUSION")) {
+          if (!((fs &&
+                 (!cm::FileSetMetadata::GetAttributes(fs->GetType())
+                     .contains(
+                       cm::FileSetMetadata::FileSetAttributes::UnityBuild) ||
+                  fs->GetProperty("SKIP_UNITY_BUILD_INCLUSION").IsOn())) ||
+                si.Source->GetPropertyAsBool("SKIP_UNITY_BUILD_INCLUSION"))) {
             exclude_configs = all_configs;
           }
         }
       }
       if (haveUnityBuild && strcmp(tool, "CudaCompile") == 0 &&
           si.Source->GetProperty("UNITY_SOURCE_FILE")) {
-        if (!si.Source->GetPropertyAsBool("SKIP_UNITY_BUILD_INCLUSION")) {
+        if (!((fs &&
+               (!cm::FileSetMetadata::GetAttributes(fs->GetType())
+                   .contains(
+                     cm::FileSetMetadata::FileSetAttributes::UnityBuild) ||
+                fs->GetProperty("SKIP_UNITY_BUILD_INCLUSION").IsOn())) ||
+              si.Source->GetPropertyAsBool("SKIP_UNITY_BUILD_INCLUSION"))) {
           exclude_configs = all_configs;
         }
       }
@@ -2725,7 +2743,8 @@ void cmVisualStudio10TargetGenerator::WriteAllSources(Elem& e0)
                    "\nin a \"FILE_SET TYPE ", cm::FileSetMetadata::CXX_MODULES,
                    "\" but it is not scheduled for compilation."));
       }
-      if (si.Source->GetPropertyAsBool("SKIP_PRECOMPILE_HEADERS")) {
+      if ((fs && fs->GetProperty("SKIP_PRECOMPILE_HEADERS")) ||
+          si.Source->GetPropertyAsBool("SKIP_PRECOMPILE_HEADERS")) {
         e2.Element("PrecompiledHeader", "NotUsing");
       }
       if (!isCSharp && !exclude_configs.empty()) {
@@ -2947,8 +2966,9 @@ void cmVisualStudio10TargetGenerator::OutputSourceSpecificFlags(
       this->GeneratorTarget->GetLinkerLanguage(config);
     std::string const& pchSource =
       this->GeneratorTarget->GetPchSource(config, lang);
-    bool const skipPCH =
-      pchSource.empty() || sf.GetPropertyAsBool("SKIP_PRECOMPILE_HEADERS");
+    bool const skipPCH = pchSource.empty() ||
+      (fileSet && fileSet->GetProperty("SKIP_PRECOMPILE_HEADERS")) ||
+      sf.GetPropertyAsBool("SKIP_PRECOMPILE_HEADERS");
     bool const makePCH = (sf.GetFullPath() == pchSource);
     bool const useSharedPCH = !skipPCH && (lang == linkLanguage);
     bool const useDifferentLangPCH = !skipPCH && (lang != linkLanguage);
@@ -6075,7 +6095,7 @@ std::string cmVisualStudio10TargetGenerator::GetCSharpSourceLink(
   std::string const& fullFileName = source->GetFullPath();
   std::string const& srcDir = this->Makefile->GetCurrentSourceDirectory();
   std::string const& binDir = this->Makefile->GetCurrentBinaryDirectory();
-  cmSourceGroup* sourceGroup =
+  cmSourceGroup const* sourceGroup =
     this->LocalGenerator->FindSourceGroup(fullFileName);
   if (sourceGroup && !sourceGroup->GetFullName().empty()) {
     sourceGroupedFile =

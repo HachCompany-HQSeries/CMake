@@ -8,11 +8,6 @@ function(add_prefix in out)
   set(${out} "prefix_${in}" PARENT_SCOPE)
 endfunction()
 
-# Define a transform macro: wrap in angle brackets
-macro(wrap_angles in out)
-  set(${out} "<${in}>")
-endmacro()
-
 set(mylist alpha bravo charlie delta)
 
 # Basic APPLY - all elements
@@ -74,19 +69,6 @@ if(NOT output STREQUAL "prefix_alpha;prefix_bravo;prefix_charlie;prefix_delta")
   message(FATAL_ERROR "TRANSFORM(APPLY add_prefix) is \"${output}\", expected is \"prefix_alpha;prefix_bravo;prefix_charlie;prefix_delta\"")
 endif()
 
-# APPLY with a macro
-set(mylist alpha bravo charlie)
-list(TRANSFORM mylist APPLY wrap_angles OUTPUT_VARIABLE output)
-if(NOT output STREQUAL "<alpha>;<bravo>;<charlie>")
-  message(FATAL_ERROR "TRANSFORM(APPLY macro) is \"${output}\", expected is \"<alpha>;<bravo>;<charlie>\"")
-endif()
-
-# APPLY with macro and selector
-list(TRANSFORM mylist APPLY wrap_angles AT 0 2 OUTPUT_VARIABLE output)
-if(NOT output STREQUAL "<alpha>;bravo;<charlie>")
-  message(FATAL_ERROR "TRANSFORM(APPLY macro AT) is \"${output}\", expected is \"<alpha>;bravo;<charlie>\"")
-endif()
-
 # APPLY on empty list
 set(empty_list "")
 list(TRANSFORM empty_list APPLY add_src_prefix OUTPUT_VARIABLE output)
@@ -103,4 +85,29 @@ set(mylist alpha bravo charlie)
 list(TRANSFORM mylist APPLY make_empty)
 if(NOT mylist STREQUAL ";;")
   message(FATAL_ERROR "TRANSFORM(APPLY make_empty) is \"${mylist}\", expected is \";;\"")
+endif()
+
+# Recursive APPLY: an APPLY function that itself calls list(TRANSFORM APPLY).
+# The inner function returns the output variable name it was given.
+function(return_out_var_name in out)
+  set(${out} "${out}" PARENT_SCOPE)
+endfunction()
+
+# The outer function triggers a nested APPLY and verifies that the inner
+# output variable name differs from its own.
+function(inner_name_is_different in out)
+  set(_inner x)
+  list(TRANSFORM _inner APPLY return_out_var_name OUTPUT_VARIABLE _inner_out)
+  # _inner_out now holds the inner output variable name
+  if("${out}" STREQUAL "${_inner_out}")
+    set(${out} "FALSE" PARENT_SCOPE)
+  else()
+    set(${out} "TRUE" PARENT_SCOPE)
+  endif()
+endfunction()
+
+set(mylist a b c)
+list(TRANSFORM mylist APPLY inner_name_is_different OUTPUT_VARIABLE output)
+if(NOT output STREQUAL "TRUE;TRUE;TRUE")
+  message(FATAL_ERROR "TRANSFORM(APPLY nested smoke) is \"${output}\", expected \"TRUE;TRUE;TRUE\"")
 endif()

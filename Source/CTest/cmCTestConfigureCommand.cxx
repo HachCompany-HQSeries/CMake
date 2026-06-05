@@ -39,6 +39,7 @@ bool ConstructConfigureCommand(cmExecutionStatus& status, cmMakefile& mf,
                                std::string const buildDirectory,
                                std::string const options,
                                std::string const presetName,
+                               std::string const presetsFile,
                                std::string& configureCommand)
 {
   configureCommand = cmStrCat('"', cmSystemTools::GetCMakeCommand(), '"');
@@ -64,10 +65,10 @@ bool ConstructConfigureCommand(cmExecutionStatus& status, cmMakefile& mf,
 
   if (!presetName.empty()) {
     cmCMakePresetsGraph presetsGraph;
-    if (!presetsGraph.ReadProjectPresets(sourceDirectory, "")) {
-      status.SetError(
-        cmStrCat("Could not read presets from \"", sourceDirectory,
-                 "\": ", presetsGraph.parseState.GetErrorMessage()));
+    if (!presetsGraph.ReadProjectPresets(sourceDirectory, presetsFile)) {
+      status.SetError(cmStrCat("\n Could not read presets from \"",
+                               sourceDirectory, "\":\n ",
+                               presetsGraph.parseState.GetErrorMessage()));
       return false;
     }
 
@@ -88,6 +89,13 @@ bool ConstructConfigureCommand(cmExecutionStatus& status, cmMakefile& mf,
     configureCommand += " \"";
     configureCommand += presetName;
     configureCommand += "\"";
+
+    if (!presetsFile.empty()) {
+      configureCommand += " \"--presets-file\"";
+      configureCommand += " \"";
+      configureCommand += presetsFile;
+      configureCommand += "\"";
+    }
 
     if (!expandedPreset->BinaryDir.empty()) {
       presetProvidesBuildDir = true;
@@ -183,10 +191,41 @@ bool cmCTestConfigureCommand::ExecuteConfigure(ConfigureArguments const& args,
     return false;
   }
 
-  std::string configureCommand = mf.GetDefinition("CTEST_CONFIGURE_COMMAND");
+  // Preset name is set according to the following priority order:
+  // 1) The PRESET option to ctest_configure()
+  // 2) CTEST_CONFIGURE_PRESET script variable
+  // 3) CTEST_PRESET script variable (error if no such configure preset exists)
+  std::string const presetName = !args.Preset.empty() ? args.Preset
+    : cmNonempty(mf.GetDefinition("CTEST_CONFIGURE_PRESET"))
+    ? *mf.GetDefinition("CTEST_CONFIGURE_PRESET")
+    : mf.GetSafeDefinition("CTEST_PRESET");
+
+  // Presets file is set according to the following priority order:
+  // 1) The PRESETS_FILE option to ctest_configure()
+  // 2) CTEST_PRESETS_FILE script variable
+  std::string const rawPresetsFile = !args.PresetsFile.empty()
+    ? args.PresetsFile
+    : mf.GetSafeDefinition("CTEST_PRESETS_FILE");
+
+  std::string const presetsFile = rawPresetsFile.empty()
+    ? ""
+    : cmSystemTools::CollapseFullPath(rawPresetsFile, sourceDirectory);
+
+  // Skip checking CTEST_CONFIGURE_COMMAND when a preset is specified.
+  // We do this to avoid using a stale ConfigureCommand from a previous cmake
+  // run that would cause us to silently ignore the requested preset.
+  std::string configureCommand;
+  if (presetName.empty()) {
+    configureCommand = mf.GetDefinition("CTEST_CONFIGURE_COMMAND");
+  } else if (cmNonempty(mf.GetDefinition("CTEST_CONFIGURE_COMMAND"))) {
+    cmCTestOptionalLog(this->CTest, HANDLER_VERBOSE_OUTPUT,
+                       "Ignoring CTEST_CONFIGURE_COMMAND because preset \""
+                         << presetName << "\" is in use.\n",
+                       args.Quiet);
+  }
   if (configureCommand.empty() &&
       !ConstructConfigureCommand(status, mf, sourceDirectory, buildDirectory,
-                                 args.Options, args.Preset,
+                                 args.Options, presetName, presetsFile,
                                  configureCommand)) {
     return false;
   }
@@ -291,7 +330,8 @@ bool cmCTestConfigureCommand::InitialPass(std::vector<std::string> const& args,
   static auto const parser =
     cmArgumentParser<Args>{ MakeHandlerParser<Args>() } //
       .Bind("OPTIONS"_s, &ConfigureArguments::Options)
-      .Bind("PRESET"_s, &ConfigureArguments::Preset);
+      .Bind("PRESET"_s, &ConfigureArguments::Preset)
+      .Bind("PRESETS_FILE"_s, &ConfigureArguments::PresetsFile);
 
   return this->Invoke(parser, args, status, [&](ConfigureArguments& a) {
     return this->ExecuteConfigure(a, status);

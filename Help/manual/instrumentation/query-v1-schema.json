@@ -4,10 +4,32 @@
   "required": ["version"],
   "properties": {
     "version": {
-      "type": "integer",
       "description": "The data version of snippet file to generate.",
-      "enum": [
-        1
+      "oneOf": [
+        {
+          "type": "integer",
+          "const": 1
+        },
+        {
+          "type": "object",
+          "required": [
+            "major"
+          ],
+          "properties": {
+            "major": {
+              "type": "integer",
+              "const": 1
+            },
+            "minor": {
+              "type": "integer",
+              "enum": [
+                0,
+                1
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
       ]
     },
     "callbacks": {
@@ -45,7 +67,8 @@
           "dynamicSystemInformation",
           "cdashSubmit",
           "cdashVerbose",
-          "trace"
+          "trace",
+          "captureOutput"
         ],
         "type": "string"
       }

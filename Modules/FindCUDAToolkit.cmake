@@ -138,6 +138,7 @@ of the following libraries that are part of the CUDAToolkit:
 - `nvtx3`_
 - `OpenCL`_
 - `cuLIBOS`_
+- `cufilt`_
 
 CUDA Runtime Library
 """"""""""""""""""""
@@ -552,6 +553,20 @@ Target Created:
 - ``CUDA::sanitizer``
 
 .. _`NVIDIA Compute Sanitizer`: https://docs.nvidia.com/compute-sanitizer
+
+cufilt
+""""""
+
+.. versionadded:: 4.4
+
+The `cu++filt`_ binary utility also provides a static library for demangling
+CUDA C++ symbols.
+
+Targets Created:
+
+- ``CUDA::cufilt`` starting in CUDA 11.4
+
+.. _`cu++filt`: https://docs.nvidia.com/cuda/cuda-binary-utilities/index.html#cu-filt
 
 Result Variables
 ^^^^^^^^^^^^^^^^
@@ -1022,7 +1037,9 @@ else()
     endif()
   elseif(CUDAToolkit_NVCC_EXECUTABLE)
     # Compute the version by invoking nvcc
-    execute_process(COMMAND ${CUDAToolkit_NVCC_EXECUTABLE} "--version" OUTPUT_VARIABLE NVCC_OUT)
+    execute_process(COMMAND ${CUDAToolkit_NVCC_EXECUTABLE} "--version"
+      OUTPUT_VARIABLE NVCC_OUT
+      RESULT_VARIABLE _nvcc_version_result)
     if(NVCC_OUT MATCHES [=[ V([0-9]+)\.([0-9]+)\.([0-9]+)]=])
       set(CUDAToolkit_VERSION_MAJOR "${CMAKE_MATCH_1}")
       set(CUDAToolkit_VERSION_MINOR "${CMAKE_MATCH_2}")
@@ -1484,7 +1501,12 @@ if(CUDAToolkit_FOUND)
   endif()
 
   _CUDAToolkit_find_and_add_import_lib(nvml ALT nvidia-ml nvml)
-  _CUDAToolkit_find_and_add_import_lib(nvml_static ONLY_SEARCH_FOR libnvidia-ml.a libnvml.a)
+  if(NOT TARGET CUDA::nvml_static)
+    _CUDAToolkit_find_and_add_import_lib(nvml_static ONLY_SEARCH_FOR libnvidia-ml.a libnvml.a)
+    if(TARGET CUDA::nvml_static)
+      target_link_libraries(CUDA::nvml_static INTERFACE ${CMAKE_DL_LIBS})
+    endif()
+  endif()
 
   if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 10.0)
     # Header-only variant. Uses dlopen().
@@ -1536,23 +1558,29 @@ if(CUDAToolkit_FOUND)
     set_property(TARGET CUDA::bin2c PROPERTY IMPORTED_LOCATION "${CUDA_bin2c_EXECUTABLE}")
   endif()
 
-  _CUDAToolkit_find_and_add_import_lib(
-    sanitizer
-    ONLY_SEARCH_FOR sanitizer-public
-    EXTRA_PATH_SUFFIXES
-      "../compute-sanitizer"
-      "../../../compute-sanitizer"
-      "../Sanitizer"
-      "../../../Sanitizer"
-      "../extras/Sanitizer"
-      "../../../extras/Sanitizer"
-    EXTRA_INCLUDE_DIRS "${CUDAToolkit_CUPTI_INCLUDE_DIR}"
-  )
-  if(TARGET CUDA::sanitizer)
-    get_property(loc TARGET CUDA::sanitizer PROPERTY IMPORTED_LOCATION)
-    get_filename_component(sanitizer_dir "${loc}" DIRECTORY)
-    target_include_directories(CUDA::sanitizer INTERFACE "${sanitizer_dir}/include")
+  if(NOT TARGET CUDA::sanitizer)
+    _CUDAToolkit_find_and_add_import_lib(
+      sanitizer
+      ONLY_SEARCH_FOR sanitizer-public
+      EXTRA_PATH_SUFFIXES
+        "../compute-sanitizer"
+        "../../../compute-sanitizer"
+        "../Sanitizer"
+        "../../../Sanitizer"
+        "../extras/Sanitizer"
+        "../../../extras/Sanitizer"
+      EXTRA_INCLUDE_DIRS "${CUDAToolkit_CUPTI_INCLUDE_DIR}"
+    )
+    if(TARGET CUDA::sanitizer)
+      get_property(loc TARGET CUDA::sanitizer PROPERTY IMPORTED_LOCATION)
+      get_filename_component(sanitizer_dir "${loc}" DIRECTORY)
+      target_include_directories(CUDA::sanitizer INTERFACE "${sanitizer_dir}/include")
+    endif()
   endif()
+endif()
+
+if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 11.4)
+  _CUDAToolkit_find_and_add_import_lib(cufilt)
 endif()
 
 if(_CUDAToolkit_Pop_ROOT_PATH)

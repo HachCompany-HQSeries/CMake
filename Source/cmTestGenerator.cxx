@@ -5,17 +5,19 @@
 #include <cstddef> // IWYU pragma: keep
 #include <memory>
 #include <ostream>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "cmDiagnostics.h"
 #include "cmGeneratorExpression.h"
 #include "cmGeneratorTarget.h"
+#include "cmGlobalGenerator.h"
 #include "cmList.h"
 #include "cmListFileCache.h"
 #include "cmLocalGenerator.h"
 #include "cmMakefile.h"
+#include "cmMessageType.h"
 #include "cmPolicies.h"
 #include "cmPropertyMap.h"
 #include "cmRange.h"
@@ -36,10 +38,9 @@ bool needToQuoteTestName(cmMakefile const& mf, std::string const& name)
     case cmPolicies::WARN:
       // Only warn if a forbidden character is used in the name.
       if (name.find_first_of("$[] #;\t\n\"\\") != std::string::npos) {
-        mf.IssueDiagnostic(
-          cmDiagnostics::CMD_AUTHOR,
-          cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0110),
-                   "\nThe following name given to add_test() is invalid if "
+        mf.IssuePolicyWarning(
+          cmPolicies::CMP0110, {},
+          cmStrCat("The following name given to add_test() is invalid if "
                    "CMP0110 is not set or set to OLD:\n  `",
                    name, "´\n"));
       }
@@ -90,6 +91,67 @@ bool cmTestGenerator::TestsForConfig(std::string const& config)
 cmTest* cmTestGenerator::GetTest() const
 {
   return this->Test;
+}
+
+bool cmTestGenerator::GetBuildDependencies(cmLocalGenerator* lg,
+                                           BuildDependencies& info)
+{
+  if (this->Test == nullptr ||
+      !cmGeneratorExpression::IsValidTargetName(this->Test->GetName()) ||
+      cmGlobalGenerator::IsReservedTarget(this->Test->GetName())) {
+    return false;
+  }
+
+  std::set<cmGeneratorTarget*> dependencies;
+
+  // Get dependencies from generator expressions
+  cmGeneratorExpression ge(*this->Test->GetMakefile()->GetCMakeInstance(),
+                           this->Test->GetBacktrace());
+  std::string const config;
+  for (std::string const& arg : this->Test->GetCommand()) {
+    auto parsed = ge.Parse(arg);
+    parsed->Evaluate(lg, config);
+    for (cmGeneratorTarget* dep : parsed->GetTargets()) {
+      if (dep && !dep->IsImported()) {
+        dependencies.insert(dep);
+      }
+    }
+  }
+
+  // Add target executed by test
+  if (!this->Test->GetCommand().empty()) {
+    std::string exe = this->Test->GetCommand().front();
+    cmGeneratorTarget* target = lg->FindGeneratorTargetToUse(exe);
+    if (target && target->GetType() == cmStateEnums::EXECUTABLE &&
+        !target->IsImported()) {
+      dependencies.insert(target);
+    }
+  }
+
+  // Add dependencies from BUILD_DEPENDS keyword
+  for (auto const& depName : this->Test->GetDependencies()) {
+    if (depName.empty()) {
+      continue;
+    }
+    cmGeneratorTarget* depTarget = lg->FindGeneratorTargetToUse(depName);
+    if (!depTarget) {
+      info.Files.push_back(depName);
+      continue;
+    }
+    if (depTarget->IsImported()) {
+      lg->GetMakefile()->IssueMessage(
+        MessageType::FATAL_ERROR,
+        cmStrCat("Test \"", this->Test->GetName(), "\" DEPENDS target \"",
+                 depName, "\" which is imported and cannot be built."),
+        this->Test->GetBacktrace());
+      return false;
+    }
+    dependencies.insert(depTarget);
+  }
+
+  info.Targets.insert(info.Targets.end(), dependencies.begin(),
+                      dependencies.end());
+  return true;
 }
 
 void cmTestGenerator::GenerateScriptActions(std::ostream& os, Indent indent)
@@ -148,14 +210,13 @@ void cmTestGenerator::GenerateCommand(std::ostream& os,
           cmList argsWithEmptyValuesPreserved(
             propVal, cmList::ExpandElements::Yes, cmList::EmptyElements::Yes);
           if (launcherWithArgs != argsWithEmptyValuesPreserved) {
-            this->LG->GetMakefile()->IssueDiagnostic(
-              cmDiagnostics::CMD_AUTHOR,
+            this->LG->GetMakefile()->IssuePolicyWarning(
+              cmPolicies::CMP0178,
               cmStrCat("The ", propertyName, " property of target '",
                        target->GetName(),
                        "' contains empty list items. Those empty items are "
                        "being silently discarded to preserve backward "
-                       "compatibility.\n",
-                       cmPolicies::GetPolicyWarning(cmPolicies::CMP0178)));
+                       "compatibility."));
           }
         }
         std::string launcherExe(launcherWithArgs[0]);

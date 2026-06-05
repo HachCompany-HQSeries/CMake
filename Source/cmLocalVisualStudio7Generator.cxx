@@ -1388,6 +1388,8 @@ void cmLocalVisualStudio7Generator::WriteVCProjFile(std::ostream& fout,
   AllConfigSources sources;
   sources.Sources = target->GetAllConfigSources();
 
+  cmSourceGroupFiles sourceGroupFiles;
+
   // Add CMakeLists.txt file with rule to re-run CMake for user convenience.
   if (target->GetType() != cmStateEnums::GLOBAL_TARGET &&
       target->GetName() != CMAKE_CHECK_BUILD_SYSTEM_TARGET) {
@@ -1425,9 +1427,7 @@ void cmLocalVisualStudio7Generator::WriteVCProjFile(std::ostream& fout,
       }
     }
     // Add the file to the list of sources.
-    std::string const source = sf->GetFullPath();
-    cmSourceGroup* sourceGroup = this->FindSourceGroup(source);
-    sourceGroup->AssignSource(sf);
+    sourceGroupFiles.Add(this->FindSourceGroup(sf->GetFullPath()), sf);
   }
 
   // open the project
@@ -1440,7 +1440,8 @@ void cmLocalVisualStudio7Generator::WriteVCProjFile(std::ostream& fout,
   // Loop through every source group.
   SourceGroupVector const& sourceGroups = this->Makefile->GetSourceGroups();
   for (auto const& sg : sourceGroups) {
-    this->WriteGroup(sg.get(), target, fout, libName, configs, sources);
+    this->WriteGroup(sg.get(), target, fout, libName, configs, sources,
+                     sourceGroupFiles);
   }
 
   fout << "\t</Files>\n";
@@ -1530,7 +1531,9 @@ cmLocalVisualStudio7GeneratorFCInfo::cmLocalVisualStudio7GeneratorFCInfo(
     }
     // Add precompile headers compile options.
     std::string const pchSource = gt->GetPchSource(config, lang);
-    if (!pchSource.empty() && !sf.GetProperty("SKIP_PRECOMPILE_HEADERS")) {
+    if (!pchSource.empty() &&
+        !((fileSet && fileSet->GetProperty("SKIP_PRECOMPILE_HEADERS")) ||
+          sf.GetProperty("SKIP_PRECOMPILE_HEADERS"))) {
       std::string pchOptions;
       if (sf.GetFullPath() == pchSource) {
         pchOptions = gt->GetPchCreateCompileOptions(config, lang);
@@ -1636,7 +1639,11 @@ cmLocalVisualStudio7GeneratorFCInfo::cmLocalVisualStudio7GeneratorFCInfo(
       !cm::contains(acs.Configs, ci) ||
       (gt->GetPropertyAsBool("UNITY_BUILD") &&
        sf.GetProperty("UNITY_SOURCE_FILE") &&
-       !sf.GetPropertyAsBool("SKIP_UNITY_BUILD_INCLUSION"));
+       !((fileSet &&
+          (!cm::FileSetMetadata::GetAttributes(fileSet->GetType())
+              .contains(cm::FileSetMetadata::FileSetAttributes::UnityBuild) ||
+           fileSet->GetProperty("SKIP_UNITY_BUILD_INCLUSION").IsOn())) ||
+         sf.GetPropertyAsBool("SKIP_UNITY_BUILD_INCLUSION")));
     if (fc.ExcludedFromBuild) {
       needfc = true;
     }
@@ -1688,11 +1695,12 @@ std::string cmLocalVisualStudio7Generator::ComputeLongestObjectDirectory(
 bool cmLocalVisualStudio7Generator::WriteGroup(
   cmSourceGroup const* sg, cmGeneratorTarget* target, std::ostream& fout,
   std::string const& libName, std::vector<std::string> const& configs,
-  AllConfigSources const& sources)
+  AllConfigSources const& sources, cmSourceGroupFiles const& sourceGroupFiles)
 {
   cmGlobalVisualStudio7Generator* gg =
     static_cast<cmGlobalVisualStudio7Generator*>(this->GlobalGenerator);
-  std::vector<cmSourceFile const*> const& sourceFiles = sg->GetSourceFiles();
+  std::vector<cmSourceFile const*> const& sourceFiles =
+    sourceGroupFiles.GetSourceFiles(sg);
   SourceGroupVector const& children = sg->GetGroupChildren();
 
   // Write the children to temporary output.
@@ -1700,7 +1708,7 @@ bool cmLocalVisualStudio7Generator::WriteGroup(
   std::ostringstream tmpOut;
   for (auto const& child : children) {
     if (this->WriteGroup(child.get(), target, tmpOut, libName, configs,
-                         sources)) {
+                         sources, sourceGroupFiles)) {
       hasChildrenWithSources = true;
     }
   }

@@ -462,9 +462,13 @@ class Target
   std::unordered_map<CompileData, Json::ArrayIndex> CompileGroupMap;
   std::vector<CompileGroup> CompileGroups;
 
-  using FileSetDatabase = std::map<std::string, Json::ArrayIndex>;
+  using FileSetDatabase = std::map<std::string, std::vector<Json::ArrayIndex>>;
+
+  using FileSetBacktraceDatabase =
+    std::unordered_map<std::string, std::vector<cmListFileBacktrace>>;
 
   std::vector<cm::FileSetMetadata::Visibility> FileSetVisibilities;
+  FileSetBacktraceDatabase FileSetBacktraces;
 
   template <typename T>
   JBT<T> ToJBT(BT<T> const& bt)
@@ -486,7 +490,7 @@ class Target
   void ProcessLanguages();
   void ProcessLanguage(std::string const& lang);
 
-  Json::ArrayIndex AddSourceGroup(cmSourceGroup* sg);
+  Json::ArrayIndex AddSourceGroup(cmSourceGroup const* sg);
   CompileData BuildCompileData(cmSourceFile* sf);
   CompileData MergeCompileData(CompileData const& fd);
   Json::ArrayIndex AddSourceCompileGroup(cmSourceFile* sf,
@@ -1469,7 +1473,7 @@ void Target::ProcessLanguage(std::string const& lang)
   }
 }
 
-Json::ArrayIndex Target::AddSourceGroup(cmSourceGroup* sg)
+Json::ArrayIndex Target::AddSourceGroup(cmSourceGroup const* sg)
 {
   auto i = this->SourceGroupsMap.find(sg);
   if (i == this->SourceGroupsMap.end()) {
@@ -1495,6 +1499,9 @@ CompileData Target::BuildCompileData(cmSourceFile* sf)
   cmGeneratorExpressionInterpreter genexInterpreter(lg, this->Config, this->GT,
                                                     fd.Language);
 
+  cmGeneratorFileSet const* fileSet =
+    GT->GetFileSetForSource(this->Config, sf);
+
   std::string const COMPILE_FLAGS("COMPILE_FLAGS");
   if (cmValue cflags = sf->GetProperty(COMPILE_FLAGS)) {
     std::string flags = genexInterpreter.Evaluate(*cflags, COMPILE_FLAGS);
@@ -1511,6 +1518,19 @@ CompileData Target::BuildCompileData(cmSourceFile* sf)
     BT<std::string> opt(tmp, tmpOpt.Backtrace);
     fd.Flags.emplace_back(this->ToJBT(opt));
   }
+  // File set compile options, if any
+  if (fileSet) {
+    for (BT<std::string> const& tmpOpt : fileSet->BelongsTo(this->GT)
+           ? fileSet->GetCompileOptions(this->Config, fd.Language)
+           : fileSet->GetInterfaceCompileOptions(this->Config, fd.Language)) {
+      // We need to use the AppendCompileOptions method so we handle situations
+      // where backtrace entries have list and properly escape flags.
+      std::string tmp;
+      lg->AppendCompileOptions(tmp, tmpOpt.Value);
+      BT<std::string> opt(tmp, tmpOpt.Backtrace);
+      fd.Flags.emplace_back(this->ToJBT(opt));
+    }
+  }
 
   // Add precompile headers compile options.
   std::vector<std::string> pchArchs =
@@ -1525,7 +1545,9 @@ CompileData Target::BuildCompileData(cmSourceFile* sf)
     }
   }
 
-  if (!pchSources.empty() && !sf->GetProperty("SKIP_PRECOMPILE_HEADERS")) {
+  if (!pchSources.empty() &&
+      !((fileSet && fileSet->GetProperty("SKIP_PRECOMPILE_HEADERS")) ||
+        sf->GetProperty("SKIP_PRECOMPILE_HEADERS"))) {
     std::string pchOptions;
     auto pchIt = pchSources.find(sf->ResolveFullPath());
     if (pchIt != pchSources.end()) {
@@ -1548,9 +1570,31 @@ CompileData Target::BuildCompileData(cmSourceFile* sf)
     fd.Flags.emplace_back(this->ToJBT(opt));
   }
 
+  std::string const INCLUDE_DIRECTORIES("INCLUDE_DIRECTORIES");
+  // Add include directories from file set properties.
+  if (fileSet) {
+    for (BT<std::string> const& tmpInclude : fileSet->BelongsTo(this->GT)
+           ? fileSet->GetIncludeDirectories(this->Config, fd.Language)
+           : fileSet->GetInterfaceIncludeDirectories(this->Config,
+                                                     fd.Language)) {
+      // We need to use the AppendIncludeDirectories method so we handle
+      // situations where backtrace entries have lists.
+      std::vector<std::string> tmp;
+      lg->AppendIncludeDirectories(tmp, tmpInclude.Value, *sf);
+      for (std::string& i : tmp) {
+        bool const isSystemInclude =
+          this->GT->IsSystemIncludeDirectory(i, this->Config, fd.Language);
+        BT<std::string> include(i, tmpInclude.Backtrace);
+        if (this->GT->IsApple() && cmSystemTools::IsPathToFramework(i)) {
+          fd.Frameworks.emplace_back(this->ToJBT(include), isSystemInclude);
+        } else {
+          fd.Includes.emplace_back(this->ToJBT(include), isSystemInclude);
+        }
+      }
+    }
+  }
   // Add include directories from source file properties.
   {
-    std::string const INCLUDE_DIRECTORIES("INCLUDE_DIRECTORIES");
     for (BT<std::string> tmpInclude : sf->GetIncludeDirectories()) {
       tmpInclude.Value =
         genexInterpreter.Evaluate(tmpInclude.Value, INCLUDE_DIRECTORIES);
@@ -1597,7 +1641,25 @@ CompileData Target::BuildCompileData(cmSourceFile* sf)
       genexInterpreter.Evaluate(*config_defs, COMPILE_DEFINITIONS));
   }
 
-  fd.Defines.reserve(fileDefines.size() + configFileDefines.size());
+  std::set<BT<std::string>> fileSetDefines;
+  if (fileSet) {
+    for (BT<std::string> const& tmpDef : fileSet->BelongsTo(this->GT)
+           ? fileSet->GetCompileDefinitions(this->Config, fd.Language)
+           : fileSet->GetInterfaceCompileDefinitions(this->Config,
+                                                     fd.Language)) {
+      // We need to use the AppendDefines method so we handle situations where
+      // backtrace entries have lists.
+      std::set<std::string> tmp;
+      lg->AppendDefines(tmp, tmpDef.Value);
+      for (std::string const& i : tmp) {
+        BT<std::string> def(i, tmpDef.Backtrace);
+        fileSetDefines.insert(def);
+      }
+    }
+  }
+
+  fd.Defines.reserve(fileDefines.size() + configFileDefines.size() +
+                     fileSetDefines.size());
 
   for (BT<std::string> const& def : fileDefines) {
     fd.Defines.emplace_back(this->ToJBT(def));
@@ -1605,6 +1667,10 @@ CompileData Target::BuildCompileData(cmSourceFile* sf)
 
   for (std::string const& d : configFileDefines) {
     fd.Defines.emplace_back(d, JBTIndex());
+  }
+
+  for (BT<std::string> const& def : fileSetDefines) {
+    fd.Defines.emplace_back(this->ToJBT(def));
   }
 
   return fd;
@@ -1716,6 +1782,7 @@ std::pair<Json::Value, Target::FileSetDatabase> Target::DumpFileSets()
   // interface sources, which needs to map files to file set visibility
   // with only an index available. Those indexes match this vector.
   this->FileSetVisibilities.clear();
+  this->FileSetBacktraces.clear();
 
   // Build the fileset database.
   auto const& fileSets = this->GT->GetAllFileSets();
@@ -1742,7 +1809,35 @@ std::pair<Json::Value, Target::FileSetDatabase> Target::DumpFileSets()
           } else {
             sf_path = cmStrCat(dir, '/', file);
           }
-          fsdb[sf_path] = static_cast<Json::ArrayIndex>(fsIndex);
+          fsdb[sf_path].emplace_back(static_cast<Json::ArrayIndex>(fsIndex));
+        }
+      }
+
+      // Collect backtraces from each original file set FILES entry so that
+      // source backtraces preserve line metadata and can include repeated
+      // additions from multiple file sets.
+      auto const& fileEntries = fs->GetFileEntries();
+      for (BT<std::string> const& fileEntry : fileEntries) {
+        cmGeneratorExpression ge(
+          *this->GT->GetLocalGenerator()->GetCMakeInstance(),
+          fileEntry.Backtrace);
+        for (std::string const& ex : cmList{ fileEntry.Value }) {
+          std::unique_ptr<cmCompiledGeneratorExpression> cge = ge.Parse(ex);
+          std::map<std::string, std::vector<std::string>> filesForEntry;
+          fs->EvaluateFileEntry(directories.first, filesForEntry, cge, context,
+                                this->GT);
+          for (auto const& filesPerDir : filesForEntry) {
+            std::string const& dir = filesPerDir.first;
+            for (std::string const& file : filesPerDir.second) {
+              std::string sf_path;
+              if (dir.empty() || cmSystemTools::FileIsFullPath(file)) {
+                sf_path = file;
+              } else {
+                sf_path = cmStrCat(dir, '/', file);
+              }
+              this->FileSetBacktraces[sf_path].push_back(fileEntry.Backtrace);
+            }
+          }
         }
       }
 
@@ -1795,14 +1890,44 @@ Json::Value Target::DumpSource(cmGeneratorTarget::SourceAndKind const& sk,
   if (sk.Source.Value->GetIsGenerated()) {
     source["isGenerated"] = true;
   }
-  this->AddBacktrace(source, sk.Source.Backtrace);
+
+  JBTIndex sourceBacktrace = this->Backtraces.Add(sk.Source.Backtrace);
+  JBTIndex primaryBacktrace = sourceBacktrace;
+  Json::Value backtraces = Json::arrayValue;
+  auto const fileSetBacktraces = this->FileSetBacktraces.find(path);
+  if (fileSetBacktraces != this->FileSetBacktraces.end() &&
+      !fileSetBacktraces->second.empty()) {
+    for (cmListFileBacktrace const& fsbt : fileSetBacktraces->second) {
+      if (JBTIndex bt = this->Backtraces.Add(fsbt)) {
+        if (!primaryBacktrace) {
+          primaryBacktrace = bt;
+        }
+        backtraces.append(bt.Index);
+      }
+    }
+  } else {
+    if (sourceBacktrace) {
+      backtraces.append(sourceBacktrace.Index);
+    }
+  }
+
+  this->AddBacktrace(source, primaryBacktrace);
+
+  if (!backtraces.empty()) {
+    source["backtraces"] = std::move(backtraces);
+  }
 
   auto fsit = fsdb.find(path);
   if (fsit != fsdb.end()) {
-    source["fileSetIndex"] = fsit->second;
+    source["fileSetIndex"] = fsit->second.back();
+    source["fileSetIndexes"] = Json::arrayValue;
+    for (Json::ArrayIndex const& fsIndex : fsit->second) {
+      source["fileSetIndexes"].append(fsIndex);
+    }
   }
 
-  if (cmSourceGroup* sg = this->GT->LocalGenerator->FindSourceGroup(path)) {
+  if (cmSourceGroup const* sg =
+        this->GT->LocalGenerator->FindSourceGroup(path)) {
     Json::ArrayIndex const groupIndex = this->AddSourceGroup(sg);
     source["sourceGroupIndex"] = groupIndex;
     this->SourceGroups[groupIndex].SourceIndexes.append(si);
@@ -1859,7 +1984,7 @@ Json::Value Target::DumpInterfaceSources(FileSetDatabase const& fsdb)
   }
 
   for (auto const& fsIter : fsdb) {
-    Json::ArrayIndex const index = fsIter.second;
+    Json::ArrayIndex const index = fsIter.second.back();
     // FileSetVisibilities was populated by DumpFileSets() and will always
     // have the same size as the file sets array that index is indexing into
     if (this->FileSetVisibilities[index] !=
@@ -1885,10 +2010,15 @@ Json::Value Target::DumpInterfaceSource(std::string path, Json::ArrayIndex si,
 
   auto fsit = fsdb.find(path);
   if (fsit != fsdb.end()) {
-    source["fileSetIndex"] = fsit->second;
+    source["fileSetIndex"] = fsit->second.back();
+    source["fileSetIndexes"] = Json::arrayValue;
+    for (Json::ArrayIndex const& fsIndex : fsit->second) {
+      source["fileSetIndexes"].append(fsIndex);
+    }
   }
 
-  if (cmSourceGroup* sg = this->GT->LocalGenerator->FindSourceGroup(path)) {
+  if (cmSourceGroup const* sg =
+        this->GT->LocalGenerator->FindSourceGroup(path)) {
     Json::ArrayIndex const groupIndex = this->AddSourceGroup(sg);
     source["sourceGroupIndex"] = groupIndex;
     this->SourceGroups[groupIndex].InterfaceSourceIndexes.append(si);

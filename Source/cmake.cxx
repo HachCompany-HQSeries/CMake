@@ -38,16 +38,9 @@
 #include "cmBuildOptions.h"
 #include "cmCMakePath.h"
 #include "cmCMakePresetsGraph.h"
+#include "cmCacheDocumentationTable.h"
 #include "cmCommandLineArgument.h"
 #include "cmCommands.h"
-#ifdef CMake_ENABLE_DEBUGGER
-#  include "cmDebuggerAdapter.h"
-#  ifdef _WIN32
-#    include "cmDebuggerWindowsPipeConnection.h"
-#  else //!_WIN32
-#    include "cmDebuggerPosixPipeConnection.h"
-#  endif //_WIN32
-#endif
 #include "cmDocumentation.h"
 #include "cmDocumentationEntry.h"
 #include "cmDuration.h"
@@ -57,18 +50,13 @@
 #include "cmGlobCacheEntry.h" // IWYU pragma: keep
 #include "cmGlobalGenerator.h"
 #include "cmGlobalGeneratorFactory.h"
+#include "cmJSONState.h"
 #include "cmLinkLineComputer.h"
+#include "cmList.h"
 #include "cmLocalGenerator.h"
 #include "cmMakefile.h"
-#if !defined(CMAKE_BOOTSTRAP)
-#  include "cmMakefileProfilingData.h"
-#endif
-#include "cmJSONState.h"
-#include "cmList.h"
 #include "cmMessenger.h"
-#ifndef CMAKE_BOOTSTRAP
-#  include "cmSarifLog.h"
-#endif
+#include "cmPolicies.h"
 #include "cmState.h"
 #include "cmStateDirectory.h"
 #include "cmStringAlgorithms.h"
@@ -79,6 +67,15 @@
 #include "cmUtils.hxx"
 #include "cmVersionConfig.h"
 #include "cmWorkingDirectory.h"
+
+#ifdef CMake_ENABLE_DEBUGGER
+#  include "cmDebuggerAdapter.h"
+#  ifdef _WIN32
+#    include "cmDebuggerWindowsPipeConnection.h"
+#  else //!_WIN32
+#    include "cmDebuggerPosixPipeConnection.h"
+#  endif //_WIN32
+#endif
 
 #if !defined(CMAKE_BOOTSTRAP)
 #  include <unordered_map>
@@ -92,6 +89,8 @@
 #  include "cmGraphVizWriter.h"
 #  include "cmInstrumentation.h"
 #  include "cmInstrumentationQuery.h"
+#  include "cmMakefileProfilingData.h"
+#  include "cmSarifLog.h"
 #  include "cmVariableWatch.h"
 #endif
 
@@ -169,12 +168,23 @@ using CommandArgument =
   cmCommandLineArgument<bool(std::string const& value, cmake* state)>;
 
 #ifndef CMAKE_BOOTSTRAP
-void cmWarnUnusedCliWarning(std::string const& variable, int /*unused*/,
-                            void* ctx, char const* /*unused*/,
+void cmWarnUnusedCliWarning(std::string const& variable,
+                            cmVariableWatch::AccessType /*unused*/, void* ctx,
+                            char const* /*unused*/,
                             cmMakefile const* /*unused*/)
 {
   cmake* cm = reinterpret_cast<cmake*>(ctx);
   cm->MarkCliAsUsed(variable);
+}
+
+void cmDeprecatedWatch(std::string const& /*unused*/,
+                       cmVariableWatch::AccessType /*unused*/,
+                       void* /*unused*/, char const* /*unused*/,
+                       cmMakefile const* mf)
+{
+  if (mf->GetPolicyStatus(cmPolicies::CMP0218) == cmPolicies::WARN) {
+    mf->IssuePolicyWarning(cmPolicies::CMP0218);
+  }
 }
 #endif
 
@@ -832,8 +842,21 @@ void cmake::ProcessCacheArg(std::string const& var, std::string const& value,
     }
   }
 
-  this->AddCacheEntry(
-    var, value, "No help, variable specified on the command line.", type);
+  // See also CMP0218.
+  if (var == "CMAKE_WARN_DEPRECATED") {
+    std::cerr << "The CMAKE_WARN_DEPRECATED variable is deprecated.  "
+                 "Use -W[no-]deprecated instead.\n"_s;
+  } else if (var == "CMAKE_ERROR_DEPRECATED") {
+    std::cerr << "The CMAKE_ERROR_DEPRECATED variable is deprecated.  "
+                 "Use -W[no-]error=deprecated instead.\n"_s;
+  }
+
+  auto const builtIn = cmCacheDocumentationTable::Get(var);
+  std::string const helpString = builtIn.Summary.empty()
+    ? std::string("No help, variable specified on the command line.")
+    : std::string(builtIn.Summary);
+
+  this->AddCacheEntry(var, value, helpString, type);
 
   if (warnUnusedCli != cmDiagnostics::Ignore) {
     if (!haveValue ||
@@ -1598,6 +1621,11 @@ void cmake::SetArgs(std::vector<std::string> const& args)
   }
   if (!haveBinaryDir) {
     this->SetHomeOutputDirectory(cmSystemTools::GetLogicalWorkingDirectory());
+  }
+
+  if (this->State->GetRole() == cmState::Role::Script && havePreset) {
+    this->IssueMessage(MessageType::FATAL_ERROR,
+                       "Presets are not supported in CMake script mode.");
   }
 
 #if !defined(CMAKE_BOOTSTRAP)
@@ -2441,8 +2469,6 @@ int cmake::Configure()
   cmValue cachedWarnDeprecated =
     this->State->GetCacheEntryValue("CMAKE_WARN_DEPRECATED");
   if (cachedWarnDeprecated) {
-    std::cerr << "The CMAKE_WARN_DEPRECATED variable is deprecated.  "
-                 "Use CMAKE_DIAGNOSTIC_INIT instead.\n"_s;
     if (cachedWarnDeprecated.IsOn()) {
       deprecated = cmDiagnostics::Warn;
     } else {
@@ -2453,8 +2479,6 @@ int cmake::Configure()
   cmValue cachedErrorDeprecated =
     this->State->GetCacheEntryValue("CMAKE_ERROR_DEPRECATED");
   if (cachedErrorDeprecated) {
-    std::cerr << "The CMAKE_ERROR_DEPRECATED variable is deprecated.  "
-                 "Use CMAKE_DIAGNOSTIC_INIT instead.\n"_s;
     if (cachedErrorDeprecated.IsOn()) {
       deprecated = cmDiagnostics::SendError;
     }
@@ -2478,22 +2502,16 @@ int cmake::Configure()
                cmDiagnostics::GetActionString(action)));
 
     if (category == cmDiagnostics::CMD_DEPRECATED) {
-      // Set deprecated CMAKE_{WARN,ERROR}_DEPRECATED, but only in the cache,
-      // and only if they were already set in the cache.
-      if (cachedWarnDeprecated) {
-        std::string const value =
-          (action >= cmDiagnostics::Warn ? "ON" : "OFF");
-        this->AddCacheEntry("CMAKE_WARN_DEPRECATED", value,
-                            "Deprecated.  Use CMAKE_DIAGNOSTIC_INIT instead.",
-                            cmStateEnums::INTERNAL);
-      }
-      if (cachedErrorDeprecated) {
-        std::string const value =
-          (action >= cmDiagnostics::SendError ? "ON" : "OFF");
-        this->AddCacheEntry("CMAKE_ERROR_DEPRECATED", value,
-                            "Deprecated.  Use CMAKE_DIAGNOSTIC_INIT instead.",
-                            cmStateEnums::INTERNAL);
-      }
+      std::string const warnValue =
+        (action >= cmDiagnostics::Warn ? "ON" : "OFF");
+      this->AddCacheEntry("CMAKE_WARN_DEPRECATED", warnValue,
+                          "Deprecated.  Use -W[no-]deprecated instead.",
+                          cmStateEnums::INTERNAL);
+      std::string const errorValue =
+        (action >= cmDiagnostics::SendError ? "ON" : "OFF");
+      this->AddCacheEntry("CMAKE_ERROR_DEPRECATED", errorValue,
+                          "Deprecated.  Use -W[no-]error=deprecated instead.",
+                          cmStateEnums::INTERNAL);
     }
   }
 
@@ -2784,7 +2802,10 @@ int cmake::ActualConfigure()
     return 0;
   };
   int ret = this->Instrumentation->InstrumentCommand(
-    "configure", this->cmdArgs, [doConfigure]() { return doConfigure(); },
+    "configure", this->cmdArgs,
+    [doConfigure]() -> cmInstrumentation::CommandResult {
+      return { doConfigure(), cm::nullopt, cm::nullopt };
+    },
     cm::nullopt, cm::nullopt,
     this->GetIsInTryCompile() ? cmInstrumentation::LoadQueriesAfter::No
                               : cmInstrumentation::LoadQueriesAfter::Yes);
@@ -3059,6 +3080,9 @@ int cmake::Run(std::vector<std::string> const& args, bool noconfigure)
   if (!sarifLogFileWriter.ConfigureForCMakeRun(*this)) {
     return -1;
   }
+
+  this->VariableWatch->AddWatch("CMAKE_WARN_DEPRECATED", cmDeprecatedWatch);
+  this->VariableWatch->AddWatch("CMAKE_ERROR_DEPRECATED", cmDeprecatedWatch);
 #endif
 
   // Log the trace format version to the desired output
@@ -3233,7 +3257,10 @@ int cmake::Generate()
   };
 
   int ret = this->Instrumentation->InstrumentCommand(
-    "generate", this->cmdArgs, [doGenerate]() { return doGenerate(); });
+    "generate", this->cmdArgs,
+    [doGenerate]() -> cmInstrumentation::CommandResult {
+      return { doGenerate(), cm::nullopt, cm::nullopt };
+    });
   if (ret != 0) {
     return ret;
   }
@@ -3894,9 +3921,9 @@ void cmake::IssueMessage(MessageType t, std::string const& text,
 void cmake::IssueDiagnostic(cmDiagnosticCategory category,
                             std::string const& text,
                             cmStateSnapshot const& state,
-                            cmListFileBacktrace const& backtrace) const
+                            cmDiagnosticContext const& context) const
 {
-  this->Messenger->IssueDiagnostic(category, text, state, backtrace);
+  this->Messenger->IssueDiagnostic(category, text, state, context);
 }
 
 std::vector<std::string> cmake::GetDebugConfigs()
@@ -4170,8 +4197,10 @@ int cmake::Build(cmBuildArgs buildArgs, std::vector<std::string> targets,
   // Block the instrumentation build daemon from spawning during this build.
   // This lock will be released when the process exits at the end of the build.
   instrumentation.LockBuildDaemon();
-  int buildresult =
-    instrumentation.InstrumentCommand("cmakeBuild", args, doBuild);
+  int buildresult = instrumentation.InstrumentCommand(
+    "cmakeBuild", args, [doBuild]() -> cmInstrumentation::CommandResult {
+      return { doBuild(), cm::nullopt, cm::nullopt };
+    });
   instrumentation.CollectTimingData(
     cmInstrumentationQuery::Hook::PostCMakeBuild);
 #else

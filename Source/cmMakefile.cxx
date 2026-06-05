@@ -5,6 +5,7 @@
 #include "cmMakefile.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -29,6 +30,9 @@
 #include "cmsys/RegularExpression.hxx"
 #include "cmsys/String.h"
 
+#ifndef CMAKE_BOOTSTRAP
+#  include "cmBuildSbomGenerator.h"
+#endif
 #include "cmCustomCommand.h"
 #include "cmCustomCommandLines.h"
 #include "cmCustomCommandTypes.h"
@@ -109,6 +113,15 @@ public:
   FileScopeBase(cmMakefile* mf)
     : Makefile(mf)
   {
+#if !defined(CMAKE_BOOTSTRAP)
+    this->Makefile->GetGlobalGenerator()->GetFileLockPool().PushFileScope();
+#endif
+  }
+  ~FileScopeBase()
+  {
+#if !defined(CMAKE_BOOTSTRAP)
+    this->Makefile->GetGlobalGenerator()->GetFileLockPool().PopFileScope();
+#endif
   }
   void PushListFileVars(std::string const& newCurrent)
   {
@@ -227,7 +240,7 @@ void cmMakefile::IssueMessage(MessageType t, std::string const& text,
 
 void cmMakefile::IssueDiagnostic(cmDiagnosticCategory category,
                                  std::string const& text,
-                                 cmListFileBacktrace const& bt) const
+                                 cmDiagnosticContext const& context) const
 {
   if (!this->ExecutionStatusStack.empty()) {
     cmDiagnosticAction const action = this->GetDiagnosticAction(category);
@@ -236,7 +249,24 @@ void cmMakefile::IssueDiagnostic(cmDiagnosticCategory category,
     }
   }
   this->GetCMakeInstance()->IssueDiagnostic(category, text,
-                                            this->GetStateSnapshot(), bt);
+                                            this->GetStateSnapshot(), context);
+}
+
+void cmMakefile::IssuePolicyWarning(cmPolicies::PolicyID policy,
+                                    cm::string_view preface,
+                                    cm::string_view postface,
+                                    cmListFileBacktrace const& bt) const
+{
+  std::string msg = cmPolicies::GetPolicyWarning(policy);
+  if (!preface.empty() && !postface.empty()) {
+    msg = cmStrCat(preface, '\n', msg, '\n', postface);
+  } else if (!preface.empty()) {
+    msg = cmStrCat(preface, '\n', msg);
+  } else if (!postface.empty()) {
+    msg = cmStrCat(msg, '\n', postface);
+  }
+  this->IssueDiagnostic(cmDiagnostics::CMD_POLICY, msg,
+                        cmDiagnosticContext{ bt });
 }
 
 Message::LogLevel cmMakefile::GetCurrentLogLevel() const
@@ -278,7 +308,7 @@ void cmMakefile::MaybeWarnCMP0074(std::string const& rootVar, cmValue rootDef,
 {
   // Warn if a <PackageName>_ROOT variable we may use is set.
   if ((rootDef || rootEnv) && this->WarnedCMP0074.insert(rootVar).second) {
-    auto e = cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0074), '\n');
+    std::string e;
     if (rootDef) {
       e += cmStrCat("CMake variable ", rootVar, " is set to:\n  ", *rootDef,
                     '\n');
@@ -288,7 +318,7 @@ void cmMakefile::MaybeWarnCMP0074(std::string const& rootVar, cmValue rootDef,
                     *rootEnv, '\n');
     }
     e += "For compatibility, CMake is ignoring the variable.";
-    this->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, e);
+    this->IssuePolicyWarning(cmPolicies::CMP0074, {}, e);
   }
 }
 
@@ -297,7 +327,7 @@ void cmMakefile::MaybeWarnCMP0144(std::string const& rootVar, cmValue rootDef,
 {
   // Warn if a <PACKAGENAME>_ROOT variable we may use is set.
   if ((rootDef || rootEnv) && this->WarnedCMP0144.insert(rootVar).second) {
-    auto e = cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0144), '\n');
+    std::string e;
     if (rootDef) {
       e += cmStrCat("CMake variable ", rootVar, " is set to:\n  ", *rootDef,
                     '\n');
@@ -308,7 +338,7 @@ void cmMakefile::MaybeWarnCMP0144(std::string const& rootVar, cmValue rootDef,
     }
     e += "For compatibility, find_package is ignoring the variable, but "
          "code in a .cmake module might still use it.";
-    this->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, e);
+    this->IssuePolicyWarning(cmPolicies::CMP0144, {}, e);
   }
 }
 
@@ -991,6 +1021,20 @@ void cmMakefile::AddExportBuildFileGenerator(
   this->ExportBuildFileGenerators.emplace_back(std::move(gen));
 }
 
+#ifndef CMAKE_BOOTSTRAP
+std::vector<std::unique_ptr<cmBuildSbomGenerator>> const&
+cmMakefile::GetBuildSbomGenerators() const
+{
+  return this->BuildSbomGenerators;
+}
+
+void cmMakefile::AddBuildSbomGenerator(
+  std::unique_ptr<cmBuildSbomGenerator> gen)
+{
+  this->BuildSbomGenerators.emplace_back(std::move(gen));
+}
+#endif
+
 namespace {
 struct file_not_persistent
 {
@@ -1455,16 +1499,6 @@ void cmMakefile::AddTestGenerator(std::unique_ptr<cmTestGenerator> g)
   }
 }
 
-bool cmMakefile::ExplicitlyGeneratesSbom() const
-{
-  return this->ExplicitSbomGenerator;
-}
-
-void cmMakefile::SetExplicitlyGeneratesSbom(bool status)
-{
-  this->ExplicitSbomGenerator = status;
-}
-
 void cmMakefile::PushFunctionScope(std::string const& fileName,
                                    cmPolicies::PolicyMap const& pm,
                                    cmDiagnostics::DiagnosticMap dm)
@@ -1550,9 +1584,6 @@ public:
     this->Snapshot = this->GG->GetCMakeInstance()->GetCurrentSnapshot();
     this->GG->GetCMakeInstance()->SetCurrentSnapshot(this->Snapshot);
     this->GG->SetCurrentMakefile(mf);
-#if !defined(CMAKE_BOOTSTRAP)
-    this->GG->GetFileLockPool().PushFileScope();
-#endif
   }
 
   ~BuildsystemFileScope()
@@ -1560,9 +1591,6 @@ public:
     this->PopListFileVars();
     this->Makefile->PopFunctionBlockerBarrier(this->ReportError);
     this->Makefile->PopSnapshot(this->ReportError);
-#if !defined(CMAKE_BOOTSTRAP)
-    this->GG->GetFileLockPool().PopFileScope();
-#endif
     this->GG->SetCurrentMakefile(this->CurrentMakefile);
     this->GG->GetCMakeInstance()->SetCurrentSnapshot(this->Snapshot);
   }
@@ -1931,12 +1959,11 @@ void cmMakefile::AddCacheDefinition(std::string const& name, cmValue value,
     case cmPolicies::WARN:
       if (this->PolicyOptionalWarningEnabled("CMAKE_POLICY_WARNING_CMP0126") &&
           this->IsNormalDefinitionSet(name)) {
-        this->IssueDiagnostic(
-          cmDiagnostics::CMD_AUTHOR,
-          cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0126),
-                   "\nFor compatibility with older versions of CMake, normal "
-                   "variable \"",
-                   name, "\" will be removed from the current scope."));
+        this->IssuePolicyWarning(
+          cmPolicies::CMP0126, {},
+          cmStrCat("For compatibility with older versions of CMake, "
+                   "normal variable \""_s,
+                   name, "\" will be removed from the current scope."_s));
       }
       CM_FALLTHROUGH;
     case cmPolicies::OLD:
@@ -2603,6 +2630,83 @@ cm::optional<std::string> cmMakefile::DeferGetCall(std::string const& id) const
     call = std::move(tmp);
   }
   return call;
+}
+
+namespace {
+cmPolicies::PolicyStatus CheckCMP0219Impl(cmPolicies::PolicyStatus status,
+                                          std::string const& calleeName,
+                                          bool hasBackslashes,
+                                          std::set<std::string>& warned)
+{
+  if (status == cmPolicies::WARN && hasBackslashes &&
+      warned.insert(calleeName).second) {
+    return cmPolicies::WARN;
+  }
+  // Suppress WARN when there are no backslashes or already warned.
+  return status == cmPolicies::NEW ? cmPolicies::NEW : cmPolicies::OLD;
+}
+}
+
+cmPolicies::PolicyStatus cmMakefile::CheckCMP0219(
+  std::string const& calleeName, std::vector<std::string> const& args)
+{
+  bool const hasBackslashes =
+    std::any_of(args.begin(), args.end(), [](std::string const& s) {
+      return s.find('\\') != std::string::npos;
+    });
+  return CheckCMP0219Impl(GetPolicyStatus(cmPolicies::CMP0219), calleeName,
+                          hasBackslashes, WarnedCMP0219);
+}
+
+cmPolicies::PolicyStatus cmMakefile::CheckCMP0219(
+  std::string const& calleeName, std::vector<cmListFileArgument> const& args)
+{
+  bool const hasBackslashes =
+    std::any_of(args.begin(), args.end(), [](cmListFileArgument const& s) {
+      return s.Value.find('\\') != std::string::npos;
+    });
+  return CheckCMP0219Impl(GetPolicyStatus(cmPolicies::CMP0219), calleeName,
+                          hasBackslashes, WarnedCMP0219);
+}
+
+void cmMakefile::IssueCMP0219Warning(
+  std::string const& calleeName, std::vector<std::string> const& args) const
+{
+  std::string oldArgs;
+  for (std::string const& arg : args) {
+    if (arg.find('\\') == std::string::npos) {
+      continue;
+    }
+    if (!oldArgs.empty()) {
+      oldArgs += '\n';
+    }
+    oldArgs += cmStrCat(" \"", arg, '"');
+  }
+
+  std::string newArgs = oldArgs;
+  cmSystemTools::ReplaceString(newArgs, "\\", "\\\\");
+
+  this->IssueDiagnostic(
+    cmDiagnostics::CMD_POLICY,
+    cmStrCat(
+      cmPolicies::GetPolicyWarning(cmPolicies::CMP0219), '\n', "Command \"",
+      calleeName, "\" called with arguments containing backslashes.\n",
+      "Since the policy is not set, backslashes in the arguments:\n", oldArgs,
+      "\n", "will be interpreted as escape sequences for compatibility.\n",
+      "Set the policy to NEW to instead pass\n", newArgs, "\n",
+      "so that argument parsing will preserve the original values."));
+}
+
+void cmMakefile::IssueCMP0219Warning(
+  std::string const& calleeName,
+  std::vector<cmListFileArgument> const& args) const
+{
+  std::vector<std::string> stringArgs;
+  stringArgs.reserve(args.size());
+  for (cmListFileArgument const& arg : args) {
+    stringArgs.push_back(arg.Value);
+  }
+  this->IssueCMP0219Warning(calleeName, stringArgs);
 }
 
 MessageType cmMakefile::ExpandVariablesInStringImpl(
@@ -3346,8 +3450,7 @@ int cmMakefile::TryCompile(std::string const& srcdir,
     cm.SetCacheArgs(*cmakeArgs);
   }
   // to save time we pass the EnableLanguage info directly
-  cm.GetGlobalGenerator()->EnableLanguagesFromGenerator(
-    this->GetGlobalGenerator(), this);
+  cm.GetGlobalGenerator()->SetupTryCompile(this->GetGlobalGenerator(), this);
   for (unsigned dc = 1; dc < cmDiagnostics::CategoryCount; ++dc) {
     auto const category = static_cast<cmDiagnosticCategory>(dc);
     if (this->GetDiagnosticAction(category) == cmDiagnostics::Ignore) {
@@ -3491,6 +3594,27 @@ std::string cmMakefile::GetModulesFile(cm::string_view filename, bool& system,
     system = true;
     result = moduleInCMakeRoot;
   }
+
+#if defined(_WIN32) || defined(__APPLE__)
+  if (!result.empty()) {
+    std::string const requestedName =
+      cmSystemTools::GetFilenameName(std::string{ filename });
+    std::string actualName;
+    cmsys::Status const status =
+      cmSystemTools::ReadNameOnDisk(result, actualName);
+    if (status && actualName != requestedName) {
+      this->IssueDiagnostic(
+        cmDiagnostics::CMD_AUTHOR,
+        cmStrCat("The module name\n  ", requestedName, '\n',
+                 "does not match the case of the module file name on disk\n"
+                 "  ",
+                 cmSystemTools::GetFilenamePath(result), '/', actualName, '\n',
+                 "This may fail on case-sensitive file systems.  "
+                 "Use the module name\n  ",
+                 actualName, "\ninstead."));
+    }
+  }
+#endif
 
   return result;
 }
@@ -3870,11 +3994,11 @@ cmTarget* cmMakefile::AddImportedTarget(std::string const& name,
                                         bool global)
 {
   // Create the target.
-  std::unique_ptr<cmTarget> target(
-    new cmTarget(name, type,
-                 global ? cmTarget::Visibility::ImportedGlobally
-                        : cmTarget::Visibility::Imported,
-                 this, cmTarget::PerConfig::Yes));
+  auto target =
+    cm::make_unique<cmTarget>(name, type,
+                              global ? cmTarget::Visibility::ImportedGlobally
+                                     : cmTarget::Visibility::Imported,
+                              this, cmTarget::PerConfig::Yes);
 
   // Add to the set of available imported targets.
   this->ImportedTargets[name] = target.get();
@@ -3890,9 +4014,9 @@ cmTarget* cmMakefile::AddForeignTarget(std::string const& origin,
                                        std::string const& name)
 {
   auto foreign_name = cmStrCat("@foreign_", origin, "::", name);
-  std::unique_ptr<cmTarget> target(new cmTarget(
+  auto target = cm::make_unique<cmTarget>(
     foreign_name, cmStateEnums::TargetType::INTERFACE_LIBRARY,
-    cmTarget::Visibility::Foreign, this, cmTarget::PerConfig::Yes));
+    cmTarget::Visibility::Foreign, this, cmTarget::PerConfig::Yes);
 
   this->ImportedTargets[foreign_name] = target.get();
   this->GetGlobalGenerator()->IndexTarget(target.get());
@@ -4136,6 +4260,34 @@ bool cmMakefile::SetPolicy(cmPolicies::PolicyID id,
           id == cmPolicies::CMP0126 || id == cmPolicies::CMP0128 ||
           id == cmPolicies::CMP0136 || id == cmPolicies::CMP0141 ||
           id == cmPolicies::CMP0155))) {
+    std::unique_ptr<PolicyPushPop> ps;
+    std::unique_ptr<DiagnosticPushPop> ds;
+
+    cmPolicies::PolicyStatus const cmp0218 =
+      this->GetPolicyStatus(cmPolicies::CMP0218);
+    if (cmp0218 != cmPolicies::NEW) {
+      if (cmp0218 != cmPolicies::OLD) {
+        // Suppress warnings about using old variables.
+        ps = cm::make_unique<PolicyPushPop>(this);
+        this->SetPolicy(cmPolicies::CMP0218, cmPolicies::OLD);
+      }
+
+      ds = cm::make_unique<DiagnosticPushPop>(this);
+
+      // Use old variables to determine diagnostic action.
+      cmValue const warn = this->GetDefinition("CMAKE_WARN_DEPRECATED");
+      if (warn.IsSet() && !warn.IsOn()) {
+        this->SetDiagnostic(cmDiagnostics::CMD_DEPRECATED,
+                            cmDiagnostics::Ignore);
+      } else if (this->IsOn("CMAKE_ERROR_DEPRECATED")) {
+        this->SetDiagnostic(cmDiagnostics::CMD_DEPRECATED,
+                            cmDiagnostics::SendError);
+      } else {
+        this->SetDiagnostic(cmDiagnostics::CMD_DEPRECATED,
+                            cmDiagnostics::Warn);
+      }
+    }
+
     this->IssueDiagnostic(cmDiagnostics::CMD_DEPRECATED,
                           cmPolicies::GetPolicyDeprecatedWarning(id));
   }

@@ -61,9 +61,8 @@ signatures that specify them.  The common options are:
   but not recommended.
 
   .. versionadded:: 4.4
-    The :ref:`CMD_INSTALL_ABSOLUTE_DESTINATION <CMD_INSTALL_ABSOLUTE_DESTINATION>`
-    diagnostic can be enabled to warn or error out when an absolute destination
-    is provided.
+    The :diagnostic:`CMD_INSTALL_ABSOLUTE_DESTINATION` diagnostic can be
+    enabled to warn or error out when an absolute destination is provided.
 
   When a relative path is given, it is interpreted relative to the value
   of the :variable:`CMAKE_INSTALL_PREFIX` variable.
@@ -1214,7 +1213,7 @@ Signatures
 
   .. code-block:: cmake
 
-    install(SBOM <sbom-name> EXPORT <export-name>
+    install(SBOM <sbom-name> EXPORTS <export-names>...
             [PROJECT <project-name>|NO_PROJECT_METADATA]
             [DESTINATION <dir>]
             [VERSION <major>[.<minor>[.<patch>[.<tweak>]]]]
@@ -1233,9 +1232,11 @@ Signatures
   the interface is designed to allow additional SBOM formats or schema
   versions to be supported in future CMake releases.
 
-  Target installations are associated with the export ``<export-name>``
-  using the ``EXPORT`` option of the :command:`install(TARGETS)` signature
-  documented above. If ``DESTINATION`` is not specified, a platform-specific
+  Target installations are associated with each export ``<export-names>``
+  in the ``EXPORTS`` list using the ``EXPORTS`` option of the
+  :command:`install(TARGETS)` signature documented above.  A single SBOM may
+  cover multiple export sets; targets from all listed exports are aggregated
+  into one document.  If ``DESTINATION`` is not specified, a platform-specific
   default is used.
 
   Several options may be used to specify package metadata:

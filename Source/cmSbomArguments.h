@@ -37,9 +37,11 @@ public:
   std::string GetNamespace() const;
   std::string GetPackageDirName() const;
   std::string GetPackageFileName() const;
+  std::string GetDefaultDestination(std::string const& root = {}) const;
   SbomFormat GetFormat() const;
 
   ArgumentParser::NonEmpty<std::string> Format;
+  ArgumentParser::NonEmpty<std::string> PackageUrl;
 
 protected:
   cm::string_view CommandName() const override;
@@ -53,6 +55,7 @@ private:
     cmProjectInfoArguments* const base = self;
     Bind(base, parser, "SBOM"_s, &cmProjectInfoArguments::PackageName);
     Bind(self, parser, "FORMAT"_s, &cmSbomArguments::Format);
+    Bind(self, parser, "PACKAGE_URL"_s, &cmSbomArguments::PackageUrl);
     cmProjectInfoArguments::Bind(parser, self);
   }
 };

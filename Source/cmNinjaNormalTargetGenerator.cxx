@@ -10,7 +10,6 @@
 #include <unordered_set>
 #include <utility>
 
-#include <cm/filesystem>
 #include <cm/memory>
 #include <cm/optional>
 #include <cm/vector>
@@ -498,8 +497,15 @@ void cmNinjaNormalTargetGenerator::WriteLinkRule(
     }
 
     // build response file name
-    std::string cmakeLinkVar = cmakeVarLang + "_RESPONSE_FILE_LINK_FLAG";
-    cmValue flag = this->GetMakefile()->GetDefinition(cmakeLinkVar);
+    cmValue flag;
+    if (targetType == cmStateEnums::STATIC_LIBRARY) {
+      std::string cmakeLinkVar = cmakeVarLang + "_RESPONSE_FILE_ARCHIVE_FLAG";
+      flag = this->GetMakefile()->GetDefinition(cmakeLinkVar);
+    }
+    if (!flag) {
+      std::string cmakeLinkVar = cmakeVarLang + "_RESPONSE_FILE_LINK_FLAG";
+      flag = this->GetMakefile()->GetDefinition(cmakeLinkVar);
+    }
 
     if (flag) {
       responseFlag = *flag;
@@ -1041,7 +1047,8 @@ void cmNinjaNormalTargetGenerator::WriteNvidiaDeviceLinkStatement(
                               vars["LINK_FLAGS"], frameworkPath, linkPath,
                               genTarget);
 
-  this->addPoolNinjaVariable("JOB_POOL_LINK", genTarget, nullptr, vars);
+  this->addPoolNinjaVariable("JOB_POOL_LINK", config, genTarget, nullptr,
+                             vars);
 
   vars["MANIFESTS"] = this->GetManifests(config);
 
@@ -1291,40 +1298,21 @@ void cmNinjaNormalTargetGenerator::WriteLinkStatement(
     linkBuild.ExplicitDeps = this->GetObjects(config);
 
     // First we handle Rust rlib and normal native objects.
-    std::stringstream rlibs;
-    std::stringstream objects;
-    for (auto const& obj : linkBuild.ExplicitDeps) {
-      cm::filesystem::path const objPath(obj);
-      if (objPath.extension() == ".rlib") {
-        // Drop the "lib..." prefix and the ".rs" suffix. The prefix is
-        // required by Rust on the crate rlib file, but is hidden from the user
-        // when using the crate from Rust source code, so we drop it to be
-        // consistent with common usage in Rust.
-        std::string objStem = objPath.stem().string();
-        objStem = objStem.substr(3, objStem.length() - 6);
-        rlibs << " --extern=" << objStem << "="
-              << lg->ConvertToOutputFormat(obj, cmOutputConverter::SHELL);
-      } else {
-        objects << " -Clink-arg="
-                << lg->ConvertToOutputFormat(obj, cmOutputConverter::SHELL);
-      }
-    }
-    vars["RUST_LINK_CRATES"] = rlibs.str();
-    vars["RUST_NATIVE_OBJECTS"] = objects.str();
+    this->ComputeRustFlagsForObjects(vars["RUST_LINK_CRATES"],
+                                     vars["RUST_NATIVE_OBJECTS"],
+                                     linkBuild.ExplicitDeps);
 
     // Then, we handle the main crate root that is build as part of the link
     // step.
-    std::vector<cmSourceFile const*> mainCrateRoot;
-    gt->GetRustMainCrateRoot(mainCrateRoot, config);
-    if (mainCrateRoot.size() != 1) {
-      this->Makefile->IssueMessage(
-        MessageType::FATAL_ERROR,
-        "Target " + gt->GetName() +
-          " has none or more than one main crate root.");
+    cmSourceFile const* mainCrateRoot = gt->GetRustMainCrateRoot(config);
+    if (!mainCrateRoot) {
+      this->Makefile->IssueMessage(MessageType::FATAL_ERROR,
+                                   "Target " + gt->GetName() +
+                                     " has no main crate root.");
       return;
     }
     std::string mainCrateRootPath =
-      this->GetCompiledSourceNinjaPath(mainCrateRoot[0]);
+      this->GetCompiledSourceNinjaPath(mainCrateRoot);
     linkBuild.ExplicitDeps.emplace_back(mainCrateRootPath);
     mainCrateRootPath =
       lg->ConvertToOutputFormat(mainCrateRootPath, cmOutputConverter::SHELL);
@@ -1384,7 +1372,7 @@ void cmNinjaNormalTargetGenerator::WriteLinkStatement(
                            this->TargetLinkLanguage(config), "CURRENT", false);
   }
 
-  this->addPoolNinjaVariable("JOB_POOL_LINK", gt, nullptr, vars);
+  this->addPoolNinjaVariable("JOB_POOL_LINK", config, gt, nullptr, vars);
 
   this->UseLWYU = this->GetLocalGenerator()->AppendLWYUFlags(
     vars["LINK_FLAGS"], this->GetGeneratorTarget(),
@@ -1589,9 +1577,15 @@ void cmNinjaNormalTargetGenerator::WriteLinkStatement(
     cmStrCat("CMAKE_", this->TargetLinkLanguage(config));
 
   // build response file name
-  std::string cmakeLinkVar = cmakeVarLang + "_RESPONSE_FILE_LINK_FLAG";
-
-  cmValue flag = this->GetMakefile()->GetDefinition(cmakeLinkVar);
+  cmValue flag;
+  if (targetType == cmStateEnums::STATIC_LIBRARY) {
+    std::string cmakeLinkVar = cmakeVarLang + "_RESPONSE_FILE_ARCHIVE_FLAG";
+    flag = this->GetMakefile()->GetDefinition(cmakeLinkVar);
+  }
+  if (!flag) {
+    std::string cmakeLinkVar = cmakeVarLang + "_RESPONSE_FILE_LINK_FLAG";
+    flag = this->GetMakefile()->GetDefinition(cmakeLinkVar);
+  }
 
   bool const lang_supports_response =
     !(this->TargetLinkLanguage(config) == "RC" ||

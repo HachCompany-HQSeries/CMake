@@ -36,10 +36,10 @@ For example:
 
 .. code-block:: cmake
 
-  cmake_minimum_required(VERSION 3.10...4.3)
+  cmake_minimum_required(VERSION 3.10...4.4)
 
 This uses the ``<min>...<policy_max>`` syntax to enable the ``NEW`` behaviors
-of policies introduced in CMake 4.3 and earlier while only requiring a
+of policies introduced in CMake 4.4 and earlier while only requiring a
 minimum version of CMake 3.10.  The project is expected to work with
 both the ``OLD`` and ``NEW`` behaviors of policies introduced between
 those versions.
@@ -100,13 +100,15 @@ Policies Introduced by CMake 4.4
 .. toctree::
    :maxdepth: 1
 
+   CMP0219: Macro invocations preserve backslashes in arguments. </policy/CMP0219>
+   CMP0218: The CMAKE_WARN_DEPRECATED and CMAKE_ERROR_DEPRECATED variables are ignored. </policy/CMP0218>
    CMP0217: The MACROS directory property does not exist anymore. </policy/CMP0217>
    CMP0216: Swift targets have a default project name. </policy/CMP0216>
    CMP0215: Ninja generators emit Swift modules separately from compilation. </policy/CMP0215>
    CMP0214: Honor CMAKE_EXE_LINKER_FLAGS for Swift executable targets. </policy/CMP0214>
    CMP0213: file(ARCHIVE_{CREATE,EXTRACT}) encode archive paths as UTF-8 by default. </policy/CMP0213>
    CMP0212: add_custom_command DEPENDS does not strip .exe suffixes. </policy/CMP0212>
-   CMP0211: A file may belong to at most one file set in a target. </policy/CMP0211>
+   CMP0211: A file may belong to at most one non-HEADERS file set in a target. </policy/CMP0211>
 
 Policies Introduced by CMake 4.3
 --------------------------------

@@ -29,7 +29,6 @@
 #include "cmGeneratedFileStream.h"
 #include "cmGeneratorExpression.h"
 #include "cmGeneratorFileSet.h"
-#include "cmGeneratorFileSets.h"
 #include "cmGeneratorOptions.h"
 #include "cmGeneratorTarget.h"
 #include "cmGlobalUnixMakefileGenerator3.h"
@@ -665,6 +664,10 @@ void cmMakefileTargetGenerator::WriteObjectRuleFiles(
   std::string const config = this->GetConfigName();
   std::string const configUpper = cmSystemTools::UpperCase(config);
 
+  // lookup for the associated file set, if any.
+  auto const* fileSet =
+    this->GeneratorTarget->GetFileSetForSource(config, &source);
+
   // Add precompile headers dependencies
   std::vector<std::string> pchArchs =
     this->GeneratorTarget->GetPchArchs(config, lang);
@@ -682,7 +685,9 @@ void cmMakefileTargetGenerator::WriteObjectRuleFiles(
     }
   }
 
-  if (!pchSources.empty() && !source.GetProperty("SKIP_PRECOMPILE_HEADERS")) {
+  if (!pchSources.empty() &&
+      !((fileSet && fileSet->GetProperty("SKIP_PRECOMPILE_HEADERS")) ||
+        source.GetProperty("SKIP_PRECOMPILE_HEADERS"))) {
     for (std::string const& arch : pchArchs) {
       std::string const& pchHeader =
         this->GeneratorTarget->GetPchHeader(config, lang, arch);
@@ -751,11 +756,6 @@ void cmMakefileTargetGenerator::WriteObjectRuleFiles(
       ispcHeaderRelative, cmOutputConverter::SHELL);
   }
 
-  // lookup for the associated file set, if any.
-  auto const* fileSet =
-    this->GeneratorTarget->GetGeneratorFileSets()->GetFileSetForSource(
-      config, &source);
-
   // Add flags from source file properties.
   std::string const COMPILE_FLAGS("COMPILE_FLAGS");
   if (cmValue cflags = source.GetProperty(COMPILE_FLAGS)) {
@@ -794,7 +794,9 @@ void cmMakefileTargetGenerator::WriteObjectRuleFiles(
   }
 
   // Add precompile headers compile options.
-  if (!pchSources.empty() && !source.GetProperty("SKIP_PRECOMPILE_HEADERS")) {
+  if (!pchSources.empty() &&
+      !((fileSet && fileSet->GetProperty("SKIP_PRECOMPILE_HEADERS")) ||
+        source.GetProperty("SKIP_PRECOMPILE_HEADERS"))) {
     std::string pchOptions;
     auto const pchIt = pchSources.find(source.GetFullPath());
     if (pchIt != pchSources.end()) {
@@ -976,6 +978,7 @@ void cmMakefileTargetGenerator::WriteObjectRuleFiles(
   vars.Flags = flags.c_str();
   vars.ISPCHeader = ispcHeaderForShell.c_str();
   vars.Config = this->GetConfigName().c_str();
+  vars.RustEmit = source.GetRustEmitProperty()->c_str();
 
   std::string definesString = cmStrCat("$(", lang, "_DEFINES)");
 
@@ -1107,10 +1110,14 @@ void cmMakefileTargetGenerator::WriteObjectRuleFiles(
       compilerLauncher = GetCompilerLauncher(lang, config);
     }
 
+    cmValue const fsSkipCodeCheckVal =
+      fileSet ? fileSet->GetProperty("SKIP_LINTING") : nullptr;
     cmValue const srcSkipCodeCheckVal = source.GetProperty("SKIP_LINTING");
-    bool const skipCodeCheck = srcSkipCodeCheckVal.IsSet()
-      ? srcSkipCodeCheckVal.IsOn()
-      : this->GetGeneratorTarget()->GetPropertyAsBool("SKIP_LINTING");
+    bool const skipCodeCheck = fsSkipCodeCheckVal.IsSet()
+      ? fsSkipCodeCheckVal.IsOn()
+      : (srcSkipCodeCheckVal.IsSet()
+           ? srcSkipCodeCheckVal.IsOn()
+           : this->GetGeneratorTarget()->GetPropertyAsBool("SKIP_LINTING"));
 
     if (!skipCodeCheck) {
       std::string const codeCheck = this->GenerateCodeCheckRules(
@@ -2049,6 +2056,12 @@ void cmMakefileTargetGenerator::AppendObjectDepends(
   // Add dependencies on the external object files.
   cm::append(depends, this->ExternalObjects);
 
+  // Add dependency on the Rust main crate root file.
+  if (cmSourceFile const* mainCrateRoot =
+        this->GeneratorTarget->GetRustMainCrateRoot(this->GetConfigName())) {
+    depends.push_back(mainCrateRoot->GetFullPath());
+  }
+
   // Add a dependency on the rule file itself.
   this->LocalGenerator->AppendRuleDepend(depends,
                                          this->BuildFileNameFull.c_str());
@@ -2256,9 +2269,9 @@ void cmMakefileTargetGenerator::CreateLinkLibs(
 
     // Create this response file.
     std::string const responseFileName =
-      (responseMode == Link) ? "linkLibs.rsp" : "deviceLinkLibs.rsp";
+      (responseMode == DeviceLink) ? "deviceLinkLibs.rsp" : "linkLibs.rsp";
     std::string const responseLang =
-      (responseMode == Link) ? linkLanguage : "CUDA";
+      (responseMode == DeviceLink) ? "CUDA" : linkLanguage;
     std::string link_rsp = this->CreateResponseFile(
       responseFileName, linkLibs, makefile_depends, responseLang);
 
@@ -2295,8 +2308,9 @@ void cmMakefileTargetGenerator::CreateObjectLists(
     char const* sep = "";
     for (unsigned int i = 0; i < object_strings.size(); ++i) {
       // Number the response files.
-      std::string responseFileName = cmStrCat(
-        (responseMode == Link) ? "objects" : "deviceObjects", i + 1, ".rsp");
+      std::string responseFileName =
+        cmStrCat((responseMode == DeviceLink) ? "deviceObjects" : "objects",
+                 i + 1, ".rsp");
 
       // Create this response file.
       std::string objects_rsp = this->CreateResponseFile(
@@ -2319,6 +2333,33 @@ void cmMakefileTargetGenerator::CreateObjectLists(
     buildObjs =
       cmStrCat("$(", variableName, ") $(", variableNameExternal, ')');
   }
+}
+
+bool cmMakefileTargetGenerator::CreateRustLinkArguments(
+  std::string const& linkLanguage, std::string& rustMainCrateRootPath,
+  std::string& rustLinkCrates, std::string& rustNativeObjects)
+{
+  if (linkLanguage == "Rust") {
+    this->ComputeRustFlagsForObjects(rustLinkCrates, rustNativeObjects,
+                                     this->Objects);
+    this->ComputeRustFlagsForObjects(rustLinkCrates, rustNativeObjects,
+                                     this->ExternalObjects);
+
+    cmSourceFile const* mainCrateRoot =
+      this->GeneratorTarget->GetRustMainCrateRoot(this->GetConfigName());
+    if (!mainCrateRoot) {
+      this->Makefile->IssueMessage(MessageType::FATAL_ERROR,
+                                   "Target " +
+                                     this->GeneratorTarget->GetName() +
+                                     " has no main crate root.");
+      return false;
+    }
+    rustMainCrateRootPath = mainCrateRoot->GetFullPath();
+    rustMainCrateRootPath = this->LocalGenerator->ConvertToOutputFormat(
+      rustMainCrateRootPath, cmOutputConverter::SHELL);
+    return true;
+  }
+  return false;
 }
 
 void cmMakefileTargetGenerator::AddIncludeFlags(std::string& flags,
@@ -2419,10 +2460,17 @@ std::string cmMakefileTargetGenerator::GetResponseFlag(
     responseFlagVar = cmStrCat("CMAKE_", lang, "_RESPONSE_FILE_LINK_FLAG");
   } else if (mode == cmMakefileTargetGenerator::ResponseFlagFor::DeviceLink) {
     responseFlagVar = "CMAKE_CUDA_RESPONSE_FILE_DEVICE_LINK_FLAG";
+  } else if (mode == cmMakefileTargetGenerator::ResponseFlagFor::Archive) {
+    responseFlagVar = cmStrCat("CMAKE_", lang, "_RESPONSE_FILE_ARCHIVE_FLAG");
   }
 
   if (cmValue const p = this->Makefile->GetDefinition(responseFlagVar)) {
     responseFlag = *p;
+  } else if (mode == cmMakefileTargetGenerator::ResponseFlagFor::Archive) {
+    responseFlagVar = cmStrCat("CMAKE_", lang, "_RESPONSE_FILE_LINK_FLAG");
+    if (cmValue const q = this->Makefile->GetDefinition(responseFlagVar)) {
+      responseFlag = *q;
+    }
   }
   return responseFlag;
 }

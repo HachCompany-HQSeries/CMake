@@ -367,6 +367,14 @@ RealSystem RealOS;
 
 } // namespace
 
+#if defined(_WIN32) || defined(__APPLE__)
+cmsys::Status cmSystemTools::ReadNameOnDisk(std::string const& path,
+                                            std::string& name)
+{
+  return ::ReadNameOnDisk(path, name);
+}
+#endif
+
 #if !defined(HAVE_ENVIRON_NOT_REQUIRE_PROTOTYPE)
 // For GetEnvironmentVariables
 #  if defined(_WIN32)
@@ -2084,6 +2092,9 @@ std::string cmSystemTools::ToNormalizedPathOnDisk(std::string p)
   static Resolver<Policies::LogicalPath> const resolver(RealOS);
 #endif
   resolver.Resolve(std::move(p), p);
+#ifdef __clang_analyzer__ /* cplusplus.Move */
+  p.clear();
+#endif
   return p;
 }
 
@@ -2425,6 +2436,9 @@ void ArchiveError(char const* m1, struct archive* a)
   cmSystemTools::Error(message);
 }
 
+// Return 'true' if the return value 'r' from a libarchive function indicates
+// success or a warning that can be ignored.  Return 'false' if it indicates an
+// error
 bool la_diagnostic(struct archive* ar, __LA_SSIZE_T r)
 {
   // See archive.h definition of ARCHIVE_OK for return values.
@@ -2434,6 +2448,12 @@ bool la_diagnostic(struct archive* ar, __LA_SSIZE_T r)
   }
 
   if (r >= ARCHIVE_WARN) {
+    if (archive_errno(ar) == ENOSPC) {
+      // If we fall through to the generic error handling, the error message
+      // will be "Write failed". Explicit handling for better diagnostics
+      std::cerr << "cmake -E tar: error: No space left on device\n";
+      return false;
+    }
     char const* warn = archive_error_string(ar);
     if (!warn) {
       warn = "unknown warning";
@@ -2474,7 +2494,7 @@ bool copy_data(struct archive* ar, struct archive* aw)
     }
     // See archive.h definition of ARCHIVE_OK for return values.
     __LA_SSIZE_T const w = archive_write_data_block(aw, buff, size, offset);
-    if (!la_diagnostic(ar, w)) {
+    if (!la_diagnostic(aw, w)) {
       return false;
     }
   }
@@ -2569,6 +2589,7 @@ bool extract_tar(std::string const& arFileName,
       r = archive_write_header(ext, entry);
       if (r == ARCHIVE_OK) {
         if (!copy_data(a, ext)) {
+          r = ARCHIVE_FAILED;
           break;
         }
         r = archive_write_finish_entry(ext);
@@ -2876,6 +2897,8 @@ std::string InitLogicalWorkingDirectory()
   return cwd;
 }
 
+bool cmSystemToolsCMakeInBuildTree = false;
+
 std::string cmSystemToolsLogicalWorkingDirectory =
   InitLogicalWorkingDirectory();
 
@@ -3000,6 +3023,7 @@ void FindCMakeResourcesInBuildTree(std::string const& exe_dir)
   if (fin && cmSystemTools::GetLineFromStream(fin, src_dir) &&
       cmSystemTools::FileIsDirectory(src_dir)) {
     cmSystemToolsCMakeRoot = src_dir;
+    cmSystemToolsCMakeInBuildTree = true;
   } else {
     dir = cmSystemTools::GetFilenamePath(dir);
     src_dir_txt = cmStrCat(dir, "/CMakeFiles/CMakeSourceDir.txt");
@@ -3007,6 +3031,7 @@ void FindCMakeResourcesInBuildTree(std::string const& exe_dir)
     if (fin2 && cmSystemTools::GetLineFromStream(fin2, src_dir) &&
         cmSystemTools::FileIsDirectory(src_dir)) {
       cmSystemToolsCMakeRoot = src_dir;
+      cmSystemToolsCMakeInBuildTree = true;
     }
   }
   if (!cmSystemToolsCMakeRoot.empty() && cmSystemToolsHTMLDoc.empty() &&
@@ -3024,6 +3049,7 @@ void cmSystemTools::FindCMakeResources(char const* argv0)
 #ifdef CMAKE_BOOTSTRAP
   // The bootstrap cmake knows its resource locations.
   cmSystemToolsCMakeRoot = CMAKE_BOOTSTRAP_SOURCE_DIR;
+  cmSystemToolsCMakeInBuildTree = true;
   cmSystemToolsCMakeCommand = exe;
   // The bootstrap cmake does not provide the other tools,
   // so use the directory where they are about to be built.
@@ -3105,6 +3131,11 @@ std::string const& cmSystemTools::GetCMClDepsCommand()
 std::string const& cmSystemTools::GetCMakeRoot()
 {
   return cmSystemToolsCMakeRoot;
+}
+
+bool cmSystemTools::GetCMakeInBuildTree()
+{
+  return cmSystemToolsCMakeInBuildTree;
 }
 
 std::string const& cmSystemTools::GetHTMLDoc()

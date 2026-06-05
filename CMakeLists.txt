@@ -429,6 +429,7 @@ if(NOT CMake_TEST_EXTERNAL_CMAKE)
     execute_process(COMMAND ${CMAKE_CXX_COMPILER}
       ${CMAKE_CXX_COMPILER_ARG1} -dumpversion
       OUTPUT_VARIABLE _GXX_VERSION
+      RESULT_VARIABLE _GXX_VERSION_RESULT
     )
     string(REGEX REPLACE "([0-9])\\.([0-9])(\\.[0-9])?" "\\1\\2"
       _GXX_VERSION_SHORT ${_GXX_VERSION})
@@ -610,6 +611,7 @@ if(NOT CMake_TEST_EXTERNAL_CMAKE)
                   GROUP_READ GROUP_EXECUTE
                   WORLD_READ WORLD_EXECUTE
     REGEX "Help/(dev|guide)($|/)" EXCLUDE
+    PATTERN ".git*" EXCLUDE
     )
 
   # Install auxiliary files integrating with other tools.

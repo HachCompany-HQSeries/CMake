@@ -21,7 +21,6 @@
 
 #include "cmAlgorithms.h"
 #include "cmCustomCommand.h"
-#include "cmDiagnostics.h"
 #include "cmFileSet.h"
 #include "cmFileSetMetadata.h"
 #include "cmFindPackageStack.h"
@@ -1680,9 +1679,19 @@ cmBTStringRange cmTarget::GetCompileOptionsEntries() const
   return cmMakeRange(this->impl->CompileOptions.Entries);
 }
 
+cmBTStringRange cmTarget::GetImportedCxxModulesCompileOptionsEntries() const
+{
+  return cmMakeRange(this->impl->ImportedCxxModulesCompileOptions.Entries);
+}
+
 cmBTStringRange cmTarget::GetCompileFeaturesEntries() const
 {
   return cmMakeRange(this->impl->CompileFeatures.Entries);
+}
+
+cmBTStringRange cmTarget::GetImportedCxxModulesCompileFeaturesEntries() const
+{
+  return cmMakeRange(this->impl->ImportedCxxModulesCompileFeatures.Entries);
 }
 
 cmBTStringRange cmTarget::GetCompileDefinitionsEntries() const
@@ -1730,6 +1739,31 @@ cmBTStringRange cmTarget::GetLinkInterfaceDirectExcludeEntries() const
   return cmMakeRange(this->impl->InterfaceLinkLibrariesDirectExclude.Entries);
 }
 
+void cmTarget::CopyUsageEffects(cmTarget const* tgt)
+{
+  // Normal targets cannot be the target of a copy.
+  assert(!this->IsNormal());
+  // Imported targets cannot be the target of a copy.
+  assert(!this->IsImported());
+  // Only imported or normal targets can be the source of a copy.
+  assert(tgt->IsImported() || tgt->IsNormal());
+
+  this->impl->CompileFeatures.Entries.clear();
+  this->impl->CompileOptions.Entries.clear();
+
+  if (tgt->IsImported()) {
+    this->impl->CompileFeatures.CopyFromEntries(
+      cmMakeRange(tgt->impl->ImportedCxxModulesCompileFeatures.Entries));
+    this->impl->CompileOptions.CopyFromEntries(
+      cmMakeRange(tgt->impl->ImportedCxxModulesCompileOptions.Entries));
+  } else {
+    this->impl->CompileFeatures.CopyFromEntries(
+      cmMakeRange(tgt->impl->CompileFeatures.Entries));
+    this->impl->CompileOptions.CopyFromEntries(
+      cmMakeRange(tgt->impl->CompileOptions.Entries));
+  }
+}
+
 void cmTarget::CopyPolicyStatuses(cmTarget const* tgt)
 {
   // Normal targets cannot be the target of a copy.
@@ -1755,8 +1789,6 @@ void cmTarget::CopyCxxModulesEntries(cmTarget const* tgt)
 
   this->impl->IncludeDirectories.Entries.clear();
   this->impl->CompileDefinitions.Entries.clear();
-  this->impl->CompileFeatures.Entries.clear();
-  this->impl->CompileOptions.Entries.clear();
   this->impl->LinkLibraries.Entries.clear();
 
   if (tgt->IsImported()) {
@@ -1764,10 +1796,6 @@ void cmTarget::CopyCxxModulesEntries(cmTarget const* tgt)
       cmMakeRange(tgt->impl->ImportedCxxModulesIncludeDirectories.Entries));
     this->impl->CompileDefinitions.CopyFromEntries(
       cmMakeRange(tgt->impl->ImportedCxxModulesCompileDefinitions.Entries));
-    this->impl->CompileFeatures.CopyFromEntries(
-      cmMakeRange(tgt->impl->ImportedCxxModulesCompileFeatures.Entries));
-    this->impl->CompileOptions.CopyFromEntries(
-      cmMakeRange(tgt->impl->ImportedCxxModulesCompileOptions.Entries));
     this->impl->LinkLibraries.CopyFromEntries(
       cmMakeRange(tgt->impl->ImportedCxxModulesLinkLibraries.Entries));
   } else {
@@ -1775,10 +1803,6 @@ void cmTarget::CopyCxxModulesEntries(cmTarget const* tgt)
       cmMakeRange(tgt->impl->IncludeDirectories.Entries));
     this->impl->CompileDefinitions.CopyFromEntries(
       cmMakeRange(tgt->impl->CompileDefinitions.Entries));
-    this->impl->CompileFeatures.CopyFromEntries(
-      cmMakeRange(tgt->impl->CompileFeatures.Entries));
-    this->impl->CompileOptions.CopyFromEntries(
-      cmMakeRange(tgt->impl->CompileOptions.Entries));
     this->impl->LinkLibraries.CopyFromEntries(
       cmMakeRange(tgt->impl->LinkLibraries.Entries));
   }
@@ -2061,10 +2085,8 @@ struct ReadOnlyProperty
     } else {
       switch (target->GetPolicyStatus(*this->Policy)) {
         case cmPolicies::WARN:
-          context->IssueDiagnostic(
-            cmDiagnostics::CMD_AUTHOR,
-            cmPolicies::GetPolicyWarning(cmPolicies::CMP0160) + "\n" +
-              this->message(prop, target));
+          context->IssuePolicyWarning(cmPolicies::CMP0160, {},
+                                      this->message(prop, target));
           CM_FALLTHROUGH;
         case cmPolicies::OLD:
           readOnly = false;
@@ -3137,10 +3159,8 @@ std::string cmTarget::ImportedGetFullPath(
 
       switch (this->GetPolicyStatus(cmPolicies::CMP0111)) {
         case cmPolicies::WARN:
-          this->impl->Makefile->IssueDiagnostic(
-            cmDiagnostics::CMD_AUTHOR,
-            cmPolicies::GetPolicyWarning(cmPolicies::CMP0111) + "\n" +
-              message());
+          this->impl->Makefile->IssuePolicyWarning(cmPolicies::CMP0111, {},
+                                                   message());
           CM_FALLTHROUGH;
         case cmPolicies::OLD:
           break;
@@ -3323,12 +3343,12 @@ bool cmTarget::GetMappedConfig(std::string const& desiredConfig, cmValue& loc,
     if (newResult) {
       // NEW policy found a configuration, OLD did not.
       cm::string_view newConfig = configFromSuffix(newSuffix);
-      std::string const err = cmStrCat(
-        cmPolicies::GetPolicyWarning(cmPolicies::CMP0200),
-        "\nConfiguration selection for imported target \"", this->GetName(),
-        "\" failed, but would select configuration \"", newConfig,
-        "\" under the NEW policy.\n");
-      this->GetMakefile()->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, err);
+      this->GetMakefile()->IssuePolicyWarning(
+        cmPolicies::CMP0200, {},
+        cmStrCat("Configuration selection for imported target \""_s,
+                 this->GetName(),
+                 "\" failed, but would select configuration \""_s, newConfig,
+                 "\" under the NEW policy."_s));
     }
 
     return false;
@@ -3337,22 +3357,20 @@ bool cmTarget::GetMappedConfig(std::string const& desiredConfig, cmValue& loc,
   cm::string_view oldConfig = configFromSuffix(suffix);
   if (!newResult) {
     // NEW policy did not find a configuration, OLD did.
-    std::string const err =
-      cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0200),
-               "\nConfiguration selection for imported target \"",
-               this->GetName(), "\" selected configuration \"", oldConfig,
-               "\", but would fail under the NEW policy.\n");
-    this->GetMakefile()->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, err);
+    this->GetMakefile()->IssuePolicyWarning(
+      cmPolicies::CMP0200, {},
+      cmStrCat("Configuration selection for imported target \""_s,
+               this->GetName(), "\" selected configuration \""_s, oldConfig,
+               "\", but would fail under the NEW policy."_s));
   } else if (suffix != newSuffix) {
     // OLD and NEW policies found different configurations.
     cm::string_view newConfig = configFromSuffix(newSuffix);
-    std::string const err =
-      cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0200),
-               "\nConfiguration selection for imported target \"",
-               this->GetName(), "\" selected configuration \"", oldConfig,
-               "\", but would select configuration \"", newConfig,
-               "\" under the NEW policy.\n");
-    this->GetMakefile()->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, err);
+    this->GetMakefile()->IssuePolicyWarning(
+      cmPolicies::CMP0200, {},
+      cmStrCat("Configuration selection for imported target \""_s,
+               this->GetName(), "\" selected configuration \""_s, oldConfig,
+               "\", but would select configuration \""_s, newConfig,
+               "\" under the NEW policy."_s));
   }
 
   return true;

@@ -15,8 +15,10 @@
 #include <vector>
 
 #include <cm/optional>
+#include <cm/string_view>
 
 #include "cmCustomCommandTypes.h"
+#include "cmDiagnosticContext.h"
 #include "cmDiagnostics.h"
 #include "cmGeneratorOptions.h"
 #include "cmGeneratorTarget.h"
@@ -581,10 +583,26 @@ public:
   void IssueDiagnostic(cmDiagnosticCategory category,
                        std::string const& text) const
   {
-    this->IssueDiagnostic(category, text, this->DirectoryBacktrace);
+    this->IssueDiagnostic(category, text,
+                          cmDiagnosticContext{ this->DirectoryBacktrace });
   }
   void IssueDiagnostic(cmDiagnosticCategory category, std::string const& text,
-                       cmListFileBacktrace const& bt) const;
+                       cmListFileBacktrace const& bt) const
+  {
+    this->IssueDiagnostic(category, text, cmDiagnosticContext{ bt });
+  }
+  void IssueDiagnostic(cmDiagnosticCategory category, std::string const& text,
+                       cmDiagnosticContext const& context) const;
+  void IssuePolicyWarning(cmPolicies::PolicyID policy, cm::string_view preface,
+                          cm::string_view postface,
+                          cmListFileBacktrace const& bt) const;
+  void IssuePolicyWarning(cmPolicies::PolicyID policy,
+                          cm::string_view preface = {},
+                          cm::string_view postface = {}) const
+  {
+    this->IssuePolicyWarning(policy, preface, postface,
+                             this->DirectoryBacktrace);
+  }
 
   void CreateEvaluationFileOutputs();
   void CreateEvaluationFileOutputs(std::string const& config);

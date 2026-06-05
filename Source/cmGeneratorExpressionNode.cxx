@@ -29,7 +29,6 @@
 #include "cmCMakePath.h"
 #include "cmCMakeString.hxx"
 #include "cmComputeLinkInformation.h"
-#include "cmDiagnostics.h"
 #include "cmGenExContext.h"
 #include "cmGenExEvaluation.h"
 #include "cmGeneratorExpression.h"
@@ -426,11 +425,11 @@ static const struct InListNode : public cmGeneratorExpressionNode
       case cmPolicies::OLD:
         values.assign(parameters[1]);
         if (check && values != checkValues) {
-          std::string const err =
-            cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0085),
-                     "\nSearch Item:\n  \""_s, parameters.front(),
-                     "\"\nList:\n  \""_s, parameters[1], "\"\n"_s);
-          lg->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, err, eval->Backtrace);
+          lg->IssuePolicyWarning(
+            cmPolicies::CMP0085, {},
+            cmStrCat("Search Item:\n  \""_s, parameters.front(),
+                     "\"\nList:\n  \""_s, parameters[1], "\"\n"_s),
+            eval->Backtrace);
           return "0";
         }
         if (values.empty()) {
@@ -2894,14 +2893,13 @@ static const struct ConfigurationTestNode : public cmGeneratorExpressionNode
             case cmPolicies::WARN:
               if (lg->GetMakefile()->PolicyOptionalWarningEnabled(
                     "CMAKE_POLICY_WARNING_CMP0199")) {
-                std::string const err =
-                  cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0199),
-                           "\nEvaluation of $<CONFIG> for imported target  \"",
-                           eval->CurrentTarget->GetName(), "\", used by \"",
+                lg->IssuePolicyWarning(
+                  cmPolicies::CMP0199, {},
+                  cmStrCat("Evaluation of $<CONFIG> for imported target  \""_s,
+                           eval->CurrentTarget->GetName(), "\", used by \""_s,
                            eval->HeadTarget->GetName(),
-                           "\", may match multiple configurations.\n");
-                lg->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, err,
-                                    eval->Backtrace);
+                           "\", may match multiple configurations."_s),
+                  eval->Backtrace);
               }
               CM_FALLTHROUGH;
             case cmPolicies::OLD:
@@ -3843,7 +3841,7 @@ static const struct SourcePropertyNode : public cmGeneratorExpressionNode
   std::string Evaluate(
     std::vector<std::string> const& parameters, cm::GenEx::Evaluation* eval,
     GeneratorExpressionContent const* content,
-    cmGeneratorExpressionDAGChecker* /*dagCheckerParent*/) const override
+    cmGeneratorExpressionDAGChecker* dagCheckerParent) const override
   {
     static cmsys::RegularExpression propertyNameValidator("^[A-Za-z0-9_]+$");
 
@@ -3893,7 +3891,47 @@ static const struct SourcePropertyNode : public cmGeneratorExpressionNode
       return std::string{};
     }
 
-    return sourceFile->GetPropertyForUser(propertyName);
+    if (propertyName == "OBJECT_NAME"_s) {
+      return eval->Context.LG->GetCustomObjectFileName(*sourceFile);
+    }
+
+    std::string result = sourceFile->GetPropertyForUser(propertyName);
+
+    if (propertyName == "INCLUDE_DIRECTORIES"_s ||
+        propertyName == "COMPILE_DEFINITIONS"_s ||
+        propertyName == "COMPILE_OPTIONS"_s ||
+        propertyName == "COMPILE_FLAGS"_s ||
+        propertyName == "OBJECT_OUTPUTS"_s ||
+        propertyName == "VS_DEPLOYMENT_CONTENT"_s ||
+        propertyName == "VS_SETTINGS"_s) {
+      if (eval->HeadTarget) {
+        cmGeneratorExpressionDAGChecker dagChecker{
+          eval->HeadTarget, propertyName,  content,
+          dagCheckerParent, eval->Context, eval->Backtrace,
+        };
+        switch (dagChecker.Check()) {
+          case cmGeneratorExpressionDAGChecker::SELF_REFERENCE:
+          case cmGeneratorExpressionDAGChecker::CYCLIC_REFERENCE: {
+            dagChecker.ReportError(eval, content->GetOriginalExpression());
+            return std::string{};
+          }
+          case cmGeneratorExpressionDAGChecker::ALREADY_SEEN:
+          case cmGeneratorExpressionDAGChecker::DAG:
+            break;
+        }
+
+        return cmGeneratorExpression::StripEmptyListElements(
+          this->EvaluateDependentExpression(result, eval, eval->HeadTarget,
+                                            &dagChecker, eval->CurrentTarget));
+      }
+
+      return cmGeneratorExpression::StripEmptyListElements(
+        this->EvaluateDependentExpression(result, eval, eval->HeadTarget,
+                                          dagCheckerParent,
+                                          eval->CurrentTarget));
+    }
+
+    return result;
   }
 } sourcePropertyNode;
 
@@ -4663,9 +4701,7 @@ static const struct TargetPolicyNode : public cmGeneratorExpressionNode
         cmLocalGenerator* lg = eval->HeadTarget->GetLocalGenerator();
         switch (statusForTarget(eval->HeadTarget, policy)) {
           case cmPolicies::WARN:
-            lg->IssueDiagnostic(
-              cmDiagnostics::CMD_AUTHOR,
-              cmPolicies::GetPolicyWarning(policyForString(policy)));
+            lg->IssuePolicyWarning(policyForString(policy));
             CM_FALLTHROUGH;
           case cmPolicies::OLD:
             return "0";
@@ -4749,11 +4785,11 @@ struct TargetFilesystemArtifactDependencyCMP0112
       case cmPolicies::WARN:
         if (lg->GetMakefile()->PolicyOptionalWarningEnabled(
               "CMAKE_POLICY_WARNING_CMP0112")) {
-          std::string const err =
-            cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0112),
-                     "\nDependency being added to target:\n  \"",
-                     target->GetName(), "\"\n");
-          lg->IssueDiagnostic(cmDiagnostics::CMD_AUTHOR, err, eval->Backtrace);
+          lg->IssuePolicyWarning(
+            cmPolicies::CMP0112, {},
+            cmStrCat("Dependency being added to target:\n  \""_s,
+                     target->GetName(), "\"\n"_s),
+            eval->Backtrace);
         }
         CM_FALLTHROUGH;
       case cmPolicies::OLD:
@@ -5442,13 +5478,10 @@ struct TargetOutputNameArtifactResultGetter<ArtifactPdbTag>
 
     if (target->GetPolicyStatusCMP0202() == cmPolicies::WARN &&
         postfix != Postfix::Unspecified) {
-      lg->IssueDiagnostic(
-        cmDiagnostics::CMD_AUTHOR,
-        cmStrCat(cmPolicies::GetPolicyWarning(cmPolicies::CMP0202),
-                 "\n"
-                 "\"POSTFIX\" option is recognized only when the policy is "
-                 "set to NEW. Since the policy is not set, the OLD behavior "
-                 "will be used."),
+      lg->IssuePolicyWarning(
+        cmPolicies::CMP0202, {},
+        "\"POSTFIX\" option is recognized only when the policy is set to NEW."
+        "  Since the policy is not set, the OLD behavior will be used."_s,
         eval->Backtrace);
     }
 
