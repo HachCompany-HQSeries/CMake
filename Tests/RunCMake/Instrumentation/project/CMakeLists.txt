@@ -8,6 +8,15 @@ endif()
 add_executable(main main.c)
 add_library(lib lib.c)
 target_link_libraries(main lib)
+
+if (INSTRUMENT_COMPILE_TRACE STREQUAL "DEFAULT")
+  target_compile_options(main PRIVATE "-ftime-trace")
+  target_compile_options(lib PRIVATE "-ftime-trace")
+elseif (INSTRUMENT_COMPILE_TRACE STREQUAL "EXPLICIT")
+  target_compile_options(main PRIVATE "-ftime-trace=main.json")
+  target_compile_options(lib PRIVATE "-ftime-trace=lib.json")
+endif()
+
 add_custom_command(TARGET main POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E true
 )
@@ -60,4 +69,13 @@ if (FAIL)
   add_executable(dummy "${CMAKE_BINARY_DIR}/dummy.c")
   add_test(NAME dummy COMMAND ${CMAKE_COMMAND} -E false)
   install(CODE "message(FATAL_ERROR \"Failed install.\")")
+endif()
+
+if (INTERRUPT_BUILD_SRC)
+  add_executable(InterruptBuild "${INTERRUPT_BUILD_SRC}")
+  add_custom_target(interruptSlow ALL
+    COMMAND ${CMAKE_COMMAND} -E echo "interruptSlow: begin"
+    COMMAND ${CMAKE_COMMAND} -E sleep 30
+    COMMAND ${CMAKE_COMMAND} -E echo "interruptSlow: end"
+  )
 endif()

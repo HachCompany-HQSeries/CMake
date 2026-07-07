@@ -8,6 +8,8 @@ function(instrument test)
   set(OPTIONS
     "BUILD"
     "BUILD_MAKE_PROGRAM"
+    "INTERRUPT"
+    "INTERRUPT_SEAM"
     "INSTALL"
     "INSTALL_PARALLEL"
     "TEST"
@@ -17,6 +19,8 @@ function(instrument test)
     "STATIC_QUERY"
     "DYNAMIC_QUERY"
     "CAPTURE_OUTPUT_QUERY"
+    "COMPILE_TRACE_QUERY"
+    "COMPILE_TRACE_QUERY_NULL"
     "TRACE_QUERY"
     "MANUAL_HOOK"
     "PRESERVE_DATA"
@@ -25,7 +29,7 @@ function(instrument test)
     "FAIL"
     "BAD_QUERY"
   )
-  cmake_parse_arguments(ARGS "${OPTIONS}" "CHECK_SCRIPT;CONFIGURE_ARG" "" ${ARGN})
+  cmake_parse_arguments(ARGS "${OPTIONS}" "CHECK_SCRIPT" "CONFIGURE_ARGS" ${ARGN})
   set(RunCMake_TEST_BINARY_DIR ${RunCMake_BINARY_DIR}/${test})
   set(v1 ${RunCMake_TEST_BINARY_DIR}/.cmake/instrumentation/v1)
   set(v1 ${v1} PARENT_SCOPE)
@@ -56,6 +60,8 @@ function(instrument test)
   if (ARGS_TRACE_QUERY)
     set(trace_query_hook_arg 1)
   endif()
+  set(ARGS_COMPILE_TRACE_QUERY ${ARGS_COMPILE_TRACE_QUERY} PARENT_SCOPE)
+  set(ARGS_COMPILE_TRACE_QUERY_NULL ${ARGS_COMPILE_TRACE_QUERY_NULL} PARENT_SCOPE)
   set(GET_HOOK
     "\\\"${CMAKE_COMMAND}\\\""
     "-DSTATIC_QUERY=${static_query_hook_arg}"
@@ -86,7 +92,7 @@ function(instrument test)
         set(cmake_file "${query_dir}/default.cmake")
       endif()
     endif()
-    list(APPEND ARGS_CONFIGURE_ARG "-DINSTRUMENT_COMMAND_FILE=${cmake_file}")
+    list(APPEND ARGS_CONFIGURE_ARGS "-DINSTRUMENT_COMMAND_FILE=${cmake_file}")
   endif()
 
   set(copy_loc ${RunCMake_TEST_BINARY_DIR}/query)
@@ -112,10 +118,14 @@ function(instrument test)
   # Configure Test Case
   set(RunCMake_TEST_NO_CLEAN 1)
   if (ARGS_FAIL)
-    list(APPEND ARGS_CONFIGURE_ARG "-DFAIL=ON")
+    list(APPEND ARGS_CONFIGURE_ARGS "-DFAIL=ON")
   endif()
   if (ARGS_DISABLE_TEST)
-    list(APPEND ARGS_CONFIGURE_ARG "-DDISABLE_TEST=ON")
+    list(APPEND ARGS_CONFIGURE_ARGS "-DDISABLE_TEST=ON")
+  endif()
+  if (ARGS_INTERRUPT)
+    list(APPEND ARGS_CONFIGURE_ARGS
+      "-DINTERRUPT_BUILD_SRC=${RunCMake_SOURCE_DIR}/InterruptBuild.c")
   endif()
   set(RunCMake_TEST_SOURCE_DIR ${RunCMake_SOURCE_DIR}/project)
   if(NOT RunCMake_GENERATOR_IS_MULTI_CONFIG)
@@ -141,7 +151,7 @@ function(instrument test)
     unset(RunCMake_QUIET_ERROR)
   endif()
   if (NOT ARGS_NO_CONFIGURE)
-    run_cmake_with_options(${test} ${ARGS_CONFIGURE_ARG} ${maybe_CMAKE_BUILD_TYPE})
+    run_cmake_with_options(${test} ${ARGS_CONFIGURE_ARGS} ${maybe_CMAKE_BUILD_TYPE})
   endif()
 
   # Follow-up Commands
@@ -172,6 +182,51 @@ function(instrument test)
       unset(RunCMake_TEST_OUTPUT_MERGE)
     endif()
   endif()
+  if (ARGS_INTERRUPT)
+    # Build just the interrupt helper so it exists for the interrupted build.
+    # This uninterrupted build runs the postCMakeBuild hook, so remove the
+    # postCMakeBuild.hook file it produces; its absence after the interrupted
+    # build below then proves that build's hook was skipped.
+    run_cmake_command(${test}-helper
+      ${CMAKE_COMMAND} --build . --config Debug --target InterruptBuild)
+    file(REMOVE ${v1}/postCMakeBuild.hook)
+
+    # Run an instrumented build and interrupt it after a few seconds, while the
+    # slow target is still running.  Multi-config generators place the helper
+    # under a per-config subdirectory; the build below uses --config Debug.
+    set(helper_dir ${RunCMake_TEST_BINARY_DIR})
+    if (RunCMake_GENERATOR_IS_MULTI_CONFIG)
+      set(helper_dir ${helper_dir}/Debug)
+    endif()
+    set(helper ${helper_dir}/InterruptBuild${CMAKE_EXECUTABLE_SUFFIX})
+    set(RunCMake_QUIET_ERROR 1)
+    run_cmake_command(${test}-build
+      ${helper} 3
+      ${CMAKE_COMMAND} --build . --config Debug)
+    unset(RunCMake_QUIET_ERROR)
+  endif()
+  if (ARGS_INTERRUPT_SEAM)
+    # Drive the cmakeBuild interrupt path deterministically via the test-only
+    # injection seam, with no OS signal, so it runs on every generator.  First
+    # build normally so the postCMakeBuild hook runs and creates its marker
+    # file; remove it so its absence after the injected build proves that
+    # build's hook was skipped.
+    set(RunCMake_QUIET_ERROR 1)
+    run_cmake_command(${test}-warmup
+      ${CMAKE_COMMAND} --build . --config Debug)
+    file(REMOVE ${v1}/postCMakeBuild.hook)
+
+    # Inject an interrupt (SIGINT == 2) via the undocumented test seam and build
+    # again; cmake exits cleanly but writes the interrupted cmakeBuild snippet
+    # and skips the hook.
+    set(ENV{__CMAKE_INSTRUMENTATION_TEST_INTERRUPT} 2)
+    set(RunCMake_TEST_EXPECT_RESULT 0)
+    run_cmake_command(${test}-build
+      ${CMAKE_COMMAND} --build . --config Debug)
+    unset(RunCMake_TEST_EXPECT_RESULT)
+    unset(ENV{__CMAKE_INSTRUMENTATION_TEST_INTERRUPT})
+    unset(RunCMake_QUIET_ERROR)
+  endif()
   if (ARGS_BUILD_MAKE_PROGRAM)
     set(RunCMake_TEST_OUTPUT_MERGE 1)
     set(RunCMake_QUIET_ERROR 1)
@@ -201,6 +256,22 @@ function(instrument test)
     unset(RunCMake_CHECK_ONLY)
   endif()
 endfunction()
+
+if (INSTRUMENTATION_INTERRUPT_REAL)
+  # RunCMake.InstrumentationInterrupt runs ONLY the real-signal/
+  # console-event interrupt case, as it must be excluded from MemCheck.
+  #
+  # POSIX delivers a real SIGINT to a contained process group.  On Windows, only
+  # the Ninja generator is exercised: its native tool reliably stops on the
+  # console event and does not re-broadcast it to the runner; the other Windows
+  # make-family generators are covered by the injection seam instead.
+  if (NOT WIN32 OR RunCMake_GENERATOR MATCHES "Ninja")
+    instrument(interrupt INTERRUPT
+      CHECK_SCRIPT check-interrupted.cmake
+    )
+  endif()
+  return()
+endif()
 
 # Bad Queries
 instrument(bad-option BAD_QUERY
@@ -275,7 +346,7 @@ instrument(cmake-command-parallel-install
   BUILD INSTALL TEST INSTALL_PARALLEL DYNAMIC_QUERY
   CHECK_SCRIPT check-data-dir.cmake)
 instrument(cmake-command-initial-cache
-  CONFIGURE_ARG "-C ${RunCMake_BINARY_DIR}/initial.cmake"
+  CONFIGURE_ARGS "-C ${RunCMake_BINARY_DIR}/initial.cmake"
 )
 instrument(cmake-command-resets-generated
   COPY_QUERIES_GENERATED
@@ -303,11 +374,11 @@ instrument(cmake-command-workflow
 # Test CUSTOM_CONTENT
 instrument(cmake-command-custom-content
   BUILD
-  CONFIGURE_ARG "-DN=1"
+  CONFIGURE_ARGS "-DN=1"
 )
 instrument(cmake-command-custom-content
   BUILD PRESERVE_DATA
-  CONFIGURE_ARG "-DN=2"
+  CONFIGURE_ARGS "-DN=2"
   CHECK_SCRIPT check-custom-content.cmake
 )
 set(indexDir ${v1}/data/index)
@@ -350,6 +421,67 @@ instrument(cmake-command-trace
 instrument(cmake-command-capture-output
   BUILD CAPTURE_OUTPUT_QUERY
   CHECK_SCRIPT check-data-dir.cmake
+)
+
+# Test compile trace collection
+if (CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
+  if (CMAKE_C_COMPILER_VERSION VERSION_LESS 11.1)
+    set(Skip_COMPILE_TRACE_QUERY_Case 1)
+  elseif (CMAKE_C_COMPILER_VERSION VERSION_LESS 15)
+    set(Skip_COMPILE_TRACE_QUERY_ARG_Case 1)
+  endif()
+elseif (CMAKE_C_COMPILER_ID STREQUAL "Clang")
+  if (CMAKE_C_COMPILER_VERSION VERSION_LESS 9)
+    set(Skip_COMPILE_TRACE_QUERY_Case 1)
+  elseif (CMAKE_C_COMPILER_VERSION VERSION_LESS 16)
+    set(Skip_COMPILE_TRACE_QUERY_ARG_Case 1)
+  endif()
+else()
+  set(Skip_COMPILE_TRACE_QUERY_Case 1)
+endif()
+if("$ENV{CMAKE_OSX_ARCHITECTURES}" MATCHES "[;$]")
+  # `-ftime-trace` with multiple `-arch` puts the trace file in TMPDIR.
+  set(Skip_COMPILE_TRACE_QUERY_Case 1)
+endif()
+if (NOT Skip_COMPILE_TRACE_QUERY_Case)
+  instrument(cmake-command-compile-trace
+    BUILD COMPILE_TRACE_QUERY
+    CONFIGURE_ARGS
+      "-DINSTRUMENT_COMPILE_TRACE=DEFAULT"
+      "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+    CHECK_SCRIPT check-data-dir.cmake
+  )
+  instrument(cmake-command-compile-trace-null
+    BUILD COMPILE_TRACE_QUERY_NULL
+    CHECK_SCRIPT check-data-dir.cmake
+  )
+  if (NOT Skip_COMPILE_TRACE_QUERY_ARG_Case)
+    instrument(cmake-command-compile-trace-explicit
+      BUILD COMPILE_TRACE_QUERY
+      CONFIGURE_ARGS
+        "-DINSTRUMENT_COMPILE_TRACE=EXPLICIT"
+        "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+      CHECK_SCRIPT check-data-dir.cmake
+    )
+  endif()
+  if (RunCMake_GENERATOR MATCHES "Ninja" AND NOT CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
+    instrument(cmake-command-compile-trace-rsp
+      BUILD COMPILE_TRACE_QUERY
+      CONFIGURE_ARGS
+        "-DINSTRUMENT_COMPILE_TRACE=EXPLICIT"
+        "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+        "-DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON"
+      CHECK_SCRIPT check-data-dir.cmake
+    )
+  endif()
+endif()
+
+# Test that interrupting `cmake --build` still writes the cmakeBuild snippet,
+# recording the interrupting signal.  This case uses the deterministic test
+# seam (no OS event).  The real OS-event counterpart runs in the separate
+# RunCMake.InstrumentationInterrupt suite.
+instrument(interrupt INTERRUPT_SEAM
+  CHECK_SCRIPT check-interrupted.cmake
 )
 
 # Test make/ninja hooks

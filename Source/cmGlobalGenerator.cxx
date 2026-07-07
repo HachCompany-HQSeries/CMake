@@ -43,6 +43,7 @@
 #include "cmGeneratedFileStream.h"
 #include "cmGeneratorExpression.h"
 #include "cmGeneratorTarget.h"
+#include "cmInstallDirs.h"
 #include "cmInstallExportGenerator.h"
 #include "cmInstallGenerator.h"
 #include "cmInstallRuntimeDependencySet.h"
@@ -294,17 +295,8 @@ void cmGlobalGenerator::ResolveLanguageCompiler(std::string const& lang,
     }
     cmCMakePath foundPath = path;
     if (foundPath.Normal() != cachedPath.Normal()) {
-      cmValue cvars = this->GetCMakeInstance()->GetState()->GetGlobalProperty(
-        "__CMAKE_DELETE_CACHE_CHANGE_VARS_");
-      if (cvars) {
-        changeVars += *cvars;
-        changeVars += ";";
-      }
-      changeVars += langComp;
-      changeVars += ";";
-      changeVars += *cname;
-      this->GetCMakeInstance()->GetState()->SetGlobalProperty(
-        "__CMAKE_DELETE_CACHE_CHANGE_VARS_", changeVars);
+      this->GetCMakeInstance()->GetState()->AddDeleteCacheChangeVar(langComp,
+                                                                    *cname);
     }
   }
 }
@@ -455,7 +447,7 @@ bool cmGlobalGenerator::CheckTargetsForType() const
         continue;
       }
 
-      if (target->GetType() == cmStateEnums::EXECUTABLE) {
+      if (target->GetType() == cm::TargetType::EXECUTABLE) {
         std::vector<std::string> const& configs =
           target->Makefile->GetGeneratorConfigs(
             cmMakefile::IncludeEmptyConfig);
@@ -708,6 +700,21 @@ void cmGlobalGenerator::EnableLanguage(
     fpath += "/CMakeSystem.cmake";
     if (cmSystemTools::FileExists(fpath)) {
       mf->ReadListFile(fpath);
+      // Fail early if CMAKE_TOOLCHAIN_FILE is different than what is stored in
+      // CMakeSystem.cmake to erase the cache because introspection results may
+      // become invalid
+      cmValue toolchainFile = mf->GetDefinition("CMAKE_TOOLCHAIN_FILE");
+      cmValue storedToolchainFile =
+        mf->GetDefinition("_CMAKE_SYSTEM_TOOLCHAIN_FILE");
+      if (toolchainFile && toolchainFile != storedToolchainFile) {
+        mf->GetState()->AddDeleteCacheChangeVar("CMAKE_TOOLCHAIN_FILE",
+                                                *toolchainFile);
+        for (std::string const& lang : cur_languages) {
+          this->LanguagesInProgress.erase(lang);
+        }
+        cmSystemTools::SetFatalErrorOccurred();
+        return;
+      }
     }
   }
 
@@ -1676,13 +1683,12 @@ bool cmGlobalGenerator::Compute()
     }
   }
 
-  // We now have all targets set up and std levels constructed. Add
-  // `__CMAKE::CXX*` targets as link dependencies to all targets which need
-  // them.
+  // We now have all targets set up. Add the `@cmake_cxx_std` target as a link
+  // dependency to all targets which need it.
   //
   // Synthetic targets performed this inside of
   // `cmLocalGenerator::DiscoverSyntheticTargets`
-  if (!this->ApplyCXXStdTargets()) {
+  if (!this->ApplyCXXStdTarget()) {
     return false;
   }
 
@@ -1731,12 +1737,6 @@ bool cmGlobalGenerator::Compute()
   // explicit install(SBOM) call.
   cmValue sbomFormat = this->GetGlobalSetting("CMAKE_INSTALL_SBOM_FORMATS");
   if (sbomFormat.IsSet() && sbomEnabled && !isTryCompile) {
-    std::string location =
-      this->Makefiles[0]->GetSafeDefinition("CMAKE_INSTALL_LIBDIR");
-    if (location.empty()) {
-      location = "lib";
-    }
-
     std::string projectName = this->LocalGenerators[0]->GetProjectName();
     for (auto& exportSet : this->ExportSets) {
       bool isCovered =
@@ -1748,17 +1748,23 @@ bool cmGlobalGenerator::Compute()
       if (isCovered) {
         continue;
       }
-      cmSbomArguments sbomDefaultArgs;
-      sbomDefaultArgs.ProjectName = projectName;
-      sbomDefaultArgs.PackageName = exportSet.first;
-      std::string dest = cmStrCat(location, "/sbom/", projectName);
-      this->Makefiles[0]->AddInstallGenerator(
-        cm::make_unique<cmInstallSbomGenerator>(
-          std::vector<cmExportSet*>{ &exportSet.second }, dest, "",
-          std::vector<std::string>(), "",
-          cmInstallGenerator::SelectMessageLevel(this->Makefiles[0].get()),
-          false, std::move(sbomDefaultArgs),
-          cmInstallGenerator::CaptureContext(this->Makefiles[0].get())));
+
+      cmSbomArguments args;
+      args.ProjectName = projectName;
+      args.PackageName = exportSet.first;
+      std::string dest = args.GetDefaultDestination(
+        cm::InstallDirs::GetLibraryDirectory(this->Makefiles[0].get()));
+
+      auto installGen = cm::make_unique<cmInstallSbomGenerator>(
+        std::vector<cmExportSet*>{ &exportSet.second }, dest, "",
+        std::vector<std::string>(), "",
+        cmInstallGenerator::SelectMessageLevel(this->Makefiles[0].get()),
+        false, std::move(args),
+        cmInstallGenerator::CaptureContext(this->Makefiles[0].get()));
+
+      cmInstallSbomGenerator const* rawPtr = installGen.get();
+      this->Makefiles[0]->AddInstallGenerator(std::move(installGen));
+      this->AddInstallSbomGenerator(rawPtr);
     }
   }
 #endif
@@ -1810,7 +1816,6 @@ bool cmGlobalGenerator::Compute()
 
   for (auto const& localGen : this->LocalGenerators) {
     localGen->ComputeHomeRelativeOutputPath();
-    localGen->ComputeSourceGroupSearchIndex();
   }
 
   return true;
@@ -1869,13 +1874,17 @@ void cmGlobalGenerator::Generate()
     }
   }
 #ifndef CMAKE_BOOTSTRAP
+
   for (auto& sbomGen : this->BuildSbomGenerators) {
-    if (!sbomGen->GenerateForBuild()) {
-      if (!cmSystemTools::GetErrorOccurredFlag()) {
-        this->GetCMakeInstance()->IssueMessage(MessageType::FATAL_ERROR,
-                                               "Could not write SBOM file.");
+    for (std::string const& c : this->Makefiles[0]->GetGeneratorConfigs(
+           cmMakefile::IncludeEmptyConfig)) {
+      if (!sbomGen->GenerateForBuild(c)) {
+        if (!cmSystemTools::GetErrorOccurredFlag()) {
+          this->GetCMakeInstance()->IssueMessage(MessageType::FATAL_ERROR,
+                                                 "Could not write SBOM file.");
+        }
+        return;
       }
-      return;
     }
   }
 #endif
@@ -1997,12 +2006,12 @@ void cmGlobalGenerator::ComputeTargetOrder(cmGeneratorTarget const* gt,
   entry->second = index++;
 }
 
-bool cmGlobalGenerator::ApplyCXXStdTargets()
+bool cmGlobalGenerator::ApplyCXXStdTarget()
 {
   for (auto const& gen : this->LocalGenerators) {
 
-    // tgt->ApplyCXXStd can create targets itself, so we need iterators which
-    // won't be invalidated by that target creation
+    // tgt->ApplyCXXStdTarget can create a target itself, so we need iterators
+    // which won't be invalidated by that target creation
     auto const& genTgts = gen->GetGeneratorTargets();
     std::vector<cmGeneratorTarget*> existingTgts;
     existingTgts.reserve(genTgts.size());
@@ -2011,7 +2020,7 @@ bool cmGlobalGenerator::ApplyCXXStdTargets()
     }
 
     for (auto const& tgt : existingTgts) {
-      if (!tgt->ApplyCXXStdTargets()) {
+      if (!tgt->ApplyCXXStdTarget()) {
         return false;
       }
     }
@@ -2066,15 +2075,14 @@ bool cmGlobalGenerator::AddHeaderSetVerification()
 
   cmTarget* allVerifyInterfaceTarget =
     this->Makefiles.front()->FindTargetToUse(
-      "all_verify_interface_header_sets",
-      { cmStateEnums::TargetDomain::NATIVE });
+      "all_verify_interface_header_sets", { cm::TargetDomain::NATIVE });
   if (allVerifyInterfaceTarget) {
     this->LocalGenerators.front()->AddGeneratorTarget(
       cm::make_unique<cmGeneratorTarget>(allVerifyInterfaceTarget,
                                          this->LocalGenerators.front().get()));
   }
   cmTarget* allVerifyPrivateTarget = this->Makefiles.front()->FindTargetToUse(
-    "all_verify_private_header_sets", { cmStateEnums::TargetDomain::NATIVE });
+    "all_verify_private_header_sets", { cm::TargetDomain::NATIVE });
   if (allVerifyPrivateTarget) {
     this->LocalGenerators.front()->AddGeneratorTarget(
       cm::make_unique<cmGeneratorTarget>(allVerifyPrivateTarget,
@@ -2229,9 +2237,50 @@ void cmGlobalGenerator::CreateGeneratorTargets(TargetTypes targetTypes)
   }
 }
 
+void cmGlobalGenerator::ComputeOutputOwnerIndex()
+{
+  this->OutputOwnerIndexComputed = true;
+  for (auto const& lg : this->LocalGenerators) {
+    for (auto const& gt : lg->GetGeneratorTargets()) {
+      if (!gt->IsInBuildSystem()) {
+        continue;
+      }
+      for (cmGeneratorTarget::AllConfigSource const& acs :
+           gt->GetAllConfigSources(
+             cmGeneratorTarget::SourceKindCustomCommand)) {
+        cmCustomCommand const* cc = acs.Source->GetCustomCommand();
+        if (!cc) {
+          continue;
+        }
+        for (std::string const& out : cc->GetOutputs()) {
+          this->OutputOwnerIndex[cmSystemTools::CollapseFullPath(out)]
+            .push_back(gt.get());
+        }
+      }
+    }
+  }
+}
+
+cmGeneratorTarget* cmGlobalGenerator::FindOutputOwningTarget(
+  std::string const& output)
+{
+  if (!this->OutputOwnerIndexComputed) {
+    this->ComputeOutputOwnerIndex();
+  }
+  auto it =
+    this->OutputOwnerIndex.find(cmSystemTools::CollapseFullPath(output));
+  if (it != this->OutputOwnerIndex.end() && it->second.size() == 1) {
+    return it->second.front();
+  }
+  return nullptr;
+}
+
 void cmGlobalGenerator::ClearGeneratorMembers()
 {
   this->BuildExportSets.clear();
+
+  this->OutputOwnerIndex.clear();
+  this->OutputOwnerIndexComputed = false;
 
   this->Makefiles.clear();
 
@@ -2303,7 +2352,7 @@ cmGlobalGenerator::TargetDirectoryRegistration&
 cmGlobalGenerator::RegisterTargetDirectory(cmGeneratorTarget const* tgt,
                                            std::string const& targetDir) const
 {
-  if (!tgt->IsNormal() || tgt->GetType() == cmStateEnums::GLOBAL_TARGET ||
+  if (!tgt->IsNormal() || tgt->GetType() == cm::TargetType::GLOBAL_TARGET ||
       tgt->Target->IsForTryCompile()) {
     static TargetDirectoryRegistration utilityRegistration(nullptr, true);
     return utilityRegistration;
@@ -2342,7 +2391,7 @@ void cmGlobalGenerator::CheckTargetProperties()
   for (unsigned int i = 0; i < this->Makefiles.size(); ++i) {
     this->Makefiles[i]->Generate(*this->LocalGenerators[i]);
     for (auto const& target : this->Makefiles[i]->GetTargets()) {
-      if (target.second.GetType() == cmStateEnums::INTERFACE_LIBRARY) {
+      if (target.second.GetType() == cm::TargetType::INTERFACE_LIBRARY) {
         continue;
       }
       for (auto const& lib : target.second.GetOriginalLinkLibraries()) {
@@ -2902,12 +2951,11 @@ void cmGlobalGenerator::IndexLocalGenerator(cmLocalGenerator* lg)
   this->LocalGeneratorSearchIndex[id.String] = lg;
 }
 
-cmTarget* cmGlobalGenerator::FindTargetImpl(
-  std::string const& name, cmStateEnums::TargetDomainSet domains) const
+cmTarget* cmGlobalGenerator::FindTargetImpl(std::string const& name,
+                                            cm::TargetDomainSet domains) const
 {
-  bool const useForeign =
-    domains.contains(cmStateEnums::TargetDomain::FOREIGN);
-  bool const useNative = domains.contains(cmStateEnums::TargetDomain::NATIVE);
+  bool const useForeign = domains.contains(cm::TargetDomain::FOREIGN);
+  bool const useNative = domains.contains(cm::TargetDomain::NATIVE);
 
   auto const it = this->TargetSearchIndex.find(name);
   if (it != this->TargetSearchIndex.end()) {
@@ -2928,10 +2976,10 @@ cmGeneratorTarget* cmGlobalGenerator::FindGeneratorTargetImpl(
   return nullptr;
 }
 
-cmTarget* cmGlobalGenerator::FindTarget(
-  std::string const& name, cmStateEnums::TargetDomainSet domains) const
+cmTarget* cmGlobalGenerator::FindTarget(std::string const& name,
+                                        cm::TargetDomainSet domains) const
 {
-  if (domains.contains(cmStateEnums::TargetDomain::ALIAS)) {
+  if (domains.contains(cm::TargetDomain::ALIAS)) {
     auto const ai = this->AliasTargets.find(name);
     if (ai != this->AliasTargets.end()) {
       return this->FindTargetImpl(ai->second, domains);
@@ -2964,6 +3012,34 @@ bool cmGlobalGenerator::NameResolvesToFramework(
   }
 
   return false;
+}
+
+std::vector<std::string> cmGlobalGenerator::GetTestBuildDependencyPaths(
+  std::string const& config,
+  cmTestGenerator::BuildDependencies const& deps) const
+{
+  std::set<std::string> uniqueDeps;
+  for (auto const& file : deps.Files) {
+    uniqueDeps.insert(file.Path);
+  }
+  for (cmGeneratorTarget* target : deps.Targets) {
+    if (target->GetType() == cm::TargetType::UTILITY ||
+        target->GetType() == cm::TargetType::GLOBAL_TARGET ||
+        target->GetType() == cm::TargetType::INTERFACE_LIBRARY) {
+      continue;
+    }
+    if (target->GetType() == cm::TargetType::OBJECT_LIBRARY) {
+      std::vector<std::string> objects;
+      target->GetTargetObjectNames(config, objects);
+      for (auto const& object : objects) {
+        uniqueDeps.insert(
+          cmStrCat(target->GetObjectDirectory(config), object));
+      }
+      continue;
+    }
+    uniqueDeps.insert(target->GetFullPath(config));
+  }
+  return { uniqueDeps.begin(), uniqueDeps.end() };
 }
 
 // If the file has no extension it's either a raw executable or might
@@ -3661,8 +3737,8 @@ void cmGlobalGenerator::CreateGlobalTarget(GlobalTargetInfo const& gti,
                                            cmMakefile* mf)
 {
   // Package
-  auto tb =
-    mf->CreateNewTarget(gti.Name, cmStateEnums::GLOBAL_TARGET, gti.PerConfig);
+  auto tb = mf->CreateNewTarget(gti.Name, cm::TargetType::GLOBAL_TARGET,
+                                gti.PerConfig);
 
   // Do nothing if gti.Name is already used
   if (!tb.second) {
@@ -3811,7 +3887,7 @@ cmGlobalGenerator::TargetDependSet cmGlobalGenerator::GetTargetsForProject(
 
 bool cmGlobalGenerator::IsRootOnlyTarget(cmGeneratorTarget* target) const
 {
-  return (target->GetType() == cmStateEnums::GLOBAL_TARGET ||
+  return (target->GetType() == cm::TargetType::GLOBAL_TARGET ||
           target->GetName() == this->GetAllTargetName());
 }
 

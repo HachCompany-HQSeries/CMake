@@ -60,6 +60,7 @@
 #include "cmTarget.h"
 #include "cmTargetDepend.h"
 #include "cmTargetExport.h"
+#include "cmTargetTypes.h"
 #include "cmValue.h"
 #include "cmake.h"
 
@@ -727,7 +728,7 @@ CodemodelConfig::DumpedTargets CodemodelConfig::DumpTargets()
             });
 
   for (cmGeneratorTarget* gt : targetList) {
-    if (gt->GetType() == cmStateEnums::GLOBAL_TARGET) {
+    if (gt->GetType() == cm::TargetType::GLOBAL_TARGET) {
       continue;
     }
 
@@ -1265,7 +1266,7 @@ Json::Value Target::Dump()
 {
   Json::Value target = Json::objectValue;
 
-  cmStateEnums::TargetType const type = this->GT->GetType();
+  cm::TargetType const type = this->GT->GetType();
 
   target["codemodelVersion"] =
     cmFileAPI::BuildVersion(this->VersionMajor, this->VersionMinor);
@@ -1302,21 +1303,21 @@ Json::Value Target::Dump()
     }
   }
 
-  if (type == cmStateEnums::EXECUTABLE ||
-      type == cmStateEnums::SHARED_LIBRARY ||
-      type == cmStateEnums::MODULE_LIBRARY) {
+  if (type == cm::TargetType::EXECUTABLE ||
+      type == cm::TargetType::SHARED_LIBRARY ||
+      type == cm::TargetType::MODULE_LIBRARY) {
     target["nameOnDisk"] = this->GT->GetFullName(this->Config);
     if (!this->GT->IsImported()) {
       target["link"] = this->DumpLink();
     }
-  } else if (type == cmStateEnums::STATIC_LIBRARY) {
+  } else if (type == cm::TargetType::STATIC_LIBRARY) {
     target["nameOnDisk"] = this->GT->GetFullName(this->Config);
     if (!this->GT->IsImported()) {
       target["archive"] = this->DumpArchive();
     }
   }
 
-  if (type == cmStateEnums::EXECUTABLE) {
+  if (type == cm::TargetType::EXECUTABLE) {
     Json::Value launchers = this->DumpLaunchers();
     if (!launchers.empty()) {
       target["launchers"] = std::move(launchers);
@@ -1926,8 +1927,8 @@ Json::Value Target::DumpSource(cmGeneratorTarget::SourceAndKind const& sk,
     }
   }
 
-  if (cmSourceGroup const* sg =
-        this->GT->LocalGenerator->FindSourceGroup(path)) {
+  if (cmSourceGroup const* sg = this->GT->LocalGenerator->FindSourceGroup(
+        this->GT, sf, this->Config)) {
     Json::ArrayIndex const groupIndex = this->AddSourceGroup(sg);
     source["sourceGroupIndex"] = groupIndex;
     this->SourceGroups[groupIndex].SourceIndexes.append(si);
@@ -2017,8 +2018,8 @@ Json::Value Target::DumpInterfaceSource(std::string path, Json::ArrayIndex si,
     }
   }
 
-  if (cmSourceGroup const* sg =
-        this->GT->LocalGenerator->FindSourceGroup(path)) {
+  if (cmSourceGroup const* sg = this->GT->LocalGenerator->FindSourceGroup(
+        this->GT, sf, this->Config)) {
     Json::ArrayIndex const groupIndex = this->AddSourceGroup(sg);
     source["sourceGroupIndex"] = groupIndex;
     this->SourceGroups[groupIndex].InterfaceSourceIndexes.append(si);
@@ -2208,7 +2209,7 @@ Json::Value Target::DumpArtifacts()
   Json::Value artifacts = Json::arrayValue;
 
   // Object libraries have only object files as artifacts.
-  if (this->GT->GetType() == cmStateEnums::OBJECT_LIBRARY) {
+  if (this->GT->GetType() == cm::TargetType::OBJECT_LIBRARY) {
     if (!this->GT->Target->HasKnownObjectFileLocation(nullptr)) {
       return artifacts;
     }
@@ -2265,7 +2266,7 @@ Json::Value Target::DumpArtifacts()
     }
   }
   if (this->GT->IsDLLPlatform() &&
-      this->GT->GetType() != cmStateEnums::STATIC_LIBRARY) {
+      this->GT->GetType() != cm::TargetType::STATIC_LIBRARY) {
     cmGeneratorTarget::OutputInfo const* output =
       this->GT->GetOutputInfo(this->Config);
     if (output && !output->PdbDir.empty()) {

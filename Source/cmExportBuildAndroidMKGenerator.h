@@ -9,7 +9,8 @@
 
 #include "cmExportAndroidMKGenerator.h"
 #include "cmExportBuildFileGenerator.h"
-#include "cmStateTypes.h"
+
+class cmDiagnosticContext;
 
 /** \class cmExportBuildAndroidMKGenerator
  * \brief Generate a file exporting targets from a build tree.
@@ -25,7 +26,7 @@ class cmExportBuildAndroidMKGenerator
   , public cmExportAndroidMKGenerator
 {
 public:
-  cmExportBuildAndroidMKGenerator();
+  cmExportBuildAndroidMKGenerator(cmDiagnosticContext context);
 
   /** Set whether to append generated code to the output file.  */
   void SetAppendMode(bool append) { this->AppendMode = append; }
@@ -37,9 +38,9 @@ protected:
   bool GenerateMainFile(std::ostream& os) override;
   void GenerateImportHeaderCode(std::ostream& os,
                                 std::string const& config = "") override;
-  void GenerateImportTargetCode(
-    std::ostream& os, cmGeneratorTarget const* target,
-    cmStateEnums::TargetType /*targetType*/) override;
+  void GenerateImportTargetCode(std::ostream& os,
+                                cmGeneratorTarget const* target,
+                                cm::TargetType /*targetType*/) override;
 
   std::string GetCxxModulesDirectory() const override { return {}; }
 };

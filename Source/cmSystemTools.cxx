@@ -1824,7 +1824,7 @@ bool cmSystemTools::SimpleGlob(std::string const& glob,
   }
   std::string path = cmSystemTools::GetFilenamePath(glob);
   std::string ppath = cmSystemTools::GetFilenameName(glob);
-  ppath = ppath.substr(0, ppath.size() - 1);
+  ppath.pop_back();
   if (path.empty()) {
     path = "/";
   }
@@ -2148,7 +2148,7 @@ cmSystemTools::SaveRestoreEnvironment::~SaveRestoreEnvironment()
   for (std::string var : currentEnv) {
     std::string::size_type pos = var.find('=');
     if (pos != std::string::npos) {
-      var = var.substr(0, pos);
+      var.resize(pos);
     }
 
     cmSystemTools::UnsetEnv(var.c_str());
@@ -2238,6 +2238,7 @@ bool cmSystemTools::IsPathToMacOSSharedLibrary(std::string const& path)
 
 bool cmSystemTools::CreateTar(
   std::string const& arFileName, std::vector<std::string> const& files,
+  std::vector<std::string> const& excludeFiles,
   std::string const& workingDirectory, cmTarCompression compressType,
   std::string const& encoding, bool verbose, std::string const& mtime,
   std::string const& format, int compressionLevel, int numThreads)
@@ -2300,6 +2301,10 @@ bool cmSystemTools::CreateTar(
   }
   a.SetMTime(mtime);
   a.SetVerbose(verbose);
+  if (!a.SetExcludePatterns(excludeFiles)) {
+    cmSystemTools::Error(a.GetError());
+    return false;
+  }
   bool tarCreatedSuccessfully = true;
   for (auto path : files) {
     if (cmSystemTools::FileIsFullPath(path)) {
@@ -2315,6 +2320,7 @@ bool cmSystemTools::CreateTar(
 #else
   (void)arFileName;
   (void)files;
+  (void)excludeFiles;
   (void)encoding;
   (void)verbose;
   return false;
@@ -2503,14 +2509,34 @@ bool copy_data(struct archive* ar, struct archive* aw)
 #  endif
 }
 
+struct ArchiveReadDeleter
+{
+  void operator()(struct archive* a) const { archive_read_free(a); }
+};
+
+struct ArchiveWriteDeleter
+{
+  void operator()(struct archive* a) const { archive_write_free(a); }
+};
+
+struct ArchiveMatchDeleter
+{
+  void operator()(struct archive* a) const { archive_match_free(a); }
+};
+
 bool extract_tar(std::string const& arFileName,
                  std::vector<std::string> const& files,
+                 std::vector<std::string> const& excludeFiles,
                  std::string const& encoding, bool verbose,
                  cmSystemTools::cmTarExtractTimestamps extractTimestamps,
                  bool extract)
 {
-  struct archive* a = archive_read_new();
-  struct archive* ext = archive_write_disk_new();
+  std::unique_ptr<struct archive, ArchiveReadDeleter> a_owner(
+    archive_read_new());
+  std::unique_ptr<struct archive, ArchiveWriteDeleter> ext_owner(
+    archive_write_disk_new());
+  struct archive* a = a_owner.get();
+  struct archive* ext = ext_owner.get();
   if (extract) {
     int flags =
       ARCHIVE_EXTRACT_SECURE_NODOTDOT | ARCHIVE_EXTRACT_SECURE_NOABSOLUTEPATHS;
@@ -2519,8 +2545,6 @@ bool extract_tar(std::string const& arFileName,
     }
     if (archive_write_disk_set_options(ext, flags) != ARCHIVE_OK) {
       ArchiveError("Problem with archive_write_disk_set_options(): ", ext);
-      archive_write_free(ext);
-      archive_read_free(a);
       return false;
     }
   }
@@ -2537,7 +2561,9 @@ bool extract_tar(std::string const& arFileName,
   }
   struct archive_entry* entry;
 
-  struct archive* matching = archive_match_new();
+  std::unique_ptr<struct archive, ArchiveMatchDeleter> matching_owner(
+    archive_match_new());
+  struct archive* matching = matching_owner.get();
   if (!matching) {
     cmSystemTools::Error("Out of memory");
     return false;
@@ -2551,13 +2577,17 @@ bool extract_tar(std::string const& arFileName,
     }
   }
 
+  for (auto const& filename : excludeFiles) {
+    if (archive_match_exclude_pattern(matching, filename.c_str()) !=
+        ARCHIVE_OK) {
+      cmSystemTools::Error("Failed to add to exclusion list: " + filename);
+      return false;
+    }
+  }
+
   int r = cm_archive_read_open_filename(a, arFileName.c_str(), 10240);
   if (r) {
     ArchiveError("Problem with archive_read_open_filename(): ", a);
-    archive_write_free(ext);
-    archive_read_close(a);
-    archive_read_free(a);
-    archive_match_free(matching);
     return false;
   }
   for (;;) {
@@ -2633,10 +2663,6 @@ bool extract_tar(std::string const& arFileName,
       return false;
     }
   }
-  archive_match_free(matching);
-  archive_write_free(ext);
-  archive_read_close(a);
-  archive_read_free(a);
   return r == ARCHIVE_EOF || r == ARCHIVE_OK;
 }
 }
@@ -2644,15 +2670,17 @@ bool extract_tar(std::string const& arFileName,
 
 bool cmSystemTools::ExtractTar(std::string const& arFileName,
                                std::vector<std::string> const& files,
+                               std::vector<std::string> const& excludeFiles,
                                cmTarExtractTimestamps extractTimestamps,
                                std::string const& encoding, bool verbose)
 {
 #if !defined(CMAKE_BOOTSTRAP)
-  return extract_tar(arFileName, files, encoding, verbose, extractTimestamps,
-                     true);
+  return extract_tar(arFileName, files, excludeFiles, encoding, verbose,
+                     extractTimestamps, true);
 #else
   (void)arFileName;
   (void)files;
+  (void)excludeFiles;
   (void)extractTimestamps;
   (void)encoding;
   (void)verbose;
@@ -2662,14 +2690,16 @@ bool cmSystemTools::ExtractTar(std::string const& arFileName,
 
 bool cmSystemTools::ListTar(std::string const& arFileName,
                             std::vector<std::string> const& files,
+                            std::vector<std::string> const& excludeFiles,
                             std::string const& encoding, bool verbose)
 {
 #if !defined(CMAKE_BOOTSTRAP)
-  return extract_tar(arFileName, files, encoding, verbose,
+  return extract_tar(arFileName, files, excludeFiles, encoding, verbose,
                      cmTarExtractTimestamps::Yes, false);
 #else
   (void)arFileName;
   (void)files;
+  (void)excludeFiles;
   (void)encoding;
   (void)verbose;
   return false;
@@ -3865,7 +3895,8 @@ static cm::optional<bool> RemoveRPathELF(std::string const& file,
       // There is no RPATH or RUNPATH anyway.
       return true;
     }
-    if (se_count == 2 && se[1]->IndexInSection < se[0]->IndexInSection) {
+    if (se_count == 2 && se[0] && se[1] &&
+        se[1]->IndexInSection < se[0]->IndexInSection) {
       std::swap(se[0], se[1]);
     }
 

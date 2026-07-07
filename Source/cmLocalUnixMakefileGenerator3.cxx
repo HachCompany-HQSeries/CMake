@@ -41,12 +41,12 @@
 #include "cmSourceFile.h"
 #include "cmState.h"
 #include "cmStateSnapshot.h"
-#include "cmStateTypes.h"
 #include "cmStdIoStream.h"
 #include "cmStdIoTerminal.h"
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
 #include "cmTargetDepend.h"
+#include "cmTargetTypes.h"
 #include "cmValue.h"
 #include "cmVersion.h"
 #include "cmake.h"
@@ -431,12 +431,12 @@ void cmLocalUnixMakefileGenerator3::WriteLocalMakefileTargets(
   // on the target
   std::string localName;
   for (auto const& target : this->GetGeneratorTargets()) {
-    if ((target->GetType() == cmStateEnums::EXECUTABLE) ||
-        (target->GetType() == cmStateEnums::STATIC_LIBRARY) ||
-        (target->GetType() == cmStateEnums::SHARED_LIBRARY) ||
-        (target->GetType() == cmStateEnums::MODULE_LIBRARY) ||
-        (target->GetType() == cmStateEnums::OBJECT_LIBRARY) ||
-        (target->GetType() == cmStateEnums::UTILITY)) {
+    if ((target->GetType() == cm::TargetType::EXECUTABLE) ||
+        (target->GetType() == cm::TargetType::STATIC_LIBRARY) ||
+        (target->GetType() == cm::TargetType::SHARED_LIBRARY) ||
+        (target->GetType() == cm::TargetType::MODULE_LIBRARY) ||
+        (target->GetType() == cm::TargetType::OBJECT_LIBRARY) ||
+        (target->GetType() == cm::TargetType::UTILITY)) {
       emitted.insert(target->GetName());
 
       // for subdirs add a rule to build this specific target by name.
@@ -1360,10 +1360,10 @@ std::string cmLocalUnixMakefileGenerator3::CreateMakeVariable(
     // we must shorten the combined string by 4 characters
     // keep no more than 24 characters from the second string
     if (static_cast<int>(str2.size()) > keep) {
-      str2 = str2.substr(0, keep);
+      str2.resize(keep);
     }
     if (static_cast<int>(str1.size()) + static_cast<int>(str2.size()) > size) {
-      str1 = str1.substr(0, size - str2.size());
+      str1.resize(size - str2.size());
     }
     char buffer[12];
     int ni = 0;
@@ -1719,7 +1719,7 @@ void cmLocalUnixMakefileGenerator3::WriteLocalAllRules(
                     "\n";
   auto const& targets = this->GetGeneratorTargets();
   for (auto const& gt : targets) {
-    if (gt->GetType() == cmStateEnums::GLOBAL_TARGET) {
+    if (gt->GetType() == cm::TargetType::GLOBAL_TARGET) {
       std::string targetString =
         "Special rule for the target " + gt->GetName();
       std::vector<std::string> commands;

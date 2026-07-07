@@ -230,16 +230,15 @@ std::string cmInstallGenerator::ConvertToAbsoluteDestination(
   return result;
 }
 
-void cmInstallGenerator::CheckAbsoluteDestination(std::string const& dest,
-                                                  cmLocalGenerator* lg) const
+void cmInstallGenerator::CheckAbsoluteDestination(
+  std::string const& dest, cmLocalGenerator const* lg) const
 {
   if (!cmSystemTools::FileIsFullPath(dest)) {
     return;
   }
   lg->IssueDiagnostic(
     cmDiagnostics::CMD_INSTALL_ABSOLUTE_DESTINATION,
-    cmStrCat("INSTALL command given absolute DESTINATION path (", dest,
-             ").\n"),
+    cmStrCat("INSTALL command given absolute DESTINATION path:\n  ", dest),
     this->Context);
 }
 
@@ -265,6 +264,7 @@ cmInstallGenerator::MessageLevel cmInstallGenerator::SelectMessageLevel(
 cmDiagnosticContext cmInstallGenerator::CaptureContext(cmMakefile const& mf)
 {
   cmDiagnosticContext context{ mf.GetBacktrace() };
+  context.RecordDiagnostic(cmDiagnostics::CMD_AUTHOR, mf.GetStateSnapshot());
   context.RecordDiagnostic(cmDiagnostics::CMD_INSTALL_ABSOLUTE_DESTINATION,
                            mf.GetStateSnapshot());
   return context;

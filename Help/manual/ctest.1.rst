@@ -586,6 +586,29 @@ The options for running tests are:
 
  A bare ``--`` with no following arguments is silently ignored.
 
+ When both ``<test-args>`` and
+ :preset:`testPresets.execution.testPassthroughArguments` are provided,
+ the test preset arguments will appear first, followed by the ``<test-args>``.
+
+.. option:: --out-of-date
+
+ .. versionadded:: 4.5
+
+ Run only tests whose build dependencies are newer than the last time the
+ test ran.
+
+ This option tells CTest to skip tests that are already up to date with
+ respect to their recorded build dependencies. Build dependencies include
+ executables and targets in generator expressions as part of the test
+ ``COMMAND``, as well as the outputs of targets or files added as explicit
+ dependencies with the ``BUILD_DEPENDS`` argument of :command:`add_test`.
+
+ A test is selected to run when any of its recorded build dependencies are
+ newer than the test's last-run timestamp, or when the test has not been
+ run before. Tests without any known build dependencies, including any tests
+ not added by the :command:`add_test` command, are excluded when this argument
+ is provided.
+
 View Help
 =========
 
@@ -891,6 +914,13 @@ The available ``<dashboard-options>`` are the following:
  to the current working directory; use :ctest-dashboard-option:`--build-dir` to
  specify a different location. The binary directory is created automatically
  if it does not yet exist.
+
+ When a :manual:`configure preset <cmake-presets(7)>` is specified that
+ defines a :preset:`binaryDir <configurePresets.binaryDir>`, CTest uses that
+ path as the binary directory automatically (without requiring
+ :ctest-dashboard-option:`--build-dir`).  An explicit
+ :ctest-dashboard-option:`--build-dir` takes precedence over the preset's
+ :preset:`binaryDir <configurePresets.binaryDir>`.
 
  A CMake generator must also be specified. Use
  :option:`-D CTEST_CMAKE_GENERATOR=\<gen\> <ctest-dashboard -D>` to supply one,

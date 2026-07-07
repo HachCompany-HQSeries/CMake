@@ -28,6 +28,7 @@
 #include "cmStateTypes.h"
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
+#include "cmTargetTypes.h"
 #include "cmValue.h"
 #include "cmXMLWriter.h"
 #include "cmake.h"
@@ -507,14 +508,14 @@ void cmExtraEclipseCDT4Generator::CreateLinksForTargets(cmXMLWriter& xml)
     for (auto const& target : targets) {
       std::string linkName2 = cmStrCat(linkName, '/');
       switch (target->GetType()) {
-        case cmStateEnums::EXECUTABLE:
-        case cmStateEnums::STATIC_LIBRARY:
-        case cmStateEnums::SHARED_LIBRARY:
-        case cmStateEnums::MODULE_LIBRARY:
-        case cmStateEnums::OBJECT_LIBRARY: {
+        case cm::TargetType::EXECUTABLE:
+        case cm::TargetType::STATIC_LIBRARY:
+        case cm::TargetType::SHARED_LIBRARY:
+        case cm::TargetType::MODULE_LIBRARY:
+        case cm::TargetType::OBJECT_LIBRARY: {
           char const* prefix =
-            (target->GetType() == cmStateEnums::EXECUTABLE ? "[exe] "
-                                                           : "[lib] ");
+            (target->GetType() == cm::TargetType::EXECUTABLE ? "[exe] "
+                                                             : "[lib] ");
           linkName2 += prefix;
           linkName2 += target->GetName();
           cmExtraEclipseCDT4Generator::AppendLinkedResource(
@@ -525,12 +526,12 @@ void cmExtraEclipseCDT4Generator::CreateLinksForTargets(cmXMLWriter& xml)
           // get the files from the source lists then add them to the groups
           cmSourceGroupFiles sourceGroupFiles;
           std::vector<cmSourceFile*> files;
-          target->GetSourceFiles(
-            files, makefile->GetSafeDefinition("CMAKE_BUILD_TYPE"));
+          cmValue config = makefile->GetDefinition("CMAKE_BUILD_TYPE");
+          target->GetSourceFiles(files, *config);
           for (cmSourceFile* sf : files) {
             // Add the file to the list of sources.
-            sourceGroupFiles.Add(lg->FindSourceGroup(sf->ResolveFullPath()),
-                                 sf);
+            sourceGroupFiles.Add(
+              lg->FindSourceGroup(target.get(), sf, *config), sf);
           }
 
           this->WriteGroups(makefile->GetSourceGroups(), sourceGroupFiles,
@@ -591,8 +592,7 @@ void cmExtraEclipseCDT4Generator::AppendIncludeDirectories(
         dir = frameworkRx.match(1);
       }
 
-      if (emittedDirs.find(dir) == emittedDirs.end()) {
-        emittedDirs.insert(dir);
+      if (emittedDirs.insert(dir).second) {
         xml.StartElement("pathentry");
         xml.Attribute("include",
                       cmExtraEclipseCDT4Generator::GetEclipsePath(dir));
@@ -783,8 +783,7 @@ void cmExtraEclipseCDT4Generator::CreateCProjectFile() const
         }
 
         // insert the definition if not already added.
-        if (emitted.find(def) == emitted.end()) {
-          emitted.insert(def);
+        if (emitted.insert(def).second) {
           xml.StartElement("pathentry");
           xml.Attribute("kind", "mac");
           xml.Attribute("name", def);
@@ -815,8 +814,7 @@ void cmExtraEclipseCDT4Generator::CreateCProjectFile() const
         }
 
         // insert the definition if not already added.
-        if (emitted.find(def) == emitted.end()) {
-          emitted.insert(def);
+        if (emitted.insert(def).second) {
           xml.StartElement("pathentry");
           xml.Attribute("kind", "mac");
           xml.Attribute("name", def);
@@ -847,8 +845,7 @@ void cmExtraEclipseCDT4Generator::CreateCProjectFile() const
         }
 
         // insert the definition if not already added.
-        if (emitted.find(def) == emitted.end()) {
-          emitted.insert(def);
+        if (emitted.insert(def).second) {
           xml.StartElement("pathentry");
           xml.Attribute("kind", "mac");
           xml.Attribute("name", def);
@@ -865,7 +862,7 @@ void cmExtraEclipseCDT4Generator::CreateCProjectFile() const
   for (auto const& lgen : this->GlobalGenerator->GetLocalGenerators()) {
     auto const& targets = lgen->GetGeneratorTargets();
     for (auto const& target : targets) {
-      if (target->GetType() == cmStateEnums::INTERFACE_LIBRARY) {
+      if (target->GetType() == cm::TargetType::INTERFACE_LIBRARY) {
         continue;
       }
       std::vector<std::string> includeDirs;
@@ -928,7 +925,7 @@ void cmExtraEclipseCDT4Generator::CreateCProjectFile() const
     for (auto const& target : targets) {
       std::string targetName = target->GetName();
       switch (target->GetType()) {
-        case cmStateEnums::GLOBAL_TARGET: {
+        case cm::TargetType::GLOBAL_TARGET: {
           // Only add the global targets from CMAKE_BINARY_DIR,
           // not from the subdirs
           if (subdir.empty()) {
@@ -936,7 +933,7 @@ void cmExtraEclipseCDT4Generator::CreateCProjectFile() const
                                                       makeArgs, subdir, ": ");
           }
         } break;
-        case cmStateEnums::UTILITY:
+        case cm::TargetType::UTILITY:
           // Add all utility targets, except the Nightly/Continuous/
           // Experimental-"sub"targets as e.g. NightlyStart
           if ((cmHasLiteralPrefix(targetName, "Nightly") &&
@@ -951,14 +948,14 @@ void cmExtraEclipseCDT4Generator::CreateCProjectFile() const
           cmExtraEclipseCDT4Generator::AppendTarget(xml, targetName, make,
                                                     makeArgs, subdir, ": ");
           break;
-        case cmStateEnums::EXECUTABLE:
-        case cmStateEnums::STATIC_LIBRARY:
-        case cmStateEnums::SHARED_LIBRARY:
-        case cmStateEnums::MODULE_LIBRARY:
-        case cmStateEnums::OBJECT_LIBRARY: {
+        case cm::TargetType::EXECUTABLE:
+        case cm::TargetType::STATIC_LIBRARY:
+        case cm::TargetType::SHARED_LIBRARY:
+        case cm::TargetType::MODULE_LIBRARY:
+        case cm::TargetType::OBJECT_LIBRARY: {
           char const* prefix =
-            (target->GetType() == cmStateEnums::EXECUTABLE ? "[exe] "
-                                                           : "[lib] ");
+            (target->GetType() == cm::TargetType::EXECUTABLE ? "[exe] "
+                                                             : "[lib] ");
           cmExtraEclipseCDT4Generator::AppendTarget(xml, targetName, make,
                                                     makeArgs, subdir, prefix);
           std::string fastTarget = cmStrCat(targetName, "/fast");
@@ -984,7 +981,7 @@ void cmExtraEclipseCDT4Generator::CreateCProjectFile() const
               virtDir, "", "");
           }
         } break;
-        case cmStateEnums::INTERFACE_LIBRARY:
+        case cm::TargetType::INTERFACE_LIBRARY:
         default:
           break;
       }

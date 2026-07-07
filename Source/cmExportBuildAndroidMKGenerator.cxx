@@ -4,16 +4,21 @@
 
 #include <functional>
 #include <sstream>
+#include <utility>
 #include <vector>
 
+#include "cmDiagnosticContext.h"
 #include "cmGeneratorExpression.h"
 #include "cmGeneratorTarget.h"
-#include "cmStateTypes.h"
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
 #include "cmTarget.h"
 
-cmExportBuildAndroidMKGenerator::cmExportBuildAndroidMKGenerator() = default;
+cmExportBuildAndroidMKGenerator::cmExportBuildAndroidMKGenerator(
+  cmDiagnosticContext context)
+  : cmExportBuildFileGenerator(std::move(context))
+{
+}
 
 bool cmExportBuildAndroidMKGenerator::GenerateMainFile(std::ostream& os)
 {
@@ -51,7 +56,7 @@ void cmExportBuildAndroidMKGenerator::GenerateImportHeaderCode(
 
 void cmExportBuildAndroidMKGenerator::GenerateImportTargetCode(
   std::ostream& os, cmGeneratorTarget const* target,
-  cmStateEnums::TargetType /*targetType*/)
+  cm::TargetType /*targetType*/)
 {
   std::string targetName = cmStrCat(this->Namespace, target->GetExportName());
   os << "include $(CLEAR_VARS)\n";

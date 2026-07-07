@@ -84,13 +84,14 @@
 #  include <cm3p/json/writer.h>
 
 #  include "cmCMakePresetsArgs.h"
+#  include "cmCMakeSarifLogger.h"
 #  include "cmConfigureLog.h"
 #  include "cmFileAPI.h"
 #  include "cmGraphVizWriter.h"
 #  include "cmInstrumentation.h"
+#  include "cmInstrumentationInterrupt.h"
 #  include "cmInstrumentationQuery.h"
 #  include "cmMakefileProfilingData.h"
-#  include "cmSarifLog.h"
 #  include "cmVariableWatch.h"
 #endif
 
@@ -2191,6 +2192,9 @@ bool cmake::SetArgsFromPreset(cmCMakePresetsConfigureArgs const& args,
     this->SetTraceFile(expandedPreset->TraceRedirect);
   }
 
+  // Store preset variables in case of cache reset.
+  this->InitialPresetVariables = this->UnprocessedPresetVariables;
+
   return true;
 }
 
@@ -2373,11 +2377,11 @@ struct SaveCacheEntry
   cmStateEnums::CacheEntryType type;
 };
 
-int cmake::HandleDeleteCacheVariables(std::string const& var)
+int cmake::HandleDeleteCacheVariables(
+  std::map<std::string, std::string> const& vars)
 {
-  cmList argsSplit{ var, cmList::EmptyElements::Yes };
-  // erase the property to avoid infinite recursion
-  this->State->SetGlobalProperty("__CMAKE_DELETE_CACHE_CHANGE_VARS_", "");
+  // erase the set to avoid infinite recursion
+  this->State->ClearDeleteCacheChangeVars();
   if (this->GetIsInTryCompile()) {
     return 0;
   }
@@ -2387,18 +2391,11 @@ int cmake::HandleDeleteCacheVariables(std::string const& var)
     << "You have changed variables that require your cache to be deleted.\n"
        "Configure will be re-run and you may have to reset some variables.\n"
        "The following variables have changed:\n";
-  for (auto i = argsSplit.begin(); i != argsSplit.end(); ++i) {
+  for (auto const& var : vars) {
     SaveCacheEntry save;
-    save.key = *i;
-    warning << *i << "= ";
-    i++;
-    if (i != argsSplit.end()) {
-      save.value = *i;
-      warning << *i << '\n';
-    } else {
-      warning << '\n';
-      i -= 1;
-    }
+    save.key = var.first;
+    save.value = var.second;
+    warning << save.key << "= " << save.value << '\n';
     cmValue existingValue = this->State->GetCacheEntryValue(save.key);
     if (existingValue) {
       save.type = this->State->GetCacheEntryType(save.key);
@@ -2416,6 +2413,15 @@ int cmake::HandleDeleteCacheVariables(std::string const& var)
   this->DeleteCache(this->GetHomeOutputDirectory());
   // load the empty cache
   this->LoadCache();
+#ifndef CMAKE_BOOTSTRAP
+  // Restore preset cache variables.
+  this->UnprocessedPresetVariables = this->InitialPresetVariables;
+  this->ProcessPresetVariables();
+#endif
+  // Restore command line cache variables (from this invocation cmake only).
+  bool resetArgsSuccess = this->SetCacheArgs(this->cmdArgs);
+  assert(resetArgsSuccess);
+  (void)resetArgsSuccess;
   // restore the changed compilers
   for (SaveCacheEntry const& i : saved) {
     this->AddCacheEntry(i.key, i.value, i.help, i.type);
@@ -2424,6 +2430,15 @@ int cmake::HandleDeleteCacheVariables(std::string const& var)
   // avoid reconfigure if there were errors
   if (!cmSystemTools::GetErrorOccurredFlag()) {
     // re-run configure
+    this->State->SetReconfiguring(true);
+    return this->Configure();
+  }
+
+  // Toolchain changes trigger a fatal error, but reconfiguring with the new
+  // toolchain should fix them.
+  if (vars.count("CMAKE_TOOLCHAIN_FILE") && !this->State->IsReconfiguring()) {
+    cmSystemTools::ResetErrorOccurredFlag();
+    this->State->SetReconfiguring(true);
     return this->Configure();
   }
   return 0;
@@ -2522,10 +2537,10 @@ int cmake::Configure()
                       cmStateEnums::INTERNAL);
 
   int ret = this->ActualConfigure();
-  cmValue delCacheVars =
-    this->State->GetGlobalProperty("__CMAKE_DELETE_CACHE_CHANGE_VARS_");
-  if (delCacheVars && !delCacheVars->empty()) {
-    return this->HandleDeleteCacheVariables(*delCacheVars);
+  std::map<std::string, std::string> delCacheVars =
+    this->State->GetDeleteCacheChangeVars();
+  if (!delCacheVars.empty()) {
+    return this->HandleDeleteCacheVariables(delCacheVars);
   }
   return ret;
 }
@@ -3075,11 +3090,7 @@ int cmake::Run(std::vector<std::string> const& args, bool noconfigure)
 
 #ifndef CMAKE_BOOTSTRAP
   // Configure the SARIF log for the current run
-  cmSarif::LogFileWriter sarifLogFileWriter(
-    this->GetMessenger()->GetSarifResultsLog());
-  if (!sarifLogFileWriter.ConfigureForCMakeRun(*this)) {
-    return -1;
-  }
+  cmCMakeSarifLogger sarifLogger(*this);
 
   this->VariableWatch->AddWatch("CMAKE_WARN_DEPRECATED", cmDeprecatedWatch);
   this->VariableWatch->AddWatch("CMAKE_ERROR_DEPRECATED", cmDeprecatedWatch);
@@ -3111,16 +3122,6 @@ int cmake::Run(std::vector<std::string> const& args, bool noconfigure)
       cmSystemTools::Error("Error executing cmake::LoadCache(). Aborting.\n");
       return -1;
     }
-#ifndef CMAKE_BOOTSTRAP
-    // If no SARIF file has been explicitly specified, use the default path
-    if (!this->SarifFileOutput) {
-      // If no output file is specified, use the default path
-      // Enable parent directory creation for the default path
-      sarifLogFileWriter.SetPath(cmStrCat(this->GetHomeOutputDirectory(), '/',
-                                          cmSarif::PROJECT_DEFAULT_SARIF_FILE),
-                                 true);
-    }
-#endif
   } else {
     if (this->FreshCache) {
       cmSystemTools::Error("--fresh allowed only when configuring a project");
@@ -3154,11 +3155,6 @@ int cmake::Run(std::vector<std::string> const& args, bool noconfigure)
     }
     return this->HasScriptModeExitCode() ? this->GetScriptModeExitCode() : 0;
   }
-
-#ifndef CMAKE_BOOTSTRAP
-  // CMake only responds to the SARIF variable in normal mode
-  this->MarkCliAsUsed(cmSarif::PROJECT_SARIF_FILE_VARIABLE);
-#endif
 
   // If MAKEFLAGS are given in the environment, remove the environment
   // variable.  This will prevent try-compile from succeeding when it
@@ -4197,10 +4193,30 @@ int cmake::Build(cmBuildArgs buildArgs, std::vector<std::string> targets,
   // Block the instrumentation build daemon from spawning during this build.
   // This lock will be released when the process exits at the end of the build.
   instrumentation.LockBuildDaemon();
-  int buildresult = instrumentation.InstrumentCommand(
-    "cmakeBuild", args, [doBuild]() -> cmInstrumentation::CommandResult {
-      return { doBuild(), cm::nullopt, cm::nullopt };
-    });
+  // Run the build under an interrupt handler so that a user interrupt (e.g.
+  // Ctrl+C) still writes the overall `cmakeBuild` snippet before we exit.
+  cmInstrumentationInterrupt::InterruptOutcome buildOutcome =
+    cmInstrumentationInterrupt::HandleInterrupt(
+      instrumentation.HasQuery(),
+      [&instrumentation, &args, &doBuild]() -> int {
+        return instrumentation.InstrumentCommand(
+          "cmakeBuild", args,
+          [&doBuild]() -> cmInstrumentation::CommandResult {
+            return { doBuild(), cm::nullopt, cm::nullopt };
+          });
+      });
+  int buildresult = buildOutcome.ExitCode;
+  if (buildOutcome.Interrupted) {
+    // The build was interrupted and its snippet has been written.  Skip the
+    // post-build indexing hook (which would run callbacks and delete data).
+    // For a real OS interrupt, re-raise so the exit status reflects it; for a
+    // test-injected interrupt, exit cleanly.  The next indexing run will
+    // reclaim the snippet written above.
+    if (buildOutcome.ShouldRaise) {
+      cmInstrumentationInterrupt::RaiseInterrupt(buildOutcome.Signal);
+    }
+    return buildresult;
+  }
   instrumentation.CollectTimingData(
     cmInstrumentationQuery::Hook::PostCMakeBuild);
 #else

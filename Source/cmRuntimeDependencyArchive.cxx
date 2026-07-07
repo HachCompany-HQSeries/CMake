@@ -17,8 +17,8 @@
 #include "cmExecutionStatus.h"
 #include "cmList.h"
 #include "cmMakefile.h"
-#include "cmStateTypes.h"
 #include "cmSystemTools.h"
+#include "cmTargetTypes.h"
 
 #if defined(_WIN32)
 #  include "cmGlobalGenerator.h"
@@ -153,9 +153,11 @@ bool cmRuntimeDependencyArchive::Prepare()
       platform = "macos+macho";
     } else if (systemName == "Linux") {
       platform = "linux+elf";
+    } else if (systemName == "FreeBSD") {
+      platform = "freebsd+elf";
     }
   }
-  if (platform == "linux+elf") {
+  if (platform == "linux+elf" || platform == "freebsd+elf") {
     this->Linker = cm::make_unique<cmBinUtilsLinuxELFLinker>(this);
   } else if (platform == "windows+pe") {
     this->Linker = cm::make_unique<cmBinUtilsWindowsPELinker>(this);
@@ -178,19 +180,20 @@ bool cmRuntimeDependencyArchive::GetRuntimeDependencies(
   std::vector<std::string> const& modules)
 {
   for (auto const& exe : executables) {
-    if (!this->Linker->ScanDependencies(exe, cmStateEnums::EXECUTABLE)) {
+    if (!this->Linker->ScanDependencies(exe, cm::TargetType::EXECUTABLE)) {
       return false;
     }
   }
   for (auto const& lib : libraries) {
-    if (!this->Linker->ScanDependencies(lib, cmStateEnums::SHARED_LIBRARY)) {
+    if (!this->Linker->ScanDependencies(lib, cm::TargetType::SHARED_LIBRARY)) {
       return false;
     }
   }
-  return std::all_of(
-    modules.begin(), modules.end(), [this](std::string const& mod) -> bool {
-      return this->Linker->ScanDependencies(mod, cmStateEnums::MODULE_LIBRARY);
-    });
+  return std::all_of(modules.begin(), modules.end(),
+                     [this](std::string const& mod) -> bool {
+                       return this->Linker->ScanDependencies(
+                         mod, cm::TargetType::MODULE_LIBRARY);
+                     });
 }
 
 void cmRuntimeDependencyArchive::SetError(std::string const& e)
@@ -403,7 +406,11 @@ cmRuntimeDependencyArchive::GetRPaths() const
 bool cmRuntimeDependencyArchive::PlatformSupportsRuntimeDependencies(
   std::string const& platform)
 {
-  static std::set<std::string> const supportedPlatforms = { "Windows", "Linux",
-                                                            "Darwin" };
+  static std::set<std::string> const supportedPlatforms = {
+    "Windows",
+    "Linux",
+    "Darwin",
+    "FreeBSD",
+  };
   return supportedPlatforms.count(platform);
 }

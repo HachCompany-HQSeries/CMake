@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <functional>
 #include <iterator>
+#include <set>
 #include <sstream>
 #include <utility>
 
@@ -54,6 +55,7 @@
 #include "cmSystemTools.h"
 #include "cmTarget.h"
 #include "cmTargetDepend.h"
+#include "cmTargetTypes.h"
 #include "cmTest.h"
 #include "cmTestGenerator.h"
 #include "cmValue.h"
@@ -1325,9 +1327,11 @@ void cmGlobalNinjaGenerator::WriteTestPrepTargets()
           this->AppendTargetOutputs(depTarget, testPrepTarget.ExplicitDeps,
                                     config, DependOnTargetArtifact);
         }
-        std::transform(testDeps.Files.begin(), testDeps.Files.end(),
-                       std::back_inserter(testPrepTarget.ExplicitDeps),
-                       this->MapToNinjaPath());
+        for (cmTestGenerator::BuildDependencies::FileDependency const& file :
+             testDeps.Files) {
+          testPrepTarget.ExplicitDeps.push_back(
+            this->ConvertToNinjaPath(file.Path));
+        }
       }
     }
 
@@ -1394,16 +1398,16 @@ void cmGlobalNinjaGenerator::AppendTargetOutputs(
   bool realname = target->IsFrameworkOnApple();
 
   switch (target->GetType()) {
-    case cmStateEnums::SHARED_LIBRARY:
-    case cmStateEnums::STATIC_LIBRARY:
-    case cmStateEnums::MODULE_LIBRARY: {
+    case cm::TargetType::SHARED_LIBRARY:
+    case cm::TargetType::STATIC_LIBRARY:
+    case cm::TargetType::MODULE_LIBRARY: {
       if (depends == DependOnTargetOrdering) {
         outputs.push_back(this->OrderDependsTargetForTarget(target, config));
         break;
       }
     }
       CM_FALLTHROUGH;
-    case cmStateEnums::EXECUTABLE: {
+    case cm::TargetType::EXECUTABLE: {
       if (target->IsApple() && target->HasImportLibrary(config)) {
         outputs.push_back(this->ConvertToNinjaPath(target->GetFullPath(
           config, cmStateEnums::ImportLibraryArtifact, realname)));
@@ -1412,16 +1416,16 @@ void cmGlobalNinjaGenerator::AppendTargetOutputs(
         config, cmStateEnums::RuntimeBinaryArtifact, realname)));
       break;
     }
-    case cmStateEnums::OBJECT_LIBRARY: {
+    case cm::TargetType::OBJECT_LIBRARY: {
       if (depends == DependOnTargetOrdering) {
         outputs.push_back(this->OrderDependsTargetForTarget(target, config));
         break;
       }
     }
       CM_FALLTHROUGH;
-    case cmStateEnums::GLOBAL_TARGET:
-    case cmStateEnums::INTERFACE_LIBRARY:
-    case cmStateEnums::UTILITY: {
+    case cm::TargetType::GLOBAL_TARGET:
+    case cm::TargetType::INTERFACE_LIBRARY:
+    case cm::TargetType::UTILITY: {
       std::string path =
         cmStrCat(target->GetLocalGenerator()->GetCurrentBinaryDirectory(), '/',
                  target->GetName());
@@ -1433,7 +1437,7 @@ void cmGlobalNinjaGenerator::AppendTargetOutputs(
       break;
     }
 
-    case cmStateEnums::UNKNOWN_LIBRARY:
+    case cm::TargetType::UNKNOWN_LIBRARY:
       break;
   }
 }
@@ -1443,7 +1447,7 @@ void cmGlobalNinjaGenerator::AppendTargetDepends(
   std::string const& config, std::string const& fileConfig,
   cmNinjaTargetDepends depends)
 {
-  if (target->GetType() == cmStateEnums::GLOBAL_TARGET) {
+  if (target->GetType() == cm::TargetType::GLOBAL_TARGET) {
     // These depend only on other CMake-provided targets, e.g. "all".
     for (BT<std::pair<std::string, bool>> const& util :
          target->GetUtilities()) {
@@ -2565,6 +2569,7 @@ cm::optional<cmSourceInfo> cmcmd_cmake_ninja_depends_fortran(
   std::vector<std::string> includes;
   std::string dir_top_bld;
   std::string module_dir;
+  bool building_intrinsics = false;
 
   if (!arg_src_orig.empty()) {
     // Prepend the original source file's directory as an include directory
@@ -2615,6 +2620,10 @@ cm::optional<cmSourceInfo> cmcmd_cmake_ninja_depends_fortran(
 
     Json::Value const& tdi_submodule_ext = tdi["submodule-ext"];
     fc.SModExt = tdi_submodule_ext.asString();
+
+    Json::Value const& tdi_building_intrinsics =
+      tdi["building-intrinsic-modules"];
+    building_intrinsics = tdi_building_intrinsics.asBool();
   }
 
   cmFortranSourceInfo finfo;
@@ -2643,7 +2652,11 @@ cm::optional<cmSourceInfo> cmcmd_cmake_ninja_depends_fortran(
     }
     info->ScanDep.Provides.emplace_back(src_info);
   }
-  for (std::string const& require : finfo.Requires) {
+  std::set<std::string> requiredModules = finfo.Requires;
+  if (building_intrinsics) {
+    requiredModules.insert(finfo.Intrinsics.begin(), finfo.Intrinsics.end());
+  }
+  for (std::string const& require : requiredModules) {
     // Require modules not provided in the same source.
     if (finfo.Provides.count(require)) {
       continue;
@@ -3219,7 +3232,7 @@ std::set<std::string> cmGlobalNinjaGenerator::GetCrossConfigs(
 bool cmGlobalNinjaGenerator::IsSingleConfigUtility(
   cmGeneratorTarget const* target) const
 {
-  return target->GetType() == cmStateEnums::UTILITY &&
+  return target->GetType() == cm::TargetType::UTILITY &&
     !this->PerConfigUtilityTargets.count(target->GetName());
 }
 

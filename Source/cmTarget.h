@@ -21,6 +21,7 @@
 #include "cmStateTypes.h"
 #include "cmStringAlgorithms.h"
 #include "cmTargetLinkLibraryType.h"
+#include "cmTargetTypes.h"
 #include "cmValue.h"
 
 namespace cm {
@@ -32,6 +33,7 @@ enum class Visibility;
 class cmCustomCommand;
 class cmFileSet;
 class cmFindPackageStack;
+class cmGeneratorTarget;
 class cmGlobalGenerator;
 class cmInstallTargetGenerator;
 class cmMakefile;
@@ -69,8 +71,15 @@ public:
     No
   };
 
-  cmTarget(std::string const& name, cmStateEnums::TargetType type,
-           Visibility vis, cmMakefile* mf, PerConfig perConfig);
+  static Visibility ImportedVisibility(cm::ImportedTargetScope scope)
+  {
+    return (scope == cm::ImportedTargetScope::Global
+              ? Visibility::ImportedGlobally
+              : Visibility::Imported);
+  }
+
+  cmTarget(std::string name, cm::TargetType type, Visibility vis,
+           cmMakefile* mf, PerConfig perConfig);
 
   cmTarget(cmTarget const&) = delete;
   cmTarget(cmTarget&&) noexcept;
@@ -80,7 +89,7 @@ public:
   cmTarget& operator=(cmTarget&&) noexcept;
 
   //! Return the type of target.
-  cmStateEnums::TargetType GetType() const;
+  cm::TargetType GetType() const;
 
   //! Set the origin of the target.
   void SetOrigin(Origin origin);
@@ -327,7 +336,8 @@ public:
   cmBTStringRange GetLinkInterfaceDirectEntries() const;
   cmBTStringRange GetLinkInterfaceDirectExcludeEntries() const;
 
-  void CopyUsageEffects(cmTarget const* tgt);
+  void CopyUsageEffects(cmGeneratorTarget const* gt,
+                        std::string const& config);
   void CopyPolicyStatuses(cmTarget const* tgt);
   void CopyCxxModulesEntries(cmTarget const* tgt);
   void CopyCxxModulesProperties(cmTarget const* tgt);

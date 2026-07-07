@@ -10,11 +10,9 @@
 #include <utility>
 #include <vector>
 
-#include <cm/string_view>
-
 #include "cmCryptoHash.h"
+#include "cmDiagnosticContext.h"
 #include "cmExportSet.h"
-#include "cmFileSetMetadata.h"
 #include "cmGenExContext.h"
 #include "cmGeneratedFileStream.h"
 #include "cmGeneratorExpression.h"
@@ -22,14 +20,15 @@
 #include "cmGeneratorTarget.h"
 #include "cmLocalGenerator.h"
 #include "cmMakefile.h"
-#include "cmMessageType.h"
 #include "cmOutputConverter.h"
-#include "cmStateTypes.h"
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
 #include "cmTarget.h"
+#include "cmTargetTypes.h"
 
-cmExportBuildCMakeConfigGenerator::cmExportBuildCMakeConfigGenerator()
+cmExportBuildCMakeConfigGenerator::cmExportBuildCMakeConfigGenerator(
+  cmDiagnosticContext context)
+  : cmExportBuildFileGenerator(std::move(context))
 {
   this->LG = nullptr;
   this->ExportSet = nullptr;
@@ -46,7 +45,7 @@ bool cmExportBuildCMakeConfigGenerator::GenerateMainFile(std::ostream& os)
       sep = " ";
 
       generatedInterfaceRequired |=
-        this->GetExportTargetType(te) == cmStateEnums::INTERFACE_LIBRARY;
+        this->GetExportTargetType(te) == cm::TargetType::INTERFACE_LIBRARY;
     };
 
     if (!this->CollectExports(visitor)) {
@@ -122,13 +121,14 @@ void cmExportBuildCMakeConfigGenerator::GenerateImportTargetsConfig(
     // Collect import properties for this target.
     ImportPropertyMap properties;
 
-    if (this->GetExportTargetType(target) != cmStateEnums::INTERFACE_LIBRARY) {
+    if (this->GetExportTargetType(target) !=
+        cm::TargetType::INTERFACE_LIBRARY) {
       this->SetImportLocationProperty(config, suffix, target, properties);
     }
     if (!properties.empty()) {
       // Get the rest of the target details.
       if (this->GetExportTargetType(target) !=
-          cmStateEnums::INTERFACE_LIBRARY) {
+          cm::TargetType::INTERFACE_LIBRARY) {
         this->SetImportDetailProperties(config, suffix, target, properties);
         this->SetImportLinkInterface(config, suffix,
                                      cmGeneratorExpression::BuildInterface,
@@ -177,20 +177,6 @@ std::string cmExportBuildCMakeConfigGenerator::GetFileSetDirectories(
     auto directories = fileSet->GetDirectories(context, gte);
     bool const contextSensitive = directories.second;
 
-    auto const& type = fileSet->GetType();
-    // C++ modules do not support interface file sets which are dependent upon
-    // the configuration.
-    if (contextSensitive && type == cm::FileSetMetadata::CXX_MODULES) {
-      auto* mf = this->LG->GetMakefile();
-      mf->IssueMessage(MessageType::FATAL_ERROR,
-                       cmStrCat("The \"", gte->GetName(),
-                                "\" target's interface file set \"",
-                                fileSet->GetName(), "\" of type \"", type,
-                                "\" contains context-sensitive base directory "
-                                "entries which is not supported."));
-      return std::string{};
-    }
-
     for (auto const& directory : directories.first) {
       auto dest = cmOutputConverter::EscapeForCMake(
         directory, cmOutputConverter::WrapQuotes::NoWrap);
@@ -221,20 +207,6 @@ std::string cmExportBuildCMakeConfigGenerator::GetFileSetFiles(
 
     auto files = fileSet->GetFiles(context, gte);
     bool const contextSensitive = files.second;
-
-    auto const& type = fileSet->GetType();
-    // C++ modules do not support interface file sets which are dependent upon
-    // the configuration.
-    if (contextSensitive && type == cm::FileSetMetadata::CXX_MODULES) {
-      auto* mf = this->LG->GetMakefile();
-      mf->IssueMessage(MessageType::FATAL_ERROR,
-                       cmStrCat("The \"", gte->GetName(),
-                                "\" target's interface file set \"",
-                                fileSet->GetName(), "\" of type \"", type,
-                                "\" contains context-sensitive file entries "
-                                "which is not supported."));
-      return std::string{};
-    }
 
     for (auto const& it : files.first) {
       for (auto const& filename : it.second) {

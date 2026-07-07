@@ -11,7 +11,6 @@
 #include <ctime>
 #include <functional>
 #include <initializer_list>
-#include <iostream>
 #include <iterator>
 #include <map>
 #include <ratio>
@@ -63,6 +62,7 @@
 #include "cmStateSnapshot.h"
 #include "cmStateTypes.h"
 #include "cmStdIoStream.h"
+#include "cmStdIoTerminal.h"
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
 #include "cmUVHandlePtr.h"
@@ -197,7 +197,6 @@ struct cmCTest::Private
   cm::optional<cmCTest::LogType> OutputLogFileLastTag;
 
   bool OutputTestOutputOnTestFailure = false;
-  bool OutputColorCode = cmCTest::ColoredOutputSupportedByConsole();
 
   std::map<std::string, std::string> Definitions;
 
@@ -750,6 +749,60 @@ int cmCTest::ProcessSteps()
     mf.AddDefinition(def.first, def.second);
   }
 
+  if (!this->Impl->SourceDir.empty() && this->Impl->TestDir.empty() &&
+      this->Impl->CTestConfigurationOverwrites.find("BuildDirectory") ==
+        this->Impl->CTestConfigurationOverwrites.end()) {
+    std::string const configurePresetName =
+      cmNonempty(mf.GetDefinition("CTEST_CONFIGURE_PRESET"))
+      ? *mf.GetDefinition("CTEST_CONFIGURE_PRESET")
+      : mf.GetSafeDefinition("CTEST_PRESET");
+    if (!configurePresetName.empty()) {
+      // Check if we should use the binary directory from the specified
+      // configure preset.
+      std::string const sourceDir =
+        this->GetCTestConfiguration("SourceDirectory");
+      std::string const rawPresetsFile =
+        mf.GetSafeDefinition("CTEST_PRESETS_FILE");
+      std::string const presetsFile = rawPresetsFile.empty()
+        ? std::string{}
+        : cmSystemTools::CollapseFullPath(rawPresetsFile, sourceDir);
+      cmCMakePresetsGraph presetsGraph;
+      if (!sourceDir.empty()) {
+        if (!presetsGraph.ReadProjectPresets(sourceDir, presetsFile)) {
+          cmCTestLog(this, ERROR_MESSAGE,
+                     "Could not read presets from \""
+                       << sourceDir << "\":\n "
+                       << presetsGraph.parseState.GetErrorMessage()
+                       << std::endl);
+          return 12;
+        }
+        cmCMakePresetsGraph::PresetResolveResult<
+          cmCMakePresetsGraph::ConfigurePreset>
+          resolveResult = presetsGraph.ResolvePreset(
+            configurePresetName, presetsGraph.ConfigurePresets);
+        cm::optional<std::string> resolveError =
+          cmCMakePresetsGraph::FormatPresetError<
+            cmCMakePresetsGraph::ConfigurePreset>(
+            resolveResult.StatusCode, resolveResult.ErrorPresetName,
+            sourceDir);
+        if (resolveError) {
+          cmCTestLog(this, ERROR_MESSAGE, *resolveError << std::endl);
+          return 12;
+        }
+        if (resolveResult.Preset && !resolveResult.Preset->BinaryDir.empty()) {
+          std::string const binaryDir = resolveResult.Preset->BinaryDir;
+          this->SetCTestConfiguration("BuildDirectory", binaryDir);
+          this->Impl->BinaryDir = binaryDir;
+          cmSystemTools::SetLogicalWorkingDirectory(binaryDir);
+          mf.AddDefinition("CTEST_BINARY_DIRECTORY", binaryDir);
+          // Re-parse DartConfiguration.tcl since we changed BinaryDir.
+          this->UpdateCTestConfiguration();
+          this->SetCMakeVariables(mf);
+        }
+      }
+    }
+  }
+
   // CTEST_TIME_LIMIT may come from CTestCustom.cmake (already in the makefile)
   // or from the config map (just populated by SetCMakeVariables above).
   this->SetTimeLimit(mf.GetDefinition("CTEST_TIME_LIMIT"));
@@ -1287,8 +1340,9 @@ std::string cmCTest::Base64GzipEncodeFile(std::string const& file)
   std::vector<std::string> files;
   files.push_back(file);
 
-  if (!cmSystemTools::CreateTar(
-        tarFile, files, {}, cmSystemTools::TarCompressGZip, "UTF-8", false)) {
+  if (!cmSystemTools::CreateTar(tarFile, files, {}, {},
+                                cmSystemTools::TarCompressGZip, "UTF-8",
+                                false)) {
     cmCTestLog(this, ERROR_MESSAGE,
                "Error creating tar while "
                "encoding file: "
@@ -1507,20 +1561,6 @@ bool cmCTest::CheckArgument(std::string const& arg, cm::string_view varg1,
 
 bool cmCTest::ProgressOutputSupportedByConsole()
 {
-  return cm::StdIo::Out().Kind() == cm::StdIo::TermKind::VT100;
-}
-
-bool cmCTest::ColoredOutputSupportedByConsole()
-{
-  std::string clicolor_force;
-  if (cmSystemTools::GetEnv("CLICOLOR_FORCE", clicolor_force) &&
-      !clicolor_force.empty() && clicolor_force != "0") {
-    return true;
-  }
-  std::string clicolor;
-  if (cmSystemTools::GetEnv("CLICOLOR", clicolor) && clicolor == "0") {
-    return false;
-  }
   return cm::StdIo::Out().Kind() == cm::StdIo::TermKind::VT100;
 }
 
@@ -2467,6 +2507,11 @@ int cmCTest::Run(std::vector<std::string> const& args)
                        this->Impl->TestOptions.RerunFailed = true;
                        return true;
                      } },
+    CommandArgument{ "--out-of-date", CommandArgument::Values::Zero,
+                     [this](std::string const&) -> bool {
+                       this->Impl->TestOptions.OutOfDateOnly = true;
+                       return true;
+                     } },
   };
 
   // Process command line arguments for presets first, since other arguments
@@ -2990,6 +3035,11 @@ std::string cmCTest::GetBinaryDir()
   return this->Impl->BinaryDir;
 }
 
+std::string cmCTest::GetStampDir()
+{
+  return this->Impl->BinaryDir + "/Testing/Temporary/LastTestRun";
+}
+
 std::string const& cmCTest::GetConfigType()
 {
   return this->Impl->ConfigType;
@@ -3495,6 +3545,13 @@ static char const* cmCTestStringLogType[] = { "DEBUG",
 
 void cmCTest::Log(LogType logType, std::string msg, bool suppress)
 {
+  static cm::StdIo::TermAttrSet const noAttrs;
+  this->Log(logType, std::move(msg), noAttrs, suppress);
+}
+
+void cmCTest::Log(LogType logType, std::string msg,
+                  cm::StdIo::TermAttrSet const& attrs, bool suppress)
+{
   if (msg.empty()) {
     return;
   }
@@ -3533,7 +3590,7 @@ void cmCTest::Log(LogType logType, std::string msg, bool suppress)
       if (this->Impl->TestProgressOutput) {
         if (this->Impl->TestProgressNewlinePending) {
           this->Impl->TestProgressNewlinePending = false;
-          std::cout << '\r';
+          cm::StdIo::Out().IOS() << '\r';
         }
 
         if (msg.find('\n') != std::string::npos) {
@@ -3543,7 +3600,7 @@ void cmCTest::Log(LogType logType, std::string msg, bool suppress)
 
         // ProgressOutputSupportedByConsole() already verified VT100 support.
         // Erase the rest of the line before printing the message.
-        std::cout << kVT100_EraseLine << msg << std::flush;
+        cm::StdIo::Out().IOS() << kVT100_EraseLine << msg << std::flush;
         return;
       }
       logType = HANDLER_OUTPUT;
@@ -3552,40 +3609,37 @@ void cmCTest::Log(LogType logType, std::string msg, bool suppress)
     switch (logType) {
       case DEBUG:
         if (this->Impl->Debug) {
-          std::cout << msg << std::flush;
+          cm::StdIo::Print(cm::StdIo::Out(), attrs, msg);
+          cm::StdIo::Out().IOS() << std::flush;
         }
         break;
       case OUTPUT:
       case HANDLER_OUTPUT:
         if (this->Impl->Debug || this->Impl->Verbose) {
-          std::cout << msg << std::flush;
+          cm::StdIo::Print(cm::StdIo::Out(), attrs, msg);
+          cm::StdIo::Out().IOS() << std::flush;
         }
         break;
       case HANDLER_VERBOSE_OUTPUT:
         if (this->Impl->Debug || this->Impl->ExtraVerbose) {
-          std::cout << msg << std::flush;
+          cm::StdIo::Print(cm::StdIo::Out(), attrs, msg);
+          cm::StdIo::Out().IOS() << std::flush;
         }
         break;
       case WARNING:
-        std::cerr << msg << std::flush;
+        cm::StdIo::Print(cm::StdIo::Err(), attrs, msg);
+        cm::StdIo::Err().IOS() << std::flush;
         break;
       case ERROR_MESSAGE:
-        std::cerr << msg << std::flush;
+        cm::StdIo::Print(cm::StdIo::Err(), attrs, msg);
+        cm::StdIo::Err().IOS() << std::flush;
         cmSystemTools::SetErrorOccurred();
         break;
       default:
-        std::cout << msg << std::flush;
+        cm::StdIo::Print(cm::StdIo::Out(), attrs, msg);
+        cm::StdIo::Out().IOS() << std::flush;
     }
   }
-}
-
-std::string cmCTest::GetColorCode(Color color) const
-{
-  if (this->Impl->OutputColorCode) {
-    return cmStrCat("\033[0;", static_cast<int>(color), 'm');
-  }
-
-  return {};
 }
 
 void cmCTest::SetTimeLimit(cmValue val)

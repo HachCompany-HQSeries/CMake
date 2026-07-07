@@ -117,10 +117,15 @@ endif ()
 run_cmake(InstallBMI)
 run_cmake(InstallBMIGenericArgs)
 run_cmake(InstallBMIIgnore)
+if(NOT RunCMake_GENERATOR MATCHES "^Visual Studio ")
+  run_cmake(InstallBMIAbsDir)
+endif()
 
 run_cmake(ExportBuildCxxModules)
+run_cmake(ExportBuildCxxModulesConfig)
 run_cmake(ExportBuildCxxModulesTargets)
 run_cmake(ExportInstallCxxModules)
+run_cmake(ExportInstallCxxModulesConfig)
 
 # Generator-specific tests.
 if (RunCMake_GENERATOR MATCHES "Ninja")

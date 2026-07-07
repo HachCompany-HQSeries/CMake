@@ -31,7 +31,7 @@ cmExperimental::FeatureData const LookupTable[] = {
     cmExperimental::TryCompileCondition::Always },
   // CxxImportStd
   { "CxxImportStd",
-    "451f2fe2-a8a2-47c3-bc32-94786d8fc91b",
+    "f35a9ac6-8463-4d38-8eec-5d6008153e7d",
     "CMAKE_EXPERIMENTAL_CXX_IMPORT_STD",
     "CMake's support for `import std;` in C++23 and newer is experimental. It "
     "is meant only for experimentation and feedback to CMake developers.",
@@ -55,7 +55,7 @@ cmExperimental::FeatureData const LookupTable[] = {
     {},
     cmExperimental::TryCompileCondition::Never },
   { "GenerateSbom",
-    "2d856d6d-53e8-488b-a17f-d486d2cac317",
+    "248471c2-d905-4c9e-81b5-b89cd27965e1",
     "CMAKE_EXPERIMENTAL_GENERATE_SBOM",
     "CMake's support for generating software bill of materials (Sbom) "
     "information in SPDX format is experimental. It is meant only for "

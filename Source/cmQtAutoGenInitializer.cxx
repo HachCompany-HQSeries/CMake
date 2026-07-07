@@ -57,6 +57,7 @@
 #include "cmStringAlgorithms.h"
 #include "cmSystemTools.h"
 #include "cmTarget.h"
+#include "cmTargetTypes.h"
 #include "cmValue.h"
 #include "cmake.h"
 
@@ -105,8 +106,8 @@ bool StaticLibraryCycle(cmGeneratorTarget const* targetOrigin,
                         std::string const& config)
 {
   bool cycle = false;
-  if ((targetOrigin->GetType() == cmStateEnums::STATIC_LIBRARY) &&
-      (targetDepend->GetType() == cmStateEnums::STATIC_LIBRARY)) {
+  if ((targetOrigin->GetType() == cm::TargetType::STATIC_LIBRARY) &&
+      (targetDepend->GetType() == cm::TargetType::STATIC_LIBRARY)) {
     std::set<cmGeneratorTarget const*> knownLibs;
     std::deque<cmGeneratorTarget const*> testLibs;
 
@@ -130,7 +131,7 @@ bool StaticLibraryCycle(cmGeneratorTarget const* targetOrigin,
         for (cmLinkItem const& item : libs->Libraries) {
           cmGeneratorTarget const* depTarget = item.Target;
           if (depTarget &&
-              (depTarget->GetType() == cmStateEnums::STATIC_LIBRARY) &&
+              (depTarget->GetType() == cm::TargetType::STATIC_LIBRARY) &&
               knownLibs.insert(depTarget).second) {
             testLibs.push_back(depTarget);
           }
@@ -2588,10 +2589,8 @@ bool cmQtAutoGenInitializer::GetQtExecutable(GenVarsT& genVars,
     if (this->MultiConfig && this->UseBetterGraph) {
       for (auto const& config : this->ConfigsList) {
         if (!genVars.ExecutableFeatures.Config[config]) {
-          if (!genVars.ExecutableFeatures.Config[config]) {
-            print_err(err);
-            return false;
-          }
+          print_err(err);
+          return false;
         }
       }
     } else {

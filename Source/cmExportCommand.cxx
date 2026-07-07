@@ -17,6 +17,7 @@
 #include "cmArgumentParserTypes.h"
 #include "cmBuildSbomGenerator.h"
 #include "cmCryptoHash.h"
+#include "cmDiagnosticContext.h"
 #include "cmDiagnostics.h"
 #include "cmExecutionStatus.h"
 #include "cmExperimental.h"
@@ -33,11 +34,11 @@
 #include "cmPolicies.h"
 #include "cmRange.h"
 #include "cmSbomArguments.h"
-#include "cmStateTypes.h"
 #include "cmStringAlgorithms.h"
 #include "cmSubcommandTable.h"
 #include "cmSystemTools.h"
 #include "cmTarget.h"
+#include "cmTargetTypes.h"
 #include "cmValue.h"
 
 #if defined(__HAIKU__)
@@ -103,7 +104,7 @@ static bool ValidateExportableTarget(std::string const& name, cmMakefile& mf,
                              "\" which is not built by this project."));
     return false;
   }
-  if (target->GetType() == cmStateEnums::UTILITY) {
+  if (target->GetType() == cm::TargetType::UTILITY) {
     status.SetError(cmStrCat("given custom target \"", name,
                              "\" which may not be exported."));
     return false;
@@ -219,14 +220,17 @@ static bool HandleTargetsMode(std::vector<std::string> const& args,
     }
   }
 
+  cmDiagnosticContext context = cmExportBuildFileGenerator::CaptureContext(mf);
   std::unique_ptr<cmExportBuildFileGenerator> ebfg = nullptr;
   if (android) {
-    auto ebag = cm::make_unique<cmExportBuildAndroidMKGenerator>();
+    auto ebag =
+      cm::make_unique<cmExportBuildAndroidMKGenerator>(std::move(context));
     ebag->SetNamespace(arguments.Namespace);
     ebag->SetAppendMode(arguments.Append);
     ebfg = std::move(ebag);
   } else {
-    auto ebcg = cm::make_unique<cmExportBuildCMakeConfigGenerator>();
+    auto ebcg =
+      cm::make_unique<cmExportBuildCMakeConfigGenerator>(std::move(context));
     ebcg->SetNamespace(arguments.Namespace);
     ebcg->SetAppendMode(arguments.Append);
     ebcg->SetExportOld(arguments.ExportOld);
@@ -328,7 +332,8 @@ static bool HandleExportMode(std::vector<std::string> const& args,
   }
 
   // Set up export file generation.
-  auto ebcg = cm::make_unique<cmExportBuildCMakeConfigGenerator>();
+  auto ebcg = cm::make_unique<cmExportBuildCMakeConfigGenerator>(
+    cmExportBuildFileGenerator::CaptureContext(mf));
   ebcg->SetNamespace(arguments.Namespace);
   ebcg->SetExportPackageDependencies(arguments.ExportPackageDependencies);
 
@@ -395,7 +400,8 @@ static bool HandleSpecialExportMode(std::vector<std::string> const& args,
   }
 
   // Create the export build generator
-  auto ebpg = cm::make_unique<GeneratorType>(arguments);
+  auto ebpg = cm::make_unique<GeneratorType>(
+    arguments, cmExportBuildFileGenerator::CaptureContext(mf));
   AddExportGenerator(mf, gg, std::move(ebpg), fname, *exportSet,
                      arguments.CxxModulesDirectory);
   return true;
@@ -453,7 +459,7 @@ static bool HandleSbomMode(std::vector<std::string> const& args,
 
   std::string const dir =
     arguments.GetDefaultDestination(mf.GetCurrentBinaryDirectory());
-  std::string const fpath = cmStrCat(dir, '/', arguments.GetPackageFileName());
+  std::string const fpath = cmStrCat(dir, '/', arguments.GetPackageName());
 
   if (gg->IsBuildSbomFile(fpath)) {
     status.SetError(cmStrCat("SBOM command already specified for the file "_s,
@@ -473,7 +479,6 @@ static bool HandleSbomMode(std::vector<std::string> const& args,
   }
 
   auto builder = cm::make_unique<cmBuildSbomGenerator>(arguments, sets, fpath);
-
   cmBuildSbomGenerator* rawPtr = builder.get();
   mf.AddBuildSbomGenerator(std::move(builder));
   gg->AddBuildSbomGenerator(rawPtr);

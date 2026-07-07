@@ -25,10 +25,20 @@
 
 class cmSourceFile;
 
-cmExportBuildFileGenerator::cmExportBuildFileGenerator()
+cmExportBuildFileGenerator::cmExportBuildFileGenerator(
+  cmDiagnosticContext context)
+  : Context(std::move(context))
 {
   this->LG = nullptr;
   this->ExportSet = nullptr;
+}
+
+cmDiagnosticContext cmExportBuildFileGenerator::CaptureContext(
+  cmMakefile const& mf)
+{
+  cmDiagnosticContext context{ mf.GetBacktrace() };
+  context.RecordDiagnostic(cmDiagnostics::CMD_AUTHOR, mf.GetStateSnapshot());
+  return context;
 }
 
 void cmExportBuildFileGenerator::Compute(cmLocalGenerator* lg)
@@ -39,17 +49,17 @@ void cmExportBuildFileGenerator::Compute(cmLocalGenerator* lg)
   }
 }
 
-cmStateEnums::TargetType cmExportBuildFileGenerator::GetExportTargetType(
+cm::TargetType cmExportBuildFileGenerator::GetExportTargetType(
   cmGeneratorTarget const* target) const
 {
-  cmStateEnums::TargetType targetType = target->GetType();
+  cm::TargetType targetType = target->GetType();
   // An object library exports as an interface library if we cannot
   // tell clients where to find the objects.  This is sufficient
   // to support transitive usage requirements on other targets that
   // use the object library.
-  if (targetType == cmStateEnums::OBJECT_LIBRARY &&
+  if (targetType == cm::TargetType::OBJECT_LIBRARY &&
       !target->Target->HasKnownObjectFileLocation(nullptr)) {
-    targetType = cmStateEnums::INTERFACE_LIBRARY;
+    targetType = cm::TargetType::INTERFACE_LIBRARY;
   }
   return targetType;
 }
@@ -66,7 +76,7 @@ void cmExportBuildFileGenerator::SetImportLocationProperty(
   // Get the makefile in which to lookup target information.
   cmMakefile* mf = target->Makefile;
 
-  if (target->GetType() == cmStateEnums::OBJECT_LIBRARY) {
+  if (target->GetType() == cm::TargetType::OBJECT_LIBRARY) {
     std::string prop = cmStrCat("IMPORTED_OBJECTS", suffix);
 
     // Compute all the object files inside this target and setup
@@ -246,7 +256,7 @@ void cmExportBuildFileGenerator::IssueMessage(MessageType type,
 void cmExportBuildFileGenerator::IssueDiagnostic(
   cmDiagnosticCategory category, std::string const& message) const
 {
-  this->LG->GetMakefile()->IssueDiagnostic(category, message);
+  this->LG->GetMakefile()->IssueDiagnostic(category, message, this->Context);
 }
 
 std::string cmExportBuildFileGenerator::InstallNameDir(

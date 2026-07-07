@@ -523,9 +523,11 @@ public:
 
   static bool ListTar(std::string const& arFileName,
                       std::vector<std::string> const& files,
+                      std::vector<std::string> const& excludeFiles,
                       std::string const& encoding, bool verbose);
   static bool CreateTar(std::string const& arFileName,
                         std::vector<std::string> const& files,
+                        std::vector<std::string> const& excludeFiles,
                         std::string const& workingDirectory,
                         cmTarCompression compressType,
                         std::string const& encoding, bool verbose,
@@ -534,6 +536,7 @@ public:
                         int compressionLevel = 0, int numThreads = 1);
   static bool ExtractTar(std::string const& arFileName,
                          std::vector<std::string> const& files,
+                         std::vector<std::string> const& excludeFiles,
                          cmTarExtractTimestamps extractTimestamps,
                          std::string const& encoding, bool verbose);
 

@@ -122,6 +122,7 @@ This module provides the following command:
       [WORKING_DIRECTORY <dir>]
       [COMMENT <comment>]
       [CONFIG_FILE <file>]
+      [USES_TERMINAL]
     )
 
   By default, this convenience command also generates a configuration file
@@ -199,6 +200,13 @@ This module provides the following command:
     If specified, the given file provided with full-path will be used as
     Doxygen configuration file instead of the default
     ``Doxyfile.<target-name>``.
+
+  ``USES_TERMINAL``
+    .. versionadded:: 4.5
+
+    If provided, the Doxygen command will be given access to the terminal
+    if possible.  With the :generator:`Ninja` generator, this places
+    the command in the ``console`` :prop_gbl:`pool <JOB_POOLS>`.
 
   .. rubric:: Variables for customizing Doxygen configuration
 
@@ -743,6 +751,7 @@ function(_Doxygen_get_version doxy_version result_var doxy_path)
             OUTPUT_VARIABLE full_doxygen_version
             OUTPUT_STRIP_TRAILING_WHITESPACE
             RESULT_VARIABLE version_result
+            ERROR_QUIET
         )
 
         # Ignore any commit hashes, etc.
@@ -1029,6 +1038,7 @@ if(TARGET Doxygen::doxygen)
         COMMAND "${DOXYGEN_EXECUTABLE}" -s -g "${_Doxygen_tpl}"
         OUTPUT_QUIET
         RESULT_VARIABLE _Doxygen_tpl_result
+        ERROR_QUIET
     )
     if(_Doxygen_tpl_result)
         message(FATAL_ERROR
@@ -1163,7 +1173,7 @@ function(doxygen_list_to_quoted_strings LIST_VARIABLE)
 endfunction()
 
 function(doxygen_add_docs targetName)
-    set(_options ALL USE_STAMP_FILE)
+    set(_options ALL USE_STAMP_FILE USES_TERMINAL)
     set(_one_value_args WORKING_DIRECTORY COMMENT CONFIG_FILE)
     set(_multi_value_args)
     cmake_parse_arguments(_args
@@ -1481,6 +1491,11 @@ doxygen_add_docs() for target ${targetName}")
         set(_all ALL)
     endif()
 
+    unset(_uses_terminal)
+    if(${_args_USES_TERMINAL})
+        set(_uses_terminal USES_TERMINAL)
+    endif()
+
     # Only create the stamp file if asked to. If we don't create it,
     # the target will always be considered out-of-date.
     if(_args_USE_STAMP_FILE)
@@ -1494,19 +1509,25 @@ doxygen_add_docs() for target ${targetName}")
             WORKING_DIRECTORY "${_args_WORKING_DIRECTORY}"
             DEPENDS "${_target_doxyfile}" ${_sources}
             COMMENT "${_args_COMMENT}"
+            ${_uses_terminal}
         )
-        add_custom_target(${targetName} ${_all}
+        add_custom_target(${targetName}
+            ${_all}
             DEPENDS ${__stamp_file}
+            ${_uses_terminal}
             SOURCES ${_sources}
         )
         unset(__stamp_file)
     else()
-        add_custom_target( ${targetName} ${_all} VERBATIM
+        add_custom_target( ${targetName}
+            ${_all}
+            VERBATIM
             COMMAND ${CMAKE_COMMAND} -E make_directory ${_original_doxygen_output_dir}
             COMMAND "${DOXYGEN_EXECUTABLE}" "${_target_doxyfile}"
             WORKING_DIRECTORY "${_args_WORKING_DIRECTORY}"
             DEPENDS "${_target_doxyfile}" ${_sources}
             COMMENT "${_args_COMMENT}"
+            ${_uses_terminal}
             SOURCES ${_sources}
         )
     endif()

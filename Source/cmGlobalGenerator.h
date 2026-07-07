@@ -34,6 +34,8 @@
 #include "cmSystemTools.h"
 #include "cmTarget.h"
 #include "cmTargetDepend.h"
+#include "cmTargetTypes.h"
+#include "cmTestGenerator.h"
 #include "cmValue.h"
 #include "cmXcFramework.h"
 
@@ -129,6 +131,10 @@ public:
 
   //! Get the name for this generator
   virtual std::string GetName() const { return "Generic"; }
+
+  virtual std::vector<std::string> GetTestBuildDependencyPaths(
+    std::string const& config,
+    cmTestGenerator::BuildDependencies const& deps) const;
 
   /** Check whether the given name matches the current generator.  */
   virtual bool MatchesGeneratorName(std::string const& name) const
@@ -313,6 +319,11 @@ public:
   std::vector<cmGeneratorTarget*> GetLocalGeneratorTargetsInOrder(
     cmLocalGenerator* lg) const;
 
+  // Find the single build-system target that produces the given path as a
+  // primary custom-command output, or nullptr if there is none or more than
+  // one.  Used to resolve file-level test build dependencies.
+  cmGeneratorTarget* FindOutputOwningTarget(std::string const& output);
+
   cmMakefile* GetCurrentMakefile() const
   {
     return this->CurrentConfigureMakefile;
@@ -393,9 +404,9 @@ public:
 
   //! Find a target by name by searching the local generators.
   cmTarget* FindTarget(std::string const& name,
-                       cmStateEnums::TargetDomainSet domains = {
-                         cmStateEnums::TargetDomain::NATIVE,
-                         cmStateEnums::TargetDomain::ALIAS }) const;
+                       cm::TargetDomainSet domains = {
+                         cm::TargetDomain::NATIVE,
+                         cm::TargetDomain::ALIAS }) const;
 
   cmGeneratorTarget* FindGeneratorTarget(std::string const& name) const;
 
@@ -800,7 +811,7 @@ protected:
 
   virtual bool CheckALLOW_DUPLICATE_CUSTOM_TARGETS() const;
 
-  bool ApplyCXXStdTargets();
+  bool ApplyCXXStdTarget();
   bool DiscoverSyntheticTargets();
 
   bool AddHeaderSetVerification();
@@ -875,7 +886,7 @@ protected:
   std::map<std::string, std::string> AliasTargets;
 
   cmTarget* FindTargetImpl(std::string const& name,
-                           cmStateEnums::TargetDomainSet domains) const;
+                           cm::TargetDomainSet domains) const;
 
   cmGeneratorTarget* FindGeneratorTargetImpl(std::string const& name) const;
 
@@ -977,6 +988,13 @@ private:
   // Store computed inter-target dependencies.
   using TargetDependMap = std::map<cmGeneratorTarget const*, TargetDependSet>;
   TargetDependMap TargetDependencies;
+
+  // Map from a custom-command primary output (collapsed full path) to the
+  // build-system target(s) that produce it.  Built lazily on first use and
+  // cleared with the other generator members.
+  std::map<std::string, std::vector<cmGeneratorTarget*>> OutputOwnerIndex;
+  bool OutputOwnerIndexComputed = false;
+  void ComputeOutputOwnerIndex();
 
   friend class cmake;
   void CreateGeneratorTargets(

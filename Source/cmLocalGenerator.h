@@ -52,6 +52,10 @@ class cmake;
 template <typename Iter>
 class cmRange;
 
+namespace cm {
+enum class TargetType;
+} // namespace cm
+
 /** Target and source file which have a specific output.  */
 struct cmSourcesWithOutput
 {
@@ -623,13 +627,11 @@ public:
   std::string CreateSafeObjectFileName(std::string const& sin) const;
 
   /**
-   * Build the search index from source files to source groups
-   */
-  void ComputeSourceGroupSearchIndex();
-
-  /**
    * find what source group this source is in
    */
+  cmSourceGroup* FindSourceGroup(cmGeneratorTarget const* target,
+                                 cmSourceFile const* source,
+                                 std::string const& config);
   cmSourceGroup* FindSourceGroup(std::string const& source);
 
 protected:
@@ -728,7 +730,7 @@ private:
                                cmCommandOrigin origin);
 
   void AddPositionIndependentFlags(std::string& flags, std::string const& l,
-                                   int targetType);
+                                   cm::TargetType targetType);
 
   void ComputeObjectMaxPath();
   bool AllAppleArchSysrootsAreTheSame(std::vector<std::string> const& archs,
