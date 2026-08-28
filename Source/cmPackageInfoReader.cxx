@@ -11,15 +11,16 @@
 #include <cmext/algorithm>
 #include <cmext/string_view>
 
-#include <cm3p/json/reader.h>
 #include <cm3p/json/value.h>
 #include <cm3p/json/version.h>
 
-#include "cmsys/FStream.hxx"
 #include "cmsys/RegularExpression.hxx"
 
 #include "cmCxxModuleMetadata.h"
 #include "cmExecutionStatus.h"
+#include "cmFileSet.h"
+#include "cmFileSetMetadata.h"
+#include "cmJSONState.h"
 #include "cmList.h"
 #include "cmListFileCache.h"
 #include "cmMakefile.h"
@@ -86,21 +87,9 @@ std::string GetRealDir(std::string const& path)
 
 Json::Value ReadJson(std::string const& fileName)
 {
-  // Open the specified file.
-  cmsys::ifstream file(fileName.c_str(), std::ios::in | std::ios::binary);
-  if (!file) {
-#if JSONCPP_VERSION_HEXA < 0x01070300
-    return Json::Value::null;
-#else
-    return Json::Value::nullSingleton();
-#endif
-  }
-
-  // Read file content and translate JSON.
   Json::Value data;
-  Json::CharReaderBuilder builder;
-  builder["collectComments"] = false;
-  if (!Json::parseFromStream(builder, file, &data, nullptr)) {
+  cmJSONState parseState(fileName, &data, cmJSONState::StrictMode::Relaxed);
+  if (!parseState.errors.empty()) {
 #if JSONCPP_VERSION_HEXA < 0x01070300
     return Json::Value::null;
 #else
@@ -131,7 +120,7 @@ bool CheckSchemaVersion(Json::Value const& data)
   // Check that we understand this version.
   return cmSystemTools::VersionCompare(cmSystemTools::OP_GREATER_EQUAL,
                                        version, "0.13") &&
-    cmSystemTools::VersionCompare(cmSystemTools::OP_LESS, version, "0.15");
+    cmSystemTools::VersionCompare(cmSystemTools::OP_LESS, version, "0.16");
 
   // TODO Eventually this probably needs to return the version tuple, and
   // should share code with cmPackageInfoReader::ParseVersion.
@@ -226,6 +215,20 @@ std::vector<std::string> ReadList(Json::Value const& arr)
 std::vector<std::string> ReadList(Json::Value const& data, char const* key)
 {
   return ReadList(data[key]);
+}
+
+Json::Value GetExtensions(Json::Value const& data)
+{
+  if (data.isObject()) {
+    Json::Value const& extensions = data["extensions"];
+    if (extensions.isObject()) {
+      Json::Value const& cmake = extensions["cmake"];
+      if (cmake.isObject()) {
+        return cmake;
+      }
+    }
+  }
+  return Json::Value{ Json::objectValue };
 }
 
 std::string NormalizeTargetName(std::string const& name,
@@ -853,7 +856,7 @@ void cmPackageInfoReader::ReadCxxModulesMetadata(
 #endif
 }
 
-cmTarget* cmPackageInfoReader::AddLibraryComponent(
+cmTarget* cmPackageInfoReader::AddComponent(
   cmMakefile* makefile, cm::TargetType type, std::string const& name,
   Json::Value const& data, std::string const& package,
   cm::ImportedTargetScope scope) const
@@ -869,7 +872,53 @@ cmTarget* cmPackageInfoReader::AddLibraryComponent(
     this->SetTargetProperties(makefile, target, *ci, package, IterKey(ci));
   }
 
+  // Add target sources.
+  this->AddTargetSources(makefile, target, data["file_sets"]);
+
   return target;
+}
+
+void cmPackageInfoReader::AddTargetSources(cmMakefile* makefile,
+                                           cmTarget* target,
+                                           Json::Value const& data) const
+{
+  if (data.isArray()) {
+    for (Json::Value const& fs : data) {
+      if (fs.isObject()) {
+        std::string const& type = ToString(fs["type"]);
+        std::string const& root = this->ResolvePath(ToString(fs["root"]));
+        std::vector<std::string> files = ReadList(fs["files"]);
+
+        if (files.empty() || root.empty() || type != "includes") {
+          continue;
+        }
+
+        Json::Value const& ext = GetExtensions(fs);
+        std::string const& name = [&] {
+          std::string const& extName = ToString(ext["name@v1"]);
+          if (!extName.empty()) {
+            return extName;
+          }
+          return std::string{ cm::FileSetMetadata::HEADERS };
+        }();
+
+        // TODO: When we support more than one file set type, check that we
+        // don't see the same 'name' on sets of different types.
+        auto fileSet = target->GetOrCreateFileSet(
+          name, std::string{ cm::FileSetMetadata::HEADERS },
+          cm::FileSetMetadata::Visibility::Interface);
+        cmListFileBacktrace const& bt = makefile->GetBacktrace();
+
+        for (std::string& file : files) {
+          file = cmStrCat(root, '/', file);
+        }
+        fileSet.first->AddFileEntry(
+          BT<std::string>{ cmList{ files }.to_string(), bt });
+
+        fileSet.first->AddDirectoryEntry(BT<std::string>{ root, bt });
+      }
+    }
+  }
 }
 
 bool cmPackageInfoReader::ImportTargets(cmMakefile* makefile,
@@ -897,14 +946,16 @@ bool cmPackageInfoReader::ImportTargets(cmMakefile* makefile,
     }
 
     auto createTarget = [&](cm::TargetType typeEnum) {
-      return this->AddLibraryComponent(makefile, typeEnum, fullName, *ci,
-                                       package, scope);
+      return this->AddComponent(makefile, typeEnum, fullName, *ci, package,
+                                scope);
     };
 
     cmTarget* target = nullptr;
     if (type == "symbolic"_s) {
       target = createTarget(cm::TargetType::INTERFACE_LIBRARY);
       target->SetSymbolic(true);
+    } else if (type == "executable"_s) {
+      target = createTarget(cm::TargetType::EXECUTABLE);
     } else if (type == "dylib"_s) {
       target = createTarget(cm::TargetType::SHARED_LIBRARY);
     } else if (type == "module"_s) {
@@ -941,6 +992,7 @@ bool cmPackageInfoReader::ImportTargets(cmMakefile* makefile,
       std::string const& fullName = cmStrCat(package, "::"_s, name);
       AppendProperty(makefile, target, "LINK_LIBRARIES"_s, {}, fullName);
     }
+    target->SetExportPassthrough(true);
   }
 
   return true;

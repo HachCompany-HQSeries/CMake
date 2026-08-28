@@ -512,18 +512,9 @@ function(show_only_json_check_python v)
   file(WRITE "${json_file}" "${actual_stdout}")
   set(actual_stdout "" PARENT_SCOPE)
 
-  if(CMake_TEST_JSON_SCHEMA)
-    execute_process(
-      COMMAND ${Python_EXECUTABLE} "${RunCMake_SOURCE_DIR}/show-only_json_validate_schema.py" "${json_file}"
-      RESULT_VARIABLE result
-      OUTPUT_VARIABLE output
-      ERROR_VARIABLE output
-    )
-    if(NOT result STREQUAL 0)
-      string(REPLACE "\n" "\n  " output "${output}")
-      string(APPEND RunCMake_TEST_FAILED "Failed to validate version ${v} JSON schema for file: ${file}\nOutput:\n${output}\n")
-    endif()
-  endif()
+  include("${RunCMake_SOURCE_DIR}/../validate_json_schema.cmake")
+  set(schema_file "${RunCMake_SOURCE_DIR}/../../../Help/manual/ctest/show-only-schema.json")
+  validate_json_schema("${schema_file}" "${json_file}")
 
   execute_process(
     COMMAND ${Python_EXECUTABLE} "${RunCMake_SOURCE_DIR}/show-only_json-v${v}_check.py" "${json_file}"
@@ -563,6 +554,7 @@ function(run_ShowOnly)
     add_test(ShowOnly \"${CMAKE_COMMAND}\" -E echo)
     set_tests_properties(ShowOnly PROPERTIES
       GENERATED_RESOURCE_SPEC_FILE \"/Path/Does/Not/Exist\"
+      LABELS TestLabel
       RESOURCE_GROUPS \"2,threads:2,gpus:4;gpus:2,threads:4\"
       REQUIRED_FILES RequiredFileDoesNotExist
       _BACKTRACE_TRIPLES \"file1;1;add_test;file0;;\"
@@ -573,11 +565,19 @@ function(run_ShowOnly)
       USER_DEFINED_A \"User defined property A value\"
       USER_DEFINED_B \"User defined property B value\"
       )
+    set_tests_properties(ShowOnly PROPERTIES
+      REQUIRED_FILES AnotherRequiredFileDoesNotExist
+      )
+    set_directory_properties(PROPERTIES
+      LABELS DirectoryLabel
+      )
     add_test(ShowOnlyNotAvailable NOT_AVAILABLE)
 ")
   run_cmake_command(show-only_human ${CMAKE_CTEST_COMMAND} --show-only=human)
   run_cmake_command(show-only_bad ${CMAKE_CTEST_COMMAND} --show-only=bad)
   run_cmake_command(show-only_json-v1 ${CMAKE_CTEST_COMMAND} --show-only=json-v1)
+  run_cmake_command(show-only_json-v1-raw
+    ${CMAKE_CTEST_COMMAND} --show-only=json-v1-raw)
 endfunction()
 run_ShowOnly()
 
@@ -739,6 +739,33 @@ function(run_configure_empty_bindir)
     -T Configure)
 endfunction()
 run_configure_empty_bindir()
+
+# Verify that ctest_configure() does not trigger a spurious unused-cli
+# warning about BUILDNAME/SITE when CTEST_SITE/CTEST_BUILD_NAME are set
+# but the project does not include(CTest).  See issue #27953.
+function(run_configure_site_buildname_no_unused_cli)
+  set(src "${RunCMake_BINARY_DIR}/configure-site-buildname-no-unused-cli-src")
+  set(bin "${RunCMake_BINARY_DIR}/configure-site-buildname-no-unused-cli-bin")
+  file(REMOVE_RECURSE "${src}" "${bin}")
+  file(MAKE_DIRECTORY "${src}")
+  file(WRITE "${src}/CMakeLists.txt"
+    "cmake_minimum_required(VERSION 3.10)\nproject(Minimal LANGUAGES NONE)\n")
+  set(RunCMake_TEST_BINARY_DIR "${bin}")
+  set(RunCMake_TEST_NO_CLEAN 1)
+  ctest_source_dir_generator_args(generator_args)
+  set(RunCMake_TEST_NOT_EXPECT_stdout "CMake Warning \\(unused-cli\\)")
+  run_cmake_command(configure-site-buildname-no-unused-cli
+    ${CMAKE_CTEST_COMMAND}
+    --source-dir "${src}"
+    --build-dir  "${bin}"
+    ${generator_args}
+    -D "CTEST_SITE=Test Site"
+    -D "CTEST_BUILD_NAME=Test Build"
+    -T Configure
+    -V)
+  unset(RunCMake_TEST_NOT_EXPECT_stdout)
+endfunction()
+run_configure_site_buildname_no_unused_cli()
 
 # Verify expected error condition when --source-dir does not contain
 # a CMakeLists.txt file.
@@ -907,6 +934,21 @@ set_tests_properties(test5 PROPERTIES  SKIP_REGULAR_EXPRESSION \"please skip\")
   run_cmake_command(output-junit ${CMAKE_CTEST_COMMAND} --output-junit "${RunCMake_TEST_BINARY_DIR}/junit.xml")
 endfunction()
 run_output_junit()
+
+function(run_output_junit_invalid)
+  set(RunCMake_TEST_BINARY_DIR ${RunCMake_BINARY_DIR}/output-junit-invalid)
+  set(RunCMake_TEST_NO_CLEAN 1)
+  file(REMOVE_RECURSE "${RunCMake_TEST_BINARY_DIR}")
+  file(MAKE_DIRECTORY "${RunCMake_TEST_BINARY_DIR}")
+  file(WRITE "${RunCMake_TEST_BINARY_DIR}/CTestTestfile.cmake" "
+add_test(test1 \"${CMAKE_COMMAND}\" -E true)
+")
+  set(output_dir "${RunCMake_TEST_BINARY_DIR}/not-a-dir")
+  file(WRITE "${output_dir}" "")
+  set(output_file "${output_dir}/junit.xml")
+  run_cmake_command(output-junit-invalid ${CMAKE_CTEST_COMMAND} --output-junit "${output_file}")
+endfunction()
+run_output_junit_invalid()
 
 run_cmake_command(invalid-ctest-argument ${CMAKE_CTEST_COMMAND} --not-a-valid-ctest-argument)
 

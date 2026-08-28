@@ -261,7 +261,12 @@ public:
   bool SetArgsFromPreset(cmCMakePresetsConfigureArgs const& args,
                          bool haveBinaryDirArg);
 
-  void PrintPresetList(cmCMakePresetsGraph const& graph) const;
+  cmCMakePresetsGraph::ConfigurePresetUsabilityCheck
+  CreateConfigurePresetUsabilityCheck() const;
+
+  void PrintPresetList(cmCMakePresetsGraph const& graph,
+                       cmCMakePresetsGraph::PresetListMode mode =
+                         cmCMakePresetsGraph::PresetListMode::Available) const;
 #endif
 
   //! Return the global generator assigned to this instance of cmake
@@ -712,6 +717,14 @@ protected:
   void RunCheckForUnusedVariables();
   int HandleDeleteCacheVariables(
     std::map<std::string, std::string> const& var);
+  /**
+   * Warn about different CMAKE_SYSTEM_ENVIRONMENT_ID, ignore, or refresh the
+   * cache depending on CMAKE_SYSTEM_ENVIRONMENT_ACTION.
+   *
+   * @return 0 on success or -1 if LoadCache fails.
+   */
+  int HandleDifferentSystemEnvironmentId(std::string envId,
+                                         std::string cachedId);
 
   using RegisteredGeneratorsVector =
     std::vector<std::unique_ptr<cmGlobalGeneratorFactory>>;
@@ -819,6 +832,23 @@ private:
   std::unique_ptr<cmState> State;
   cmStateSnapshot CurrentSnapshot;
   std::unique_ptr<cmMessenger> Messenger;
+
+  using DiagnosticAlterationMethod =
+    void (cmStateSnapshot::*)(cmDiagnosticCategory, cmDiagnosticAction, bool);
+
+  struct DiagnosticAlteration
+  {
+    DiagnosticAlterationMethod const Alteration;
+    cmDiagnosticCategory const Category;
+    cmDiagnosticAction const DesiredAction;
+    bool const Recurse;
+  };
+
+  std::vector<DiagnosticAlteration> DiagnosticAlterations;
+
+  void AlterDiagnostic(DiagnosticAlterationMethod alteration,
+                       cmDiagnosticCategory category,
+                       cmDiagnosticAction desiredAction, bool recurse);
 
 #ifndef CMAKE_BOOTSTRAP
   bool SarifFileOutput = false;

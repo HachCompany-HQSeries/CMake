@@ -201,7 +201,8 @@ if(NOT CMAKE_GENERATOR MATCHES "Visual Studio|Xcode")
 endif()
 add_executable(detect_jobserver detect_jobserver.c)
 if(CMAKE_GENERATOR MATCHES "Make")
-  add_RunCMake_test(Make -DMAKE_IS_GNU=${MAKE_IS_GNU} -DDETECT_JOBSERVER=$<TARGET_FILE:detect_jobserver>)
+  add_executable(fake_make Make/fake_make.c)
+  add_RunCMake_test(Make -DMAKE_IS_GNU=${MAKE_IS_GNU} -DDETECT_JOBSERVER=$<TARGET_FILE:detect_jobserver> -DFAKE_MAKE=$<TARGET_FILE:fake_make>)
 endif()
 unset(ninja_test_with_qt_version)
 unset(ninja_qt_args)
@@ -270,15 +271,24 @@ if(CMAKE_GENERATOR MATCHES "Ninja")
   if(DEFINED CMake_TEST_CUDA)
     list(APPEND NinjaMultiConfig_ARGS -DCMake_TEST_CUDA=${CMake_TEST_CUDA})
   endif()
-  add_RunCMake_test(NinjaMultiConfig)
-  set_property(TEST RunCMake.NinjaMultiConfig APPEND
-    PROPERTY LABELS "CUDA")
+  function(add_RunCMake_NinjaMultiConfig_test variant)
+    add_RunCMake_test(NinjaMultiConfig${variant}
+      TEST_DIR NinjaMultiConfig
+      ${NinjaMultiConfig_ARGS}
+      -DCMake_TEST_NinjaMultiConfig_VARIANT=${variant})
+    set_property(TEST RunCMake.NinjaMultiConfig${variant} APPEND
+      PROPERTY LABELS "CUDA" "NinjaMultiConfig")
+  endfunction()
+  add_RunCMake_NinjaMultiConfig_test(Simple)
+  add_RunCMake_NinjaMultiConfig_test(CustomCommands)
+  add_RunCMake_NinjaMultiConfig_test("")
   add_RunCMake_test(NinjaPrivateDeps
     -DCMAKE_C_OUTPUT_EXTENSION=${CMAKE_C_OUTPUT_EXTENSION}
     -DRunCMake_GENERATOR_IS_MULTI_CONFIG=${_isMultiConfig})
 endif()
 add_RunCMake_test(InstallParallel)
 add_RunCMake_test(CTest)
+add_RunCMake_test(CTestLaunch)
 
 if(NOT CMake_TEST_EXTERNAL_CMAKE)
   add_RunCMake_test(ctest_memcheck
@@ -383,9 +393,8 @@ add_RunCMake_test(CMakeRelease -DCMake_TEST_JQ=${CMake_TEST_JQ})
 if(CMAKE_GENERATOR MATCHES "Make|Ninja")
   add_RunCMake_test(Color)
 endif()
-if(UNIX AND "${CMAKE_GENERATOR}" MATCHES "Unix Makefiles|Ninja|FASTBuild")
-  add_RunCMake_test(CompilerChange)
-endif()
+add_RunCMake_test(CompilerChange)
+add_RunCMake_test(CompilerInfo -DPSEUDO_ASM=$<TARGET_FILE:pseudo_asm>)
 add_RunCMake_test(CompilerNotFound)
 if(DEFINED CMake_TEST_OBJC)
   list(APPEND CMake_TEST_LANG_VARS -DCMake_TEST_OBJC=${CMake_TEST_OBJC})
@@ -442,20 +451,27 @@ add_RunCMake_test(FileAPI -DPython_EXECUTABLE=${Python_EXECUTABLE}
                           -DCMake_TEST_MODULE_COMPILATION_RULES=${CMake_TEST_MODULE_COMPILATION_RULES}
                           -DCMake_TEST_CXX_STDLIB_MODULES_JSON=${CMake_TEST_CXX_STDLIB_MODULES_JSON})
 if(CMAKE_GENERATOR MATCHES "Make|Ninja|FASTBuild")
-  add_RunCMake_test(Instrumentation -DPython_EXECUTABLE=${Python_EXECUTABLE}
-                                    -DCMAKE_C_COMPILER_ID=${CMAKE_C_COMPILER_ID}
-                                    -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-                                    -DCMAKE_C_COMPILER_VERSION=${CMAKE_C_COMPILER_VERSION}
-                                    -DCMAKE_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
-                                    -DCMake_TEST_JSON_SCHEMA=${CMake_TEST_JSON_SCHEMA})
-  # The real-signal/console-event interrupt case runs in its own suite so it can
-  # be excluded from MemCheck (the interrupted cmake is killed by a real signal)
-  # without dropping leak coverage for the rest of the instrumentation tests.
-  add_RunCMake_test(InstrumentationInterrupt TEST_DIR Instrumentation
-                                    -DINSTRUMENTATION_INTERRUPT_REAL=1
-                                    -DCMAKE_C_COMPILER_ID=${CMAKE_C_COMPILER_ID}
-                                    -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-                                    -DCMAKE_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX})
+  function(add_RunCMake_Instrumentation_test variant)
+    add_RunCMake_test(Instrumentation${variant}
+      TEST_DIR Instrumentation
+      -DPython_EXECUTABLE=${Python_EXECUTABLE}
+      -DCMAKE_C_COMPILER_ID=${CMAKE_C_COMPILER_ID}
+      -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+      -DCMAKE_C_COMPILER_VERSION=${CMAKE_C_COMPILER_VERSION}
+      -DCMAKE_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
+      -DCMake_TEST_JSON_SCHEMA=${CMake_TEST_JSON_SCHEMA}
+      -DCMake_TEST_INSTRUMENTATION_VARIANT=${variant}
+    )
+    set_property(TEST RunCMake.Instrumentation${variant} APPEND PROPERTY
+      LABELS "Instrumentation"
+    )
+  endfunction()
+  add_RunCMake_Instrumentation_test("")
+  add_RunCMake_Instrumentation_test(MakeProgram)
+  # The real-signal/console-event interrupt case runs in its own suite so it
+  # can be excluded from MemCheck (the interrupted cmake is killed by a real
+  # signal).
+  add_RunCMake_Instrumentation_test(InterruptReal)
 endif()
 add_RunCMake_test(ConfigDir)
 if(CMake_TEST_FindPython2)
@@ -602,6 +618,13 @@ add_RunCMake_test(LanguageStandards
   -DCMake_TEST_OBJC=${CMake_TEST_OBJC}
 )
 set_property(TEST RunCMake.LanguageStandards APPEND PROPERTY LABELS "CUDA" "HIP")
+
+add_RunCMake_test(EnableLanguageSubdir
+  -DCMake_TEST_CUDA=${CMake_TEST_CUDA}
+  -DCMake_TEST_RESOURCES=${CMake_TEST_RESOURCES})
+if(CMake_TEST_CUDA)
+  set_property(TEST RunCMake.EnableLanguageSubdir APPEND PROPERTY LABELS "CUDA")
+endif()
 
 add_RunCMake_test(LinkItemValidation)
 add_RunCMake_test(LinkStatic)
@@ -1267,6 +1290,7 @@ if(CMake_TEST_FindMatlab OR CMake_TEST_FindMatlab_MCR OR (NOT "${CMake_TEST_Find
   set_property(TEST RunCMake.FindMatlab APPEND PROPERTY LABELS "Matlab")
 endif()
 
+add_executable(pseudo_asm pseudo_asm.c)
 add_executable(pseudo_emulator pseudo_emulator.c)
 add_executable(pseudo_emulator_custom_command pseudo_emulator_custom_command.c)
 add_executable(pseudo_emulator_custom_command_arg pseudo_emulator_custom_command_arg.c)
@@ -1514,6 +1538,7 @@ add_RunCMake_test(AutoExportDll
   )
 
 add_RunCMake_test(AndroidMK)
+add_RunCMake_test(ExportCpsDefaultComponents)
 add_RunCMake_test(ExportPackageInfo)
 add_RunCMake_test(ExportSbom)
 add_RunCMake_test(EnvSbom)

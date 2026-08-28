@@ -579,7 +579,7 @@ class cmMakefile;
          "GNUInstallDirs caches CMAKE_INSTALL_* with leading 'usr/' for "     \
          "install prefix '/'.",                                               \
          4, 1, 0, WARN)                                                       \
-  SELECT(POLICY, CMP194, "MSVC is not an assembler for language ASM.", 4, 1,  \
+  SELECT(POLICY, CMP0194, "MSVC is not an assembler for language ASM.", 4, 1, \
          0, WARN)                                                             \
   SELECT(                                                                     \
     POLICY, CMP0195,                                                          \
@@ -658,7 +658,11 @@ class cmMakefile;
          4, 4, 0, WARN)                                                       \
   SELECT(POLICY, CMP0219,                                                     \
          "Macro invocations preserve backslashes in arguments.", 4, 4, 0,     \
-         WARN)
+         WARN)                                                                \
+  SELECT(POLICY, CMP0220,                                                     \
+         "Languages enabled in subdirectories propagate to the top-level "    \
+         "directory.",                                                        \
+         4, 5, 0, WARN)
 
 #define CM_SELECT_ID(F, A1, A2, A3, A4, A5, A6) F(A1)
 #define CM_FOR_EACH_POLICY_ID(POLICY)                                         \

@@ -11,7 +11,6 @@
 #include <cm/memory>
 #include <cmext/string_view>
 
-#include <cm3p/json/reader.h>
 #include <cm3p/json/value.h>
 
 #include "cmsys/FStream.hxx"
@@ -24,6 +23,7 @@
 #include "cmGlobalVisualStudio7Generator.h"
 #include "cmGlobalVisualStudioGenerator.h"
 #include "cmIDEFlagTable.h"
+#include "cmJSONState.h"
 #include "cmLocalGenerator.h"
 #include "cmLocalVisualStudio10Generator.h"
 #include "cmMakefile.h"
@@ -742,6 +742,16 @@ std::string const& cmGlobalVisualStudio10Generator::GetPlatformToolsetString()
   return empty;
 }
 
+bool cmGlobalVisualStudio10Generator::IsClangClToolset() const
+{
+  std::string const& toolset = this->GetPlatformToolsetString();
+  static cmsys::RegularExpression llvmToolset(
+    "^[Ll][Ll][Vv][Mm](_v[0-9]+(_xp)?)?$");
+  static cmsys::RegularExpression clangClToolset(
+    "^[Cc][Ll][Aa][Nn][Gg]([Cc][Ll]$|_[0-9])");
+  return llvmToolset.find(toolset) || clangClToolset.find(toolset);
+}
+
 std::string const&
 cmGlobalVisualStudio10Generator::GetPlatformToolsetVersionProps() const
 {
@@ -874,20 +884,6 @@ std::string cmGlobalVisualStudio10Generator::FindMSBuildCommand()
 
   msbuild = "MSBuild.exe";
   return msbuild;
-}
-
-std::string cmGlobalVisualStudio10Generator::FindDevEnvCommand()
-{
-  if (this->ExpressEdition) {
-    // Visual Studio Express >= 10 do not have "devenv.com" or
-    // "VCExpress.exe" that we can use to build reliably.
-    // Tell the caller it needs to use MSBuild instead.
-    return "";
-  }
-  // Skip over the cmGlobalVisualStudio8Generator implementation because
-  // we expect a real devenv and do not want to look for VCExpress.
-  // NOLINTNEXTLINE(bugprone-parent-virtual-call)
-  return this->cmGlobalVisualStudio7Generator::FindDevEnvCommand();
 }
 
 bool cmGlobalVisualStudio10Generator::FindVCTargetsPath(cmMakefile* mf)
@@ -1089,12 +1085,7 @@ cmGlobalVisualStudio10Generator::GenerateBuildCommand(
   // Check if the caller explicitly requested a devenv tool.
   std::string makeProgramLower = makeProgramSelected;
   cmSystemTools::LowerCase(makeProgramLower);
-  bool useDevEnv = (makeProgramLower.find("devenv") != std::string::npos ||
-                    makeProgramLower.find("vcexpress") != std::string::npos);
-
-  // Workaround to convince VCExpress.exe to produce output.
-  bool const requiresOutputForward =
-    (makeProgramLower.find("vcexpress") != std::string::npos);
+  bool useDevEnv = makeProgramLower.find("devenv") != std::string::npos;
 
   // MSBuild is preferred (and required for VS Express), but if the .sln has
   // an Intel Fortran .vfproj then we have to use devenv. Parse it to find out.
@@ -1144,7 +1135,6 @@ cmGlobalVisualStudio10Generator::GenerateBuildCommand(
     }
 
     GeneratedMakeCommand makeCommand;
-    makeCommand.RequiresOutputForward = requiresOutputForward;
     makeCommand.Add(makeProgramSelected);
 
     if (tname == "clean"_s) {
@@ -1289,8 +1279,6 @@ std::string cmGlobalVisualStudio10Generator::Encoding()
 char const* cmGlobalVisualStudio10Generator::GetToolsVersion() const
 {
   switch (this->Version) {
-    case cmGlobalVisualStudioGenerator::VSVersion::VS14:
-      return "14.0";
     case cmGlobalVisualStudioGenerator::VSVersion::VS15:
       return "15.0";
     case cmGlobalVisualStudioGenerator::VSVersion::VS16:
@@ -1391,39 +1379,35 @@ cmIDEFlagTable const* cmLoadFlagTableJson(std::string const& flagJsonPath,
   if (savedFlagIterator != loadedFlagJsonFiles.end()) {
     ret = savedFlagIterator->second.data();
   } else {
-    Json::Reader reader;
-    cmsys::ifstream stream;
-
-    stream.open(flagJsonPath.c_str(), std::ios_base::in);
-    if (stream) {
-      Json::Value flags;
-      if (reader.parse(stream, flags, false) && flags.isArray()) {
-        std::vector<cmIDEFlagTable> flagTable;
-        for (auto const& flag : flags) {
-          Json::Value const& vsminJson = flag["vsmin"];
-          if (vsminJson.isString()) {
-            std::string const& vsmin = vsminJson.asString();
-            if (!vsmin.empty()) {
-              if (!vsVer ||
-                  cmSystemTools::VersionCompareGreater(vsmin, *vsVer)) {
-                continue;
-              }
+    Json::Value flags;
+    cmJSONState parseState(flagJsonPath, &flags,
+                           cmJSONState::StrictMode::Relaxed);
+    if (parseState.errors.empty() && flags.isArray()) {
+      std::vector<cmIDEFlagTable> flagTable;
+      for (auto const& flag : flags) {
+        Json::Value const& vsminJson = flag["vsmin"];
+        if (vsminJson.isString()) {
+          std::string const& vsmin = vsminJson.asString();
+          if (!vsmin.empty()) {
+            if (!vsVer ||
+                cmSystemTools::VersionCompareGreater(vsmin, *vsVer)) {
+              continue;
             }
           }
-          cmIDEFlagTable flagEntry;
-          flagEntry.IDEName = cmLoadFlagTableString(flag, "name");
-          flagEntry.commandFlag = cmLoadFlagTableString(flag, "switch");
-          flagEntry.comment = cmLoadFlagTableString(flag, "comment");
-          flagEntry.value = cmLoadFlagTableString(flag, "value");
-          flagEntry.special = cmLoadFlagTableSpecial(flag, "flags");
-          flagTable.push_back(flagEntry);
         }
-        cmIDEFlagTable endFlag{ "", "", "", "", 0 };
-        flagTable.push_back(endFlag);
-
-        loadedFlagJsonFiles[flagJsonPath] = flagTable;
-        ret = loadedFlagJsonFiles[flagJsonPath].data();
+        cmIDEFlagTable flagEntry;
+        flagEntry.IDEName = cmLoadFlagTableString(flag, "name");
+        flagEntry.commandFlag = cmLoadFlagTableString(flag, "switch");
+        flagEntry.comment = cmLoadFlagTableString(flag, "comment");
+        flagEntry.value = cmLoadFlagTableString(flag, "value");
+        flagEntry.special = cmLoadFlagTableSpecial(flag, "flags");
+        flagTable.push_back(flagEntry);
       }
+      cmIDEFlagTable endFlag{ "", "", "", "", 0 };
+      flagTable.push_back(endFlag);
+
+      loadedFlagJsonFiles[flagJsonPath] = flagTable;
+      ret = loadedFlagJsonFiles[flagJsonPath].data();
     }
   }
   return ret;

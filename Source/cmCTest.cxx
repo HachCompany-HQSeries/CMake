@@ -52,6 +52,7 @@
 #include "cmGeneratedFileStream.h"
 #include "cmGlobalGenerator.h"
 #include "cmInstrumentation.h"
+#include "cmInstrumentationInterrupt.h"
 #include "cmInstrumentationQuery.h"
 #include "cmJSONState.h"
 #include "cmList.h"
@@ -133,6 +134,7 @@ struct cmCTest::Private
   bool ShowOnly = false;
   bool OutputAsJson = false;
   int OutputAsJsonVersion = 1;
+  bool OutputAsJsonRaw = false;
 
   // TODO: The ctest configuration should be a hierarchy of
   // configuration option sources: command-line, script, ini file.
@@ -1602,8 +1604,11 @@ bool cmCTest::SetArgsFromPreset(cmCMakePresetsArgs const& args)
     return false;
   }
 
-  if (args.ListPresets) {
-    settingsFile.PrintTestPresetList();
+  if (args.ListPresetsMode) {
+    cmake cm(cmState::Role::CTest);
+    auto configureUsabilityCheck = cm.CreateConfigurePresetUsabilityCheck();
+    settingsFile.PrintTestPresetList(*args.ListPresetsMode,
+                                     configureUsabilityCheck);
     return true;
   }
 
@@ -1615,7 +1620,10 @@ bool cmCTest::SetArgsFromPreset(cmCMakePresetsArgs const& args)
       workingDirectory);
   if (resolveError) {
     cmSystemTools::Error(*resolveError);
-    settingsFile.PrintTestPresetList();
+    cmake cm(cmState::Role::CTest);
+    auto configureUsabilityCheck = cm.CreateConfigurePresetUsabilityCheck();
+    settingsFile.PrintTestPresetList(
+      cmCMakePresetsGraph::PresetListMode::Available, configureUsabilityCheck);
     return false;
   }
   auto const* expandedPreset = resolveResult.Preset;
@@ -1626,7 +1634,10 @@ bool cmCTest::SetArgsFromPreset(cmCMakePresetsArgs const& args)
     cmSystemTools::Error(cmStrCat("No such configure preset in ",
                                   workingDirectory, ": \"",
                                   expandedPreset->ConfigurePreset, '"'));
-    settingsFile.PrintConfigurePresetList();
+    cmake cm(cmState::Role::CTest);
+    auto configureUsabilityCheck = cm.CreateConfigurePresetUsabilityCheck();
+    settingsFile.PrintConfigurePresetList(
+      cmCMakePresetsGraph::PresetListMode::Available, configureUsabilityCheck);
     return false;
   }
 
@@ -1634,7 +1645,10 @@ bool cmCTest::SetArgsFromPreset(cmCMakePresetsArgs const& args)
     cmSystemTools::Error(cmStrCat("Cannot use hidden configure preset in ",
                                   workingDirectory, ": \"",
                                   expandedPreset->ConfigurePreset, '"'));
-    settingsFile.PrintConfigurePresetList();
+    cmake cm(cmState::Role::CTest);
+    auto configureUsabilityCheck = cm.CreateConfigurePresetUsabilityCheck();
+    settingsFile.PrintConfigurePresetList(
+      cmCMakePresetsGraph::PresetListMode::Available, configureUsabilityCheck);
     return false;
   }
 
@@ -2003,10 +2017,15 @@ int cmCTest::Run(std::vector<std::string> const& args)
     cmCommandLineArgument<bool(std::string const& value)>;
 
   auto const presetArguments = std::vector<CommandArgument>{
-    CommandArgument{ "--list-presets", CommandArgument::Values::Zero,
-                     [&presetsArgs](std::string const&) -> bool {
-                       presetsArgs.ListPresets = true;
-                       return true;
+    CommandArgument{ "--list-presets", CommandArgument::Values::ZeroOrOne,
+                     [&presetsArgs](std::string const& value) -> bool {
+                       if (presetsArgs.SetListPresets(value)) {
+                         return true;
+                       }
+                       cmSystemTools::Error(
+                         "Invalid value specified for --list-presets.\n"
+                         "The only supported value is \"defined\".");
+                       return false;
                      } },
     CommandArgument{ "--preset", "'--preset' requires an argument",
                      CommandArgument::Values::One,
@@ -2022,8 +2041,10 @@ int cmCTest::Run(std::vector<std::string> const& args)
                        return true;
                      } }
   };
-  auto const isPresetArgument = [&](std::string const& arg) -> bool {
-    return cmHasLiteralPrefix(arg, "--preset") || arg == "--list-presets";
+  auto const isPresetArgument = [&presetArguments](std::string const& arg) {
+    return std::any_of(
+      presetArguments.begin(), presetArguments.end(),
+      [&arg](CommandArgument const& option) { return option.matches(arg); });
   };
 
   auto const arguments = std::vector<CommandArgument>{
@@ -2354,6 +2375,13 @@ int cmCTest::Run(std::vector<std::string> const& args)
                          this->Impl->Quiet = true;
                          this->Impl->OutputAsJson = true;
                          this->Impl->OutputAsJsonVersion = 1;
+                       } else if (format == "json-v1-raw") {
+                         // Force quiet mode so the only output
+                         // is the json object model.
+                         this->Impl->Quiet = true;
+                         this->Impl->OutputAsJson = true;
+                         this->Impl->OutputAsJsonVersion = 1;
+                         this->Impl->OutputAsJsonRaw = true;
                        } else if (format == "human") {
                        } else if (!format.empty()) {
                          cmSystemTools::Error(
@@ -2530,7 +2558,7 @@ int cmCTest::Run(std::vector<std::string> const& args)
 
   if (presetsArgs.HasPresetsArg()) {
     bool success = this->SetArgsFromPreset(presetsArgs);
-    if (presetsArgs.ListPresets) {
+    if (presetsArgs.ListPresetsMode) {
       return static_cast<int>(!success);
     }
     if (!success) {
@@ -2754,16 +2782,44 @@ int cmCTest::ExecuteTests(std::vector<std::string> const& args)
 
   cmInstrumentation instrumentation(this->GetBinaryDir());
   auto processHandler = [&handler]() -> int {
-    return handler.ProcessHandler() < 0 ? cmCTest::TEST_ERRORS : 0;
+    return handler.ProcessHandler() != 0 ? cmCTest::TEST_ERRORS : 0;
   };
   std::map<std::string, std::string> data;
   data["showOnly"] = this->GetShowOnly() ? "1" : "0";
-  int ret = instrumentation.InstrumentCommand(
-    "ctest", args,
-    [processHandler]() -> cmInstrumentation::CommandResult {
-      return { processHandler(), cm::nullopt, cm::nullopt };
-    },
-    data);
+  // Run the tests under an interrupt handler so that a user interrupt (e.g.
+  // Ctrl+C) still writes the overall `ctest` snippet before we exit.
+  cmInstrumentationInterrupt::InterruptOutcome testsOutcome =
+    cmInstrumentationInterrupt::HandleInterrupt(
+      instrumentation.HasQuery(),
+      [&instrumentation, &args, &processHandler, &data]() -> int {
+        return instrumentation.InstrumentCommand(
+          "ctest", args,
+          [&processHandler]() -> cmInstrumentation::CommandResult {
+            return { processHandler(), cm::nullopt, cm::nullopt, cm::nullopt };
+          },
+          data);
+      });
+  int ret = testsOutcome.ExitCode;
+  if (testsOutcome.Interrupted) {
+    // The tests were interrupted and the `ctest` snippet has been written.
+    // Skip the post-ctest indexing hook and make the exit status reflect the
+    // interrupt the same way it does without instrumentation, so enabling
+    // instrumentation does not change the exit code of an interrupted run.
+    // For a real signal, re-raise it on POSIX (the shell then reports
+    // 128+signo); on Windows our console handler suppressed the OS default, so
+    // report the status Windows itself uses for a Ctrl+C-terminated process.
+    // A test-injected interrupt has no real signal, so it instead returns a
+    // normal error status to keep the seam case deterministic.
+    if (testsOutcome.ShouldRaise) {
+      cmInstrumentationInterrupt::RaiseInterrupt(testsOutcome.Signal);
+#ifdef _WIN32
+      // STATUS_CONTROL_C_EXIT: the exit status Windows reports for a process
+      // terminated by Ctrl+C, which our console handler otherwise suppressed.
+      return static_cast<int>(0xC000013A);
+#endif
+    }
+    return cmCTest::TEST_ERRORS;
+  }
   instrumentation.CollectTimingData(cmInstrumentationQuery::Hook::PostCTest);
   if (ret == cmCTest::TEST_ERRORS) {
     cmCTestLog(this, ERROR_MESSAGE, "Errors while running CTest\n");
@@ -2827,7 +2883,7 @@ void cmCTest::SetStopTime(std::string const& time_str)
 
   tzone_offset *= 100;
   char buf[1024];
-  snprintf(buf, sizeof(buf), "%d%02d%02d %s %+05i", lctime->tm_year + 1900,
+  snprintf(buf, sizeof(buf), "%d-%02d-%02d %s %+05i", lctime->tm_year + 1900,
            lctime->tm_mon + 1, lctime->tm_mday, time_str.c_str(),
            tzone_offset);
 
@@ -3073,6 +3129,11 @@ bool cmCTest::GetOutputAsJson()
 int cmCTest::GetOutputAsJsonVersion()
 {
   return this->Impl->OutputAsJsonVersion;
+}
+
+bool cmCTest::GetOutputAsJsonRaw() const
+{
+  return this->Impl->OutputAsJsonRaw;
 }
 
 bool cmCTest::ShouldUseHTTP10() const

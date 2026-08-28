@@ -96,9 +96,11 @@ The options for running tests are:
  If ``--presets-file`` is given, presets defined in ``CMakePresets.json`` and
  ``CMakeUserPresets.json`` will be ignored.
 
-.. option:: --list-presets
+.. option:: --list-presets[=defined]
 
- Lists the available test presets. The current working directory must contain
+ Lists the available test presets. With ``defined``, all non-hidden defined
+ test presets are listed, including unavailable presets with the reason they
+ cannot be used. The current working directory must contain
  ``CMakePresets.json`` and/or ``CMakeUserPresets.json``.
 
  .. versionchanged:: 4.4
@@ -107,6 +109,9 @@ The options for running tests are:
    present, and only presets defined in the given ``<file>`` will be listed.
    Otherwise, they are required to be present in the top level source
    directory.  In prior versions, this was strictly required.
+
+ .. versionadded:: 4.5
+   Support for the ``defined`` value.
 
 .. option:: -C <cfg>, --build-config <cfg>
 
@@ -259,6 +264,13 @@ The options for running tests are:
    ``json-v1``
      Dump the test information in JSON format.
      See `Show as JSON Object Model`_.
+
+   ``json-v1-raw``
+
+     .. versionadded:: 4.5
+
+     Dump the test information in JSON format, but leaves test property
+     values as raw strings. See `Show as JSON Object Model`_.
 
 .. option:: -L <regex>, --label-regex <regex>
 
@@ -1895,9 +1907,9 @@ Show as JSON Object Model
 
 .. versionadded:: 3.14
 
-When the ``--show-only=json-v1`` command line option is given, the test
-information is output in JSON format.  Version 1.0 of the JSON object
-model is defined as follows:
+When the ``--show-only=json-v1`` or ``--show-only=json-v1-raw`` command
+line option is given, the test information is output in JSON format.
+Version 1.0 of the JSON object model is defined as follows:
 
 ``kind``
   The string "ctestInfo".
@@ -2264,11 +2276,14 @@ Job Server Integration
 
 .. versionadded:: 3.29
 
-On POSIX systems, when running under the context of a `Job Server`_,
-CTest shares its job slots.  This is independent of the :prop_test:`PROCESSORS`
-test property, which still counts against CTest's :ctest-option:`-j` parallel
-level.  CTest acquires exactly one token from the job server before running
-each test, and returns it when the test finishes.
+.. versionchanged:: 4.5
+  Added support for job server integration on Windows.
+
+When running under the context of a `Job Server`_, CTest shares its job slots.
+This is independent of the :prop_test:`PROCESSORS` test property, which still
+counts against CTest's :ctest-option:`-j` parallel level.  CTest acquires
+exactly one token from the job server before running each test, and returns it
+when the test finishes.
 
 For example, consider the ``Makefile``:
 
@@ -2277,8 +2292,6 @@ For example, consider the ``Makefile``:
 
 When invoked via ``make -j 2 test``, CTest connects to the job server, acquires
 a token for each test, and runs at most 2 tests concurrently.
-
-On Windows systems, job server integration is not yet implemented.
 
 .. _`Job Server`: https://www.gnu.org/software/make/manual/html_node/Job-Slots.html
 

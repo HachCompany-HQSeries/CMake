@@ -15,7 +15,6 @@
 #include <cm/string_view>
 #include <cmext/algorithm>
 
-#include <cm3p/json/reader.h>
 #include <cm3p/json/version.h>
 #include <cm3p/json/writer.h>
 #include <cm3p/uv.h>
@@ -51,6 +50,7 @@ using LoadQueriesAfter = cmInstrumentation::LoadQueriesAfter;
 namespace {
 cmInstrumentationQuery::Version latestDataVersion =
   cmInstrumentationQuery::LatestDataVersion();
+
 }
 
 std::map<std::string, std::string> cmInstrumentation::cdashSnippetsMap = {
@@ -537,22 +537,16 @@ void cmInstrumentation::InsertTimingData(
 
 Json::Value cmInstrumentation::ReadJsonSnippet(std::string const& file_name)
 {
-  Json::CharReaderBuilder builder;
-  builder["collectComments"] = false;
-  cmsys::ifstream ftmp(
-    cmStrCat(this->timingDirv1, "/data/", file_name).c_str());
   Json::Value snippetData;
-  builder["collectComments"] = false;
-
-  if (!Json::parseFromStream(builder, ftmp, &snippetData, nullptr)) {
+  std::string snippetPath = cmStrCat(this->timingDirv1, "/data/", file_name);
+  cmJSONState parseState(snippetPath, &snippetData);
+  if (!parseState.errors.empty()) {
 #if JSONCPP_VERSION_HEXA < 0x01070300
     snippetData = Json::Value::null;
 #else
     snippetData = Json::Value::nullSingleton();
 #endif
   }
-
-  ftmp.close();
   return snippetData;
 }
 
@@ -612,7 +606,8 @@ std::string cmInstrumentation::InstrumentTest(
   std::vector<std::string> const& args, int64_t result,
   std::chrono::steady_clock::time_point steadyStart,
   std::chrono::system_clock::time_point systemStart, std::string config,
-  cm::optional<std::string> output)
+  cm::optional<std::string> output,
+  cm::optional<ProcessMetrics> processMetrics)
 {
   // Store command info
   Json::Value root(this->preTestStats);
@@ -626,6 +621,11 @@ std::string cmInstrumentation::InstrumentTest(
   if (this->HasOption(cmInstrumentationQuery::Option::CaptureOutput)) {
     root["stdout"] = output ? *output : "";
     root["stderr"] = "";
+  }
+  if (this->HasOption(cmInstrumentationQuery::Option::ProcessMetrics)) {
+    root["processMetrics"] = processMetrics
+      ? cmInstrumentation::ResourceUsageToJSON(*processMetrics)
+      : Json::nullValue;
   }
 
   // Post-Command
@@ -743,6 +743,16 @@ int cmInstrumentation::InstrumentCommand(
       root["stderr"] = *callbackResult.StdErr;
     }
   }
+  bool const supportsProcessMetrics = command_type == "compile" ||
+    command_type == "link" || command_type == "custom" ||
+    command_type == "install" || command_type == "test";
+  if (this->HasOption(cmInstrumentationQuery::Option::ProcessMetrics) &&
+      supportsProcessMetrics) {
+    root["processMetrics"] = callbackResult.ChildResourceUsage
+      ? cmInstrumentation::ResourceUsageToJSON(
+          *callbackResult.ChildResourceUsage)
+      : Json::nullValue;
+  }
 
   // Exit early if configure didn't generate a query
   if (reloadQueriesAfterCommand == LoadQueriesAfter::Yes) {
@@ -770,8 +780,8 @@ int cmInstrumentation::InstrumentCommand(
   // See SpawnBuildDaemon(); this data is currently meaningless for build.
   root["result"] = command_type == "build" ? Json::nullValue : ret;
 
-  // If the build was interrupted (e.g. by Ctrl+C), record the signal number
-  // that stopped it, so consumers can distinguish an interrupted build from
+  // If the command was interrupted (e.g. by Ctrl+C), record the signal number
+  // that stopped it, so consumers can distinguish an interrupted command from
   // one that ran to completion.  Omitted when no interrupt occurred; only a
   // command wrapped by HandleInterrupt can observe a pending signal here.
   int sig = cmInstrumentationInterrupt::PendingInterruptSignal();
@@ -840,14 +850,15 @@ int cmInstrumentation::InstrumentCommand(
       }
       this->configureSnippetData.clear();
     }
-    // Write the cmakeBuild envelope atomically (temp file + rename).  This is
-    // the snippet flushed while unwinding from a user interrupt, where a
-    // second Ctrl+C could otherwise truncate it mid-write; the atomic write
-    // guarantees it is either absent or complete.  Per-step snippets are never
-    // flushed under interrupt and are left non-atomic.
+    // Write the cmakeBuild/cmakeInstall/ctest envelope atomically (temp file +
+    // rename).  This is the snippet flushed while unwinding from a user
+    // interrupt, where a second Ctrl+C could otherwise truncate it mid-write;
+    // the atomic write guarantees it is either absent or complete.  Per-step
+    // snippets are never flushed under interrupt and are left non-atomic.
+    bool const atomicEnvelope = command_type == "cmakeBuild" ||
+      command_type == "cmakeInstall" || command_type == "ctest";
     this->WriteInstrumentationJson(latestDataVersion, root, "data", file_name,
-                                   command_type == "cmakeBuild" ? Atomic::Yes
-                                                                : Atomic::No);
+                                   atomicEnvelope ? Atomic::Yes : Atomic::No);
   }
   return ret;
 }
@@ -992,7 +1003,7 @@ int cmInstrumentation::CollectTimingAfterBuild(int ppid)
   int ret = this->InstrumentCommand(
     "build", {},
     [waitForBuild]() -> cmInstrumentation::CommandResult {
-      return { waitForBuild(), cm::nullopt, cm::nullopt };
+      return { waitForBuild(), cm::nullopt, cm::nullopt, cm::nullopt };
     },
     cm::nullopt, cm::nullopt, LoadQueriesAfter::Yes);
   this->buildLock.Release();
@@ -1138,8 +1149,16 @@ std::string cmInstrumentation::GetCompileTraceFile(
         outputPath.substr(0, outputPath.size() - ext.size()), ".json");
     }
   }
-  if (!cmSystemTools::FileIsFullPath(traceFile)) {
-    traceFile = cmStrCat(workingDir, '/', traceFile);
+
+  if (cmSystemTools::FileIsFullPath(traceFile)) {
+    return traceFile;
+  }
+  if (cmSystemTools::FileExists(cmStrCat(workingDir, '/', traceFile), true)) {
+    return cmStrCat(workingDir, '/', traceFile);
+  }
+  if (cmSystemTools::FileExists(cmStrCat(this->binaryDir, '/', traceFile),
+                                true)) {
+    return cmStrCat(this->binaryDir, '/', traceFile);
   }
 
   return traceFile;
@@ -1247,6 +1266,17 @@ void cmInstrumentation::WriteTraceFile(Json::Value const& index,
   } catch (...) {
     cmSystemTools::Error("Error writing Google trace output.");
   }
+}
+
+Json::Value cmInstrumentation::ResourceUsageToJSON(ProcessMetrics const& usage)
+{
+  Json::Value root(Json::objectValue);
+  root["maxRSS"] = static_cast<Json::Value::UInt64>(usage.ru_maxrss);
+  root["userTimeUSec"] = static_cast<Json::Value::UInt64>(
+    usage.ru_utime.tv_sec * 1000000ULL + usage.ru_utime.tv_usec);
+  root["systemTimeUSec"] = static_cast<Json::Value::UInt64>(
+    usage.ru_stime.tv_sec * 1000000ULL + usage.ru_stime.tv_usec);
+  return root;
 }
 
 Json::Value cmInstrumentation::BuildTraceEvent(std::vector<uint64_t>& workers,

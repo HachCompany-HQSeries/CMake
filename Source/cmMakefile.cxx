@@ -2533,6 +2533,13 @@ struct t_lookup
 
 bool cmMakefile::IsProjectFile(char const* filename) const
 {
+  std::string const& cmakeRoot = cmSystemTools::GetCMakeRoot();
+  if (cmSystemTools::IsSubDirectory(filename, cmakeRoot) &&
+      (cmSystemTools::IsSubDirectory(cmakeRoot, this->GetHomeDirectory()) ||
+       cmSystemTools::IsSubDirectory(cmakeRoot,
+                                     this->GetHomeOutputDirectory()))) {
+    return false;
+  }
   return cmSystemTools::IsSubDirectory(filename, this->GetHomeDirectory()) ||
     (cmSystemTools::IsSubDirectory(filename, this->GetHomeOutputDirectory()) &&
      !cmSystemTools::IsSubDirectory(filename, "/CMakeFiles"));
@@ -3983,6 +3990,25 @@ void cmMakefile::RaiseScope(std::vector<std::string> const& variables)
       this->RaiseScope(varName, nullptr);
     }
   }
+}
+
+cmStateSnapshot::WarnCMP0220 cmMakefile::RaiseToRoot(std::string const& var,
+                                                     char const* varDef)
+{
+  if (var.empty()) {
+    return cmStateSnapshot::WarnCMP0220::No;
+  }
+  cmStateSnapshot::WarnCMP0220 const warnCMP0220 =
+    this->StateSnapshot.RaiseToRoot(var, varDef,
+                                    cmStateSnapshot::CheckCMP0220::No);
+#ifndef CMAKE_BOOTSTRAP
+  cmVariableWatch* vv = this->GetVariableWatch();
+  if (vv) {
+    vv->VariableAccessed(var, cmVariableWatch::VARIABLE_MODIFIED_ACCESS,
+                         varDef, this);
+  }
+#endif
+  return warnCMP0220;
 }
 
 cmTarget* cmMakefile::AddImportedTarget(std::string const& name,

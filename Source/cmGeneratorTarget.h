@@ -195,7 +195,7 @@ public:
 
   void GetObjectSources(std::vector<cmSourceFile const*>&,
                         std::string const& config) const;
-  std::string const& GetObjectName(cmSourceFile const* file);
+  std::string const& GetObjectName(cmSourceFile const* file) const;
   char const* GetCustomObjectExtension() const;
 
   bool HasExplicitObjectName(cmSourceFile const* file) const;
@@ -233,7 +233,7 @@ public:
 
   std::set<cmLinkItem> const& GetUtilityItems() const;
 
-  void ComputeObjectMapping();
+  void ComputeObjectMapping() const;
 
   cmValue GetFeature(std::string const& feature,
                      std::string const& config) const;
@@ -1148,6 +1148,7 @@ public:
   std::string GetImportedXcFrameworkPath(std::string const& config) const;
 
   bool ApplyCXXStdTarget();
+  bool HasCxxImportModuleErrors() const;
   cmCxxModuleUsageEffects const& GetCxxModuleUsageEffects(
     std::string const& config) const;
   cmGeneratorTarget const* GetTargetForCxxModules(
@@ -1156,7 +1157,7 @@ public:
     std::string const& config, cmGeneratorTarget const* bmiConsumer = nullptr);
 
   using SyntheticDepsMap =
-    std::map<cmGeneratorTarget const*, std::vector<cmGeneratorTarget const*>>;
+    std::map<cmGeneratorTarget const*, std::set<cmGeneratorTarget const*>>;
   SyntheticDepsMap const& GetSyntheticDeps(std::string const& config) const;
 
   class CustomTransitiveProperty : public TransitiveProperty
@@ -1614,7 +1615,7 @@ public:
 private:
   struct InfoByConfig
   {
-    std::map<cmGeneratorTarget const*, std::vector<cmGeneratorTarget const*>>
+    std::map<cmGeneratorTarget const*, std::set<cmGeneratorTarget const*>>
       SyntheticDeps;
     std::map<cmSourceFile const*, ClassifiedFlags> SourceFlags;
   };

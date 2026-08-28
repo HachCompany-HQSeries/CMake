@@ -9,6 +9,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -210,6 +211,8 @@ public:
 
   void SetSymbolic(bool value);
 
+  void SetExportPassthrough(bool value);
+
   //! Set/Get a property of this target file
   void SetProperty(std::string const& prop, cmValue value);
   void SetProperty(std::string const& prop, std::nullptr_t)
@@ -230,9 +233,15 @@ public:
   std::string const& GetSafeProperty(std::string const& prop) const;
   bool GetPropertyAsBool(std::string const& prop) const;
   void CheckProperty(std::string const& prop, cmMakefile* context) const;
+  static std::unordered_set<std::string> const& GetSpecialPropertyNames();
   cmValue GetComputedProperty(std::string const& prop, cmMakefile& mf) const;
-  //! Get all properties
-  cmPropertyMap const& GetProperties() const;
+  //! Get properties set directly on this target (no special/computed/chained)
+  cmPropertyMap const& GetDirectProperties() const;
+  /**
+   * Get the properties in the property map plus
+   * special properties, fileset properties, etc.
+   */
+  cmPropertyMap GetExtendedProperties() const;
 
   //! Return whether or not the target is for a DLL platform.
   bool IsDLLPlatform() const;
@@ -253,6 +262,13 @@ public:
   bool CanCompileSources() const;
   void SetIsForTryCompile();
   bool IsForTryCompile() const;
+
+  /**
+   * Get the list of targets which should replace this target on export. This
+   * equals the target's interface link libraries iff the target is an export
+   * passthrough target. For all other targets, this returns an empty list.
+   */
+  std::vector<std::string> GetExportTargets() const;
 
   bool GetMappedConfig(std::string const& desiredConfig, cmValue& loc,
                        cmValue& imp, std::string& suffix) const;
@@ -304,6 +320,10 @@ public:
                                     cmStringRange incs);
   cmStringRange GetInstallIncludeDirectoriesEntries(
     cmTargetExport const& te) const;
+
+  //! Control if the target generates object files for module interfaces
+  bool CxxModuleNeedsInterfaceObjects() const;
+  void SetCxxModuleNeedsInterfaceObjects(bool);
 
   BTs<std::string> const* GetLanguageStandardProperty(
     std::string const& propertyName) const;

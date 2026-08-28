@@ -219,21 +219,26 @@ if ("named" IN_LIST CMake_TEST_MODULE_COMPILATION)
   run_cxx_module_test(scan_props)
   run_cxx_module_test(target-objects)
 
-  # mixed-bmi-compatibility requires a generator that implements per-importer
-  # BMI generation
+  # Requires a generator that implements per-importer BMI generation
   if ("cxx_std_23" IN_LIST CMAKE_CXX_COMPILE_FEATURES AND
       RunCMake_GENERATOR MATCHES "Ninja")
     run_cxx_module_test(mixed-bmi-compatibility)
+    if (RunCMake_GENERATOR_IS_MULTI_CONFIG AND
+        "collation" IN_LIST CMake_TEST_MODULE_COMPILATION AND
+        "bmionly" IN_LIST CMake_TEST_MODULE_COMPILATION)
+      run_cxx_module_test(multi-config-synth)
+    endif()
   endif()
 
   if ("cxx_std_23" IN_LIST CMAKE_CXX_COMPILE_FEATURES AND
       "import_std23" IN_LIST CMake_TEST_MODULE_COMPILATION)
     run_cxx_module_test(imp-std)
-    run_cxx_module_test(imp-dummy-std)
     set(RunCMake_CXXModules_NO_TEST 1)
-    run_cxx_module_test(imp-std-no-std-prop)
+    run_cxx_module_test(imp-std-no-std-json)
     unset(RunCMake_CXXModules_NO_TEST)
+    run_cxx_module_test(imp-dummy-std)
     run_cxx_module_test(imp-std-exp-no-std-build)
+    run_cxx_module_test(imp-std-shared)
     set(RunCMake_CXXModules_INSTALL 1)
     run_cxx_module_test(imp-std-exp-no-std-install)
     unset(RunCMake_CXXModules_INSTALL)
@@ -245,10 +250,10 @@ if ("named" IN_LIST CMake_TEST_MODULE_COMPILATION)
       set(RunCMake_CXXModules_INSTALL 1)
       run_cxx_module_test(imp-std-not-in-exp-install)
       unset(RunCMake_CXXModules_INSTALL)
-      run_cxx_module_test(imp-std-trans imp-std-trans-not-in-exp-install "-DCMAKE_PREFIX_PATH=${RunCMake_BINARY_DIR}/imp-std-not-in-exp-install-install")
+      run_cxx_module_test(imp-std-trans imp-std-trans-not-in-exp-install "-DCMAKE_PREFIX_PATH=${RunCMake_BINARY_DIR}/imp-std-not-in-exp-install-install" "-Dimport_std_not_in_export_cps_DIR=${RunCMake_BINARY_DIR}/imp-std-not-in-exp-install-install/lib/cmake/import_std_not_in_export_cps")
 
       run_cxx_module_test(imp-std-trans imp-std-trans-exp-no-std-build "-DCMAKE_PREFIX_PATH=${RunCMake_BINARY_DIR}/imp-std-exp-no-std-build-build" -DEXPORT_NO_STD=1)
-      run_cxx_module_test(imp-std-trans imp-std-trans-exp-no-std-install "-DCMAKE_PREFIX_PATH=${RunCMake_BINARY_DIR}/imp-std-exp-no-std-install-install" -DEXPORT_NO_STD=1)
+      run_cxx_module_test(imp-std-trans imp-std-trans-exp-no-std-install "-DCMAKE_PREFIX_PATH=${RunCMake_BINARY_DIR}/imp-std-exp-no-std-install-install" "-Dimport_std_export_no_std_cps_DIR=${RunCMake_BINARY_DIR}/imp-std-exp-no-std-install-install/lib/cmake/import_std_export_no_std_cps" -DEXPORT_NO_STD=1)
     endif ()
   endif ()
 endif ()
@@ -331,6 +336,7 @@ endfunction ()
 
 # Tests which install BMIs
 if ("export_bmi" IN_LIST CMake_TEST_MODULE_COMPILATION)
+  run_cxx_module_test(exp-nested-dirs-build)
   run_cxx_module_test(exp-iface-no-props-build)
   run_cxx_module_test(exp-iface-build)
   run_cxx_module_test(exp-incdirs-build)

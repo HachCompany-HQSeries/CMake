@@ -293,13 +293,15 @@ cmVisualStudio10TargetGenerator::cmVisualStudio10TargetGenerator(
   this->Android = gg->TargetsAndroid();
   this->WindowsKernelMode = gg->TargetsWindowsKernelModeDriver();
   auto scanProp = target->GetProperty("CXX_SCAN_FOR_MODULES");
+  bool const scanDepsSupported = gg->IsScanDependenciesSupported();
   for (auto const& config : this->Configurations) {
     if (scanProp.IsSet()) {
-      this->ScanSourceForModuleDependencies[config] = scanProp.IsOn();
-    } else {
       this->ScanSourceForModuleDependencies[config] =
+        scanDepsSupported && scanProp.IsOn();
+    } else {
+      this->ScanSourceForModuleDependencies[config] = scanDepsSupported &&
         target->NeedCxxDyndep(config) ==
-        cmGeneratorTarget::CxxModuleSupport::Enabled;
+          cmGeneratorTarget::CxxModuleSupport::Enabled;
     }
   }
   for (unsigned int& version : this->NsightTegraVersion) {
@@ -1115,7 +1117,8 @@ void cmVisualStudio10TargetGenerator::WriteDotNetReferences(Elem& e0)
         this->GeneratorTarget->GetProperty("VS_DOTNET_REFERENCES")) {
     references.assign(*vsDotNetReferences);
   }
-  cmPropertyMap const& props = this->GeneratorTarget->Target->GetProperties();
+  cmPropertyMap const& props =
+    this->GeneratorTarget->Target->GetDirectProperties();
   for (auto const& i : props.GetList()) {
     static cm::string_view const vsDnRef = "VS_DOTNET_REFERENCE_";
     if (cmHasPrefix(i.first, vsDnRef)) {
@@ -1226,7 +1229,8 @@ void cmVisualStudio10TargetGenerator::WriteDotNetReferenceCustomTags(
     cmStrCat(refpropPrefix, ref, refpropInfix);
   using CustomTags = std::map<std::string, std::string>;
   CustomTags tags;
-  cmPropertyMap const& props = this->GeneratorTarget->Target->GetProperties();
+  cmPropertyMap const& props =
+    this->GeneratorTarget->Target->GetDirectProperties();
   for (auto const& i : props.GetList()) {
     if (cmHasPrefix(i.first, refPropFullPrefix) && !i.second.empty()) {
       tags[i.first.substr(refPropFullPrefix.length())] = i.second;
@@ -3014,8 +3018,9 @@ void cmVisualStudio10TargetGenerator::OutputSourceSpecificFlags(
       if (compileAsPerConfig) {
         clOptions.AddFlag("CompileAs", compileAsPerConfig);
       }
-      if (shouldScanForModules !=
-          this->ScanSourceForModuleDependencies[config]) {
+      if (gg->IsScanDependenciesSupported() &&
+          shouldScanForModules !=
+            this->ScanSourceForModuleDependencies[config]) {
         clOptions.AddFlag("ScanSourceForModuleDependencies",
                           shouldScanForModules ? "true" : "false");
       }

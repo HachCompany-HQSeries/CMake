@@ -31,6 +31,38 @@
 #include "cmTargetTypes.h"
 #include "cmValue.h"
 
+namespace {
+bool LinkedTargetHasModules(cmGeneratorTarget const* target,
+                            std::string const& lang, std::string const& config,
+                            cmGlobalCommonGenerator const* gg,
+                            cmGeneratorTarget const* currentTarget)
+{
+  if (!target) {
+    return false;
+  }
+  if (lang == "CXX"_s && target->HasCxxImportModuleErrors()) {
+    return true;
+  }
+  if (target->IsImported()) {
+    return false;
+  }
+  if (!gg->TargetOrderIndexLess(target, currentTarget)) {
+    return false;
+  }
+  if (target->GetType() == cm::TargetType::INTERFACE_LIBRARY &&
+      !target->IsSynthetic()) {
+    return false;
+  }
+  if (lang == "CXX"_s && target->HaveCxx20ModuleSources()) {
+    return true;
+  }
+  if (lang == "Fortran"_s && target->HaveFortranSources(config)) {
+    return true;
+  }
+  return false;
+}
+}
+
 cmCommonTargetGenerator::cmCommonTargetGenerator(cmGeneratorTarget* gt)
   : GeneratorTarget(gt)
   , Makefile(gt->Makefile)
@@ -183,8 +215,8 @@ cmCommonTargetGenerator::GetLinkedTargetDirectories(
         this->GeneratorTarget->GetLinkInformation(config)) {
 
     auto findSyntheticTarget =
-      [this,
-       &config](cmGeneratorTarget const* linkee) -> cmGeneratorTarget const* {
+      [this, &config,
+       cli](cmGeneratorTarget const* linkee) -> cmGeneratorTarget const* {
       if (!linkee) {
         return nullptr;
       }
@@ -193,10 +225,10 @@ cmCommonTargetGenerator::GetLinkedTargetDirectories(
       auto const& synthDeps = this->GeneratorTarget->GetSyntheticDeps(config);
       auto it = synthDeps.find(linkee);
       if (it != synthDeps.end() && !it->second.empty()) {
-        return it->second.front();
+        return *it->second.begin();
       }
 
-      // Check linked targets to finding synthetic targets for transitive deps
+      // Check linked targets to find synthetic targets for transitive deps
       std::vector<cmGeneratorTarget const*> pending;
       std::set<cmGeneratorTarget const*> visited;
       for (auto const& dep : synthDeps) {
@@ -207,6 +239,19 @@ cmCommonTargetGenerator::GetLinkedTargetDirectories(
         }
       }
 
+      // Also seed the search from direct linked targets that have
+      // CXX20 module sources, in case they hold synthetic deps for
+      // transitive dependencies that we need to inherit. Skip targets
+      // that already have synthetic substitutes in our own synthDeps
+      // (their transitive deps will be explored via the substitute).
+      for (auto const& item : cli->GetItems()) {
+        if (item.Target && item.Target->HaveCxx20ModuleSources() &&
+            synthDeps.find(item.Target) == synthDeps.end() &&
+            visited.insert(item.Target).second) {
+          pending.push_back(item.Target);
+        }
+      }
+
       while (!pending.empty()) {
         auto const* current = pending.back();
         pending.pop_back();
@@ -214,7 +259,7 @@ cmCommonTargetGenerator::GetLinkedTargetDirectories(
         auto itLinkeeSynth = transitiveSynthDeps.find(linkee);
         if (itLinkeeSynth != transitiveSynthDeps.end() &&
             !itLinkeeSynth->second.empty()) {
-          return itLinkeeSynth->second.front();
+          return *itLinkeeSynth->second.begin();
         }
         for (auto const& entry : transitiveSynthDeps) {
           for (auto const* synth : entry.second) {
@@ -239,18 +284,8 @@ cmCommonTargetGenerator::GetLinkedTargetDirectories(
       }
 
       if (mappedLinkee &&
-          !mappedLinkee->IsImported()
-          // Skip targets that build after this one in a static lib cycle.
-          && gg->TargetOrderIndexLess(mappedLinkee, this->GeneratorTarget)
-          // We can ignore the INTERFACE_LIBRARY items because
-          // Target->GetLinkInformation already processed their
-          // link interface and they don't have any output themselves.
-          && (mappedLinkee->GetType() != cm::TargetType::INTERFACE_LIBRARY
-              // Synthesized targets may have relevant rules.
-              || mappedLinkee->IsSynthetic()) &&
-          ((lang == "CXX"_s && mappedLinkee->HaveCxx20ModuleSources()) ||
-           (lang == "Fortran"_s &&
-            mappedLinkee->HaveFortranSources(config)))) {
+          LinkedTargetHasModules(mappedLinkee, lang, config, gg,
+                                 this->GeneratorTarget)) {
         cmLocalGenerator* lg = mappedLinkee->GetLocalGenerator();
         std::string di = mappedLinkee->GetSupportDirectory();
         if (lg->GetGlobalGenerator()->IsMultiConfig()) {
@@ -572,24 +607,25 @@ std::string cmCommonTargetGenerator::GenerateCodeCheckRules(
     }
     if (cmNonempty(icstat)) {
       code_check += " --icstat=";
+      // Unless specified otherwise via CMAKE_<LANG>_ICSTAT,
+      // populate the icstat command line using default options
+      // for its mandatory parameters.
       std::string checksParam{};
-      std::string dbParam{};
-      // Set default values for mandatory parameters
-      std::string checksFile{ "cstat_sel_checks.txt" };
-      std::string dbFile{ "cstat.db" };
-      // Populate the command line with C-STAT
-      // mandatory parameters unless specified
       if (icstat.find("--checks=") == std::string::npos) {
+        std::string const checksFile{ "cstat_sel_checks.txt" };
         checksParam = cmStrCat(";--checks=", checksFile);
       }
+      std::string dbParam{};
       if (icstat.find("--db=") == std::string::npos) {
+        std::string const dbFile{ "cstat.db" };
         dbParam = cmStrCat(";--db=", dbFile);
       }
+      std::string analyzeCmd{ ";analyze" };
       code_check += this->GeneratorTarget->GetLocalGenerator()->EscapeForShell(
-        cmStrCat(icstat, checksParam, dbParam));
+        cmStrCat(icstat, checksParam, dbParam, analyzeCmd));
     }
     if (cmNonempty(tidy) || (cmNonempty(cpplint)) || (cmNonempty(cppcheck)) ||
-        cmNonempty(pvs)) {
+        cmNonempty(pvs) || cmNonempty(icstat)) {
       code_check += " --source=";
       code_check +=
         this->GeneratorTarget->GetLocalGenerator()->ConvertToOutputFormat(

@@ -247,9 +247,9 @@ Signatures
   ``FILE_SET <set-name>``
     .. versionadded:: 3.23
 
-    File sets are defined by the :command:`target_sources(FILE_SET)` command.
-    If the file set ``<set-name>`` exists and is ``PUBLIC`` or ``INTERFACE``,
-    any files in the set of type ``HEADERS`` are installed under
+    :ref:`File sets` are defined by the :command:`target_sources(FILE_SET)`
+    command. If the file set ``<set-name>`` exists and is ``PUBLIC`` or
+    ``INTERFACE``, any files in the set of type ``HEADERS`` are installed under
     the destination (see below). Other types do not have any default
     destination, so ``DESTINATION`` option must be specified for each
     ``FILE_SET``.
@@ -267,18 +267,21 @@ Signatures
     derived from the names of the modules. An empty ``DESTINATION`` may be used
     to suppress installing these files (for use in generic code).
 
-  For regular executables, static libraries and shared libraries, the
-  ``DESTINATION`` argument is not required.  For these target types, when
-  ``DESTINATION`` is omitted, a default destination will be taken from the
-  appropriate variable from :module:`GNUInstallDirs`, or set to a built-in
-  default value if that variable is not defined.  The same is true for file
-  sets of type ``HEADERS``, and the public and private headers associated with
-  the installed targets through the :prop_tgt:`PUBLIC_HEADER` and
+  For regular executables, static libraries, shared libraries and module
+  libraries, the ``DESTINATION`` argument is not required.  For these target
+  types, when ``DESTINATION`` is omitted, a default destination will be taken
+  from the appropriate variable from :module:`GNUInstallDirs`, or set to a
+  built-in default value if that variable is not defined.  The same is true for
+  file sets of type ``HEADERS``, and the public and private headers associated
+  with the installed targets through the :prop_tgt:`PUBLIC_HEADER` and
   :prop_tgt:`PRIVATE_HEADER` target properties. A destination must always be
-  provided for module libraries, Apple bundles and frameworks.  A destination
-  can be omitted for interface and object libraries, but they are handled
-  differently (see the discussion of this topic toward the end of this
-  section).
+  provided for Apple bundles and frameworks.  A destination can be omitted for
+  interface and object libraries, but they are handled differently (see the
+  discussion of this topic toward the end of this section).
+
+  .. versionadded:: 4.5
+    A destination is no longer required for module libraries.  Previously,
+    omitting ``LIBRARY DESTINATION`` for a module library was an error.
 
   For shared libraries on DLL platforms, if neither ``RUNTIME`` nor ``ARCHIVE``
   destinations are specified, both the ``RUNTIME`` and ``ARCHIVE`` components are
@@ -287,6 +290,13 @@ Signatures
   the other component is not installed. If both ``RUNTIME`` and ``ARCHIVE``
   destinations are specified, then both components are installed to their
   respective destinations.
+
+  For module libraries on DLL platforms, the default destination is the
+  ``RUNTIME`` default rather than the ``LIBRARY`` default.  Only the default
+  destination differs: a module library is always a ``LIBRARY`` artifact, so
+  its ``DESTINATION``, ``COMPONENT``, ``PERMISSIONS`` and ``CONFIGURATIONS``
+  are taken from the ``LIBRARY`` arguments on every platform, and the
+  ``RUNTIME`` arguments never apply to it.
 
   The following table shows the target types with their associated variables and
   built-in defaults that apply when no destination is given:
@@ -515,7 +525,9 @@ Signatures
   runtime artifacts of imported targets. Projects may do this if they want to
   bundle outside executables or modules inside their installation. The
   ``LIBRARY``, ``RUNTIME``, ``FRAMEWORK``, and ``BUNDLE`` arguments have the
-  same semantics that they do in the `TARGETS`_ mode. Only the runtime artifacts
+  same semantics that they do in the `TARGETS`_ mode, except that an imported
+  module library uses the default ``LIBRARY`` destination on all platforms,
+  including DLL platforms. Only the runtime artifacts
   of imported targets are installed (except in the case of :prop_tgt:`FRAMEWORK`
   libraries, :prop_tgt:`MACOSX_BUNDLE` executables, and :prop_tgt:`BUNDLE`
   CFBundles.) For example, headers and import libraries associated with DLLs are
@@ -534,9 +546,10 @@ Signatures
 
   .. note::
 
-    If installing header files, consider using file sets defined by
+    If installing header files, consider using :ref:`file sets` defined by
     :command:`target_sources(FILE_SET)` instead. File sets associate
-    headers with a target and they install as part of the target.
+    headers with a target and they install as part of the target. See the
+    :manual:`cmake-buildsystem(7)` manual for more details.
 
   Install files or programs:
 
@@ -643,10 +656,11 @@ Signatures
 
   .. note::
 
-    To install a directory sub-tree of headers, consider using file sets
+    To install a directory sub-tree of headers, consider using :ref:`file sets`
     defined by :command:`target_sources(FILE_SET)` instead. File sets not only
     preserve directory structure, they also associate headers with a target
-    and install as part of the target.
+    and install as part of the target. See the :manual:`cmake-buildsystem(7)`
+    manual for more details.
 
   Install the contents of one or more directories:
 
@@ -1161,9 +1175,11 @@ Signatures
   are installed in the ``RUNTIME`` destination and component on DLL platforms,
   and in the ``LIBRARY`` destination and component on non-DLL platforms.
   macOS frameworks are installed in the ``FRAMEWORK`` destination and component.
-  Targets built within the build tree will never be installed as runtime
-  dependencies, nor will their own dependencies, unless the targets themselves
-  are installed with :command:`install(TARGETS)`.
+
+  .. note::
+    Targets built within the build tree will never be installed as runtime
+    dependencies, nor will their own dependencies, unless the targets themselves
+    are installed with :command:`install(TARGETS)`.
 
   The generated install script calls :command:`file(GET_RUNTIME_DEPENDENCIES)`
   on the build-tree files to calculate the runtime dependencies. The build-tree

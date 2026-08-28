@@ -111,8 +111,6 @@ std::string const& cmGlobalVisualStudioGenerator::GetPlatformName() const
 char const* cmGlobalVisualStudioGenerator::GetIDEVersion() const
 {
   switch (this->Version) {
-    case cmGlobalVisualStudioGenerator::VSVersion::VS14:
-      return "14.0";
     case cmGlobalVisualStudioGenerator::VSVersion::VS15:
       return "15.0";
     case cmGlobalVisualStudioGenerator::VSVersion::VS16:
@@ -735,6 +733,11 @@ void cmGlobalVisualStudioGenerator::AddSymbolExportCommand(
 
   cmCustomCommandLines commandLines = cmMakeSingleCommandLine(
     { cmakeCommand, "-E", "__create_def", mdi->DefFile, objs_file });
+  cmValue const nmExecutable =
+    gt->Target->GetMakefile()->GetDefinition("CMAKE_NM");
+  if (!cmIsOff(nmExecutable) && this->IsClangClToolset()) {
+    commandLines[0].emplace_back(cmStrCat("--nm=", *nmExecutable));
+  }
   cmCustomCommand command;
   command.SetOutputs(outputs);
   command.SetCommandLines(commandLines);
@@ -930,8 +933,6 @@ cm::VS::Solution cmGlobalVisualStudioGenerator::CreateSolution(
   using namespace cm::VS;
   Solution solution;
   solution.VSVersion = this->Version;
-  solution.VSExpress =
-    this->ExpressEdition ? VersionExpress::Yes : VersionExpress::No;
   solution.Platform = this->GetPlatformName();
   solution.Configs =
     root->GetMakefile()->GetGeneratorConfigs(cmMakefile::ExcludeEmptyConfig);
@@ -1175,26 +1176,6 @@ void cmGlobalVisualStudioGenerator::Generate()
       !this->LocalGenerators.empty()) {
     this->CallVisualStudioMacro(MacroReload,
                                 GetSLNFile(this->LocalGenerators[0].get()));
-  }
-
-  if (this->Version == VSVersion::VS14 &&
-      !this->CMakeInstance->GetIsInTryCompile()) {
-    std::string cmakeWarnVS14;
-    if (cmValue cached = this->CMakeInstance->GetState()->GetCacheEntryValue(
-          "CMAKE_WARN_VS14")) {
-      this->CMakeInstance->MarkCliAsUsed("CMAKE_WARN_VS14");
-      cmakeWarnVS14 = *cached;
-    } else {
-      cmSystemTools::GetEnv("CMAKE_WARN_VS14", cmakeWarnVS14);
-    }
-    if (cmakeWarnVS14.empty() || !cmIsOff(cmakeWarnVS14)) {
-      this->CMakeInstance->IssueMessage(
-        MessageType::WARNING,
-        "The \"Visual Studio 14 2015\" generator is deprecated "
-        "and will be removed in a future version of CMake."
-        "\n"
-        "Add CMAKE_WARN_VS14=OFF to the cache to disable this warning.");
-    }
   }
 }
 

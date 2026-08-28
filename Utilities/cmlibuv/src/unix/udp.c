@@ -183,7 +183,11 @@ void uv__udp_io(uv_loop_t* loop, uv__io_t* w, unsigned int revents) {
 
   /* Just Linux support for now. */
 #if defined(__linux__)
-  if (revents & POLLERR)
+  /* Guard against the case where the POLLIN callback above (e.g. via
+   * uv_udp_recv_stop + uv_close) already cleared recv_cb in the same
+   * revents iteration.  uv__udp_recvmsg asserts recv_cb != NULL, so
+   * calling it with a NULL recv_cb would be wrong regardless of POLLERR. */
+  if ((revents & POLLERR) && uv__is_active(handle))
     uv__udp_recvmsg(handle, MSG_ERRQUEUE);
 #endif
 
@@ -194,7 +198,8 @@ void uv__udp_io(uv_loop_t* loop, uv__io_t* w, unsigned int revents) {
 }
 
 static int uv__udp_recvmmsg(uv_udp_t* handle, uv_buf_t* buf, int flag) {
-#if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__FreeBSD__) || \
+   (defined(__APPLE__) && (MAC_OS_X_VERSION_MIN_REQUIRED >= 1070))
   struct sockaddr_in6 peers[20];
   struct iovec iov[ARRAY_SIZE(peers)];
   struct mmsghdr msgs[ARRAY_SIZE(peers)];
@@ -844,6 +849,7 @@ static int uv__udp_set_membership6(uv_udp_t* handle,
     !defined(__NetBSD__) &&                                         \
     !defined(__ANDROID__) &&                                        \
     !defined(__DragonFly__) &&                                      \
+    (!defined(__APPLE__) || (MAC_OS_X_VERSION_MAX_ALLOWED >= 1070)) && \
     !defined(__GNU__) &&                                            \
     !defined(QNX_IOPKT)
 static int uv__udp_set_source_membership4(uv_udp_t* handle,
@@ -968,7 +974,8 @@ int uv__udp_init_ex(uv_loop_t* loop,
 
 
 int uv_udp_using_recvmmsg(const uv_udp_t* handle) {
-#if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__FreeBSD__) || \
+   (defined(__APPLE__) && (MAC_OS_X_VERSION_MIN_REQUIRED >= 1070))
   if (handle->flags & UV_HANDLE_UDP_RECVMMSG)
     return 1;
 #endif
@@ -1056,7 +1063,8 @@ int uv_udp_set_source_membership(uv_udp_t* handle,
     !defined(__NetBSD__) &&                                         \
     !defined(__ANDROID__) &&                                        \
     !defined(__DragonFly__) &&                                      \
-    !defined(__GNU__) &&                                          \
+    (!defined(__APPLE__) || (MAC_OS_X_VERSION_MAX_ALLOWED >= 1070)) && \
+    !defined(__GNU__) &&                                            \
     !defined(QNX_IOPKT)
   int err;
   union uv__sockaddr mcast_addr;
@@ -1410,7 +1418,8 @@ static int uv__udp_sendmsgv(int fd,
   r = 0;
   nsent = 0;
 
-#if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__) || \
+#if defined(__linux__) || defined(__FreeBSD__) || \
+  (defined(__APPLE__) && (MAC_OS_X_VERSION_MIN_REQUIRED >= 1070)) || \
   (defined(__sun__) && defined(MSG_WAITFORONE)) || defined(__QNX__)
   if (count > 1) {
     for (i = 0; i < count; /*empty*/) {

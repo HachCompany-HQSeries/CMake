@@ -12,7 +12,6 @@
 
 #include <cm/memory>
 
-#include <cm3p/json/reader.h>
 #include <cm3p/json/value.h>
 #include <cm3p/uv.h>
 
@@ -22,6 +21,7 @@
 #include "cmCryptoHash.h"
 #include "cmGeneratedFileStream.h"
 #include "cmInstrumentation.h"
+#include "cmInstrumentationInterrupt.h"
 #include "cmJSONState.h"
 #include "cmProcessOutput.h"
 #include "cmStringAlgorithms.h"
@@ -64,17 +64,20 @@ cmInstallScriptHandler::cmInstallScriptHandler(
     this->Directories.push_back(cmSystemTools::GetFilenamePath(script));
   };
 
-  int compare = 1;
+  // Trust the parallel install index unless the cache marker is newer.  Both
+  // files are written back-to-back while generating this build tree, so any
+  // ordering between them lives in a sub-second window that some filesystems
+  // (e.g. NFS on AIX) do not resolve by write time.  Compare at whole-second
+  // resolution: a genuinely stale index left by an older CMake reconfigure is
+  // always at least a configure run (seconds) older, while the sub-second
+  // jitter of a single generate step is ignored.
+  bool indexIsFresh = false;
   if (cmSystemTools::FileExists(file)) {
-    cmSystemTools::FileTimeCompare(
-      cmStrCat(this->BinaryDir, "/CMakeFiles/cmake.check_cache"), file,
-      &compare);
+    long int const cacheTime = cmSystemTools::ModifiedTime(
+      cmStrCat(this->BinaryDir, "/CMakeFiles/cmake.check_cache"));
+    indexIsFresh = cacheTime <= cmSystemTools::ModifiedTime(file);
   }
-  if (compare < 1) {
-    Json::CharReaderBuilder rbuilder;
-    auto jsonReader =
-      std::unique_ptr<Json::CharReader>(rbuilder.newCharReader());
-    std::vector<char> content;
+  if (indexIsFresh) {
     Json::Value value;
     cmJSONState state(file, &value);
     this->Parallel = value["Parallel"].asBool();
@@ -152,6 +155,14 @@ int cmInstallScriptHandler::Install(unsigned int j,
   std::function<void()> queueScripts;
   queueScripts = [&runners, &working, &installed, &i, &loop, j,
                   &queueScripts]() {
+    if (cmInstrumentationInterrupt::PendingInterruptSignal() != 0) {
+      // Interrupted (e.g. Ctrl+C): launch no further scripts.  In-flight
+      // children share the process group, receive the signal, and exit on
+      // their own, draining the event loop; queueScripts is the single
+      // re-entry point for launching, so guarding it here stops all remaining
+      // work without killing anything.
+      return;
+    }
     for (auto queue = std::min(j - working, runners.size() - i); queue > 0;
          --queue) {
       ++working;
@@ -173,10 +184,18 @@ int cmInstallScriptHandler::Install(unsigned int j,
   queueScripts();
   uv_run(loop, UV_RUN_DEFAULT);
 
+  // Aggregate child results.  When an interrupt stopped queueScripts, the
+  // runners beyond the dispatched prefix [0, i) were never started (they have
+  // a null process handle); those are "not run", not "failed", so exclude
+  // them.  With no interrupt every runner was dispatched and this inspects
+  // them all, matching the non-interrupt behavior exactly.
+  std::size_t const inspect =
+    cmInstrumentationInterrupt::PendingInterruptSignal() != 0 ? i
+                                                              : runners.size();
   int result = 0;
-  for (auto& runner : runners) {
-    if (runner.Failed()) {
-      runner.printFailure();
+  for (std::size_t k = 0; k < inspect; ++k) {
+    if (runners[k].Failed()) {
+      runners[k].printFailure();
       result = 1;
     }
   }

@@ -35,6 +35,7 @@
 #include "cmCTestBinPacker.h"
 #include "cmCTestRunTest.h"
 #include "cmCTestTestHandler.h"
+#include "cmInstrumentationInterrupt.h"
 #include "cmJSONState.h"
 #include "cmListFileCache.h"
 #include "cmRange.h"
@@ -246,13 +247,21 @@ void cmCTestMultiProcessHandler::RunTests()
   uv_run(this->Loop, UV_RUN_DEFAULT);
   this->FinalizeLoop();
 
-  if (!this->StopTimePassed && !this->CheckStopOnFailure()) {
+  // A user interrupt (e.g. Ctrl+C) deliberately stops scheduling with tests
+  // still pending, so skip the completion asserts in that case.  Canceled
+  // launches release their resources, so AllResourcesAvailable() still holds.
+  if (!this->StopTimePassed && !this->CheckStopOnFailure() &&
+      cmInstrumentationInterrupt::PendingInterruptSignal() == 0) {
     assert(this->Complete());
     assert(this->PendingTests.empty());
   }
   assert(this->AllResourcesAvailable());
 
-  this->MarkFinished();
+  // On interrupt, leave the checkpoint file intact so a later `ctest -F` can
+  // resume from where this run left off; MarkFinished() would delete it.
+  if (cmInstrumentationInterrupt::PendingInterruptSignal() == 0) {
+    this->MarkFinished();
+  }
   this->UpdateCostData();
 }
 
@@ -583,6 +592,17 @@ void cmCTestMultiProcessHandler::JobServerReceivedToken()
   assert(!this->JobServerQueuedTests.empty());
   int test = this->JobServerQueuedTests.front();
   this->JobServerQueuedTests.pop_front();
+  if (cmInstrumentationInterrupt::PendingInterruptSignal() != 0) {
+    // Interrupted (e.g. Ctrl+C): do not launch this queued test.  Its
+    // resources were locked when it was queued in StartNextTests, and this
+    // callback runs holding a job server token, so release both to keep the
+    // scheduler's bookkeeping balanced (see the AllResourcesAvailable() and
+    // token invariants checked after the loop).
+    this->DeallocateResources(test);
+    this->UnlockResources(test);
+    this->JobServerClient->ReleaseToken();
+    return;
+  }
   this->StartTestProcess(test);
 }
 
@@ -594,7 +614,11 @@ void cmCTestMultiProcessHandler::StartNextTests()
   this->StartNextTestsOnTimer_.stop();
 
   if (this->PendingTests.empty() || this->CheckStopTimePassed() ||
-      (this->CheckStopOnFailure() && !this->Failed->empty())) {
+      (this->CheckStopOnFailure() && !this->Failed->empty()) ||
+      cmInstrumentationInterrupt::PendingInterruptSignal() != 0) {
+    // A user interrupt (e.g. Ctrl+C) stops scheduling: launch no further
+    // tests. Tests already running receive the interrupt too and unwind on
+    // their own.
     return;
   }
 
@@ -650,6 +674,7 @@ void cmCTestMultiProcessHandler::StartNextTests()
   // Start tests in the preferred order, each subject to readiness checks.
   auto ti = this->OrderedTests.begin();
   while (numToStart > 0 && !this->SerialTestRunning &&
+         cmInstrumentationInterrupt::PendingInterruptSignal() == 0 &&
          ti != this->OrderedTests.end()) {
     // Increment the test iterator now because the current list
     // entry may be deleted below.
@@ -791,6 +816,7 @@ void cmCTestMultiProcessHandler::FinishTestProcess(
   }
   if (started) {
     if (!this->StopTimePassed &&
+        cmInstrumentationInterrupt::PendingInterruptSignal() == 0 &&
         cmCTestRunTest::StartAgain(std::move(runner), this->Completed)) {
       this->Completed--; // remove the completed test because run again
       return;
@@ -807,7 +833,12 @@ void cmCTestMultiProcessHandler::FinishTestProcess(
     t.second.Depends.erase(test);
   }
 
-  this->WriteCheckpoint(test);
+  // A test killed by the interrupt (e.g. Ctrl+C) never truly finished, so do
+  // not record it in the checkpoint; otherwise `ctest -F` would skip it when
+  // resuming this interrupted run.
+  if (cmInstrumentationInterrupt::PendingInterruptSignal() == 0) {
+    this->WriteCheckpoint(test);
+  }
   this->DeallocateResources(test);
   this->UnlockResources(test);
 
@@ -1139,134 +1170,197 @@ static Json::Value DumpCTestProperty(std::string const& name,
   return property;
 }
 
+static Json::Value DumpCTestPropertyRaw(std::string const& name,
+                                        std::string const& value)
+{
+  Json::Value property = Json::objectValue;
+  property["name"] = name;
+  property["value"] = value;
+  return property;
+}
+
 static Json::Value DumpCTestProperties(
-  cmCTestTestHandler::cmCTestTestProperties& testProperties)
+  cmCTestTestHandler::cmCTestTestProperties& testProperties, bool raw)
 {
   Json::Value properties = Json::arrayValue;
+  std::unordered_map<std::string, std::string>& rawProperties =
+    testProperties.RawProperties;
   if (!testProperties.AttachOnFail.empty()) {
-    properties.append(DumpCTestProperty(
-      "ATTACHED_FILES_ON_FAIL", DumpToJsonArray(testProperties.AttachOnFail)));
+    properties.append(
+      DumpCTestProperty("ATTACHED_FILES_ON_FAIL",
+                        raw ? rawProperties["ATTACHED_FILES_ON_FAIL"]
+                            : DumpToJsonArray(testProperties.AttachOnFail)));
   }
   if (!testProperties.AttachedFiles.empty()) {
-    properties.append(DumpCTestProperty(
-      "ATTACHED_FILES", DumpToJsonArray(testProperties.AttachedFiles)));
+    properties.append(
+      DumpCTestProperty("ATTACHED_FILES",
+                        raw ? rawProperties["ATTACHED_FILES"]
+                            : DumpToJsonArray(testProperties.AttachedFiles)));
   }
   if (testProperties.Cost != 0.0f) {
-    properties.append(
-      DumpCTestProperty("COST", static_cast<double>(testProperties.Cost)));
+    properties.append(DumpCTestProperty(
+      "COST",
+      raw ? rawProperties["COST"]
+          : Json::Value(static_cast<double>(testProperties.Cost))));
   }
   if (!testProperties.Depends.empty()) {
     properties.append(
-      DumpCTestProperty("DEPENDS", DumpToJsonArray(testProperties.Depends)));
+      DumpCTestProperty("DEPENDS",
+                        raw ? rawProperties["DEPENDS"]
+                            : DumpToJsonArray(testProperties.Depends)));
   }
   if (testProperties.Disabled) {
-    properties.append(DumpCTestProperty("DISABLED", testProperties.Disabled));
+    properties.append(DumpCTestProperty(
+      "DISABLED",
+      raw ? rawProperties["DISABLED"] : Json::Value(testProperties.Disabled)));
   }
   if (!testProperties.Environment.empty()) {
-    properties.append(DumpCTestProperty(
-      "ENVIRONMENT", DumpToJsonArray(testProperties.Environment)));
+    properties.append(
+      DumpCTestProperty("ENVIRONMENT",
+                        raw ? rawProperties["ENVIRONMENT"]
+                            : DumpToJsonArray(testProperties.Environment)));
   }
   if (!testProperties.EnvironmentModification.empty()) {
     properties.append(DumpCTestProperty(
       "ENVIRONMENT_MODIFICATION",
-      DumpToJsonArray(testProperties.EnvironmentModification)));
+      raw ? rawProperties["ENVIRONMENT_MODIFICATION"]
+          : DumpToJsonArray(testProperties.EnvironmentModification)));
   }
   if (!testProperties.ErrorRegularExpressions.empty()) {
     properties.append(DumpCTestProperty(
       "FAIL_REGULAR_EXPRESSION",
-      DumpRegExToJsonArray(testProperties.ErrorRegularExpressions)));
+      raw ? rawProperties["FAIL_REGULAR_EXPRESSION"]
+          : DumpRegExToJsonArray(testProperties.ErrorRegularExpressions)));
   }
   if (!testProperties.SkipRegularExpressions.empty()) {
     properties.append(DumpCTestProperty(
       "SKIP_REGULAR_EXPRESSION",
-      DumpRegExToJsonArray(testProperties.SkipRegularExpressions)));
+      raw ? rawProperties["SKIP_REGULAR_EXPRESSION"]
+          : DumpRegExToJsonArray(testProperties.SkipRegularExpressions)));
   }
   if (!testProperties.FixturesCleanup.empty()) {
     properties.append(DumpCTestProperty(
-      "FIXTURES_CLEANUP", DumpToJsonArray(testProperties.FixturesCleanup)));
+      "FIXTURES_CLEANUP",
+      raw ? rawProperties["FIXTURES_CLEANUP"]
+          : DumpToJsonArray(testProperties.FixturesCleanup)));
   }
   if (!testProperties.FixturesRequired.empty()) {
     properties.append(DumpCTestProperty(
-      "FIXTURES_REQUIRED", DumpToJsonArray(testProperties.FixturesRequired)));
+      "FIXTURES_REQUIRED",
+      raw ? rawProperties["FIXTURES_REQUIRED"]
+          : DumpToJsonArray(testProperties.FixturesRequired)));
   }
   if (!testProperties.FixturesSetup.empty()) {
-    properties.append(DumpCTestProperty(
-      "FIXTURES_SETUP", DumpToJsonArray(testProperties.FixturesSetup)));
+    properties.append(
+      DumpCTestProperty("FIXTURES_SETUP",
+                        raw ? rawProperties["FIXTURES_SETUP"]
+                            : DumpToJsonArray(testProperties.FixturesSetup)));
   }
   if (!testProperties.GeneratedResourceSpecFile.empty()) {
     properties.append(
       DumpCTestProperty("GENERATED_RESOURCE_SPEC_FILE",
-                        testProperties.GeneratedResourceSpecFile));
+                        raw ? rawProperties["GENERATED_RESOURCE_SPEC_FILE"]
+                            : testProperties.GeneratedResourceSpecFile));
   }
   if (!testProperties.Labels.empty()) {
-    properties.append(
-      DumpCTestProperty("LABELS", DumpToJsonArray(testProperties.Labels)));
+    properties.append(DumpCTestProperty(
+      "LABELS",
+      raw ? rawProperties["LABELS"] : DumpToJsonArray(testProperties.Labels)));
   }
   if (!testProperties.Measurements.empty()) {
     properties.append(DumpCTestProperty(
-      "MEASUREMENT", DumpMeasurementToJsonArray(testProperties.Measurements)));
+      "MEASUREMENT",
+      raw ? rawProperties["MEASUREMENT"]
+          : DumpMeasurementToJsonArray(testProperties.Measurements)));
   }
   if (!testProperties.RequiredRegularExpressions.empty()) {
     properties.append(DumpCTestProperty(
       "PASS_REGULAR_EXPRESSION",
-      DumpRegExToJsonArray(testProperties.RequiredRegularExpressions)));
+      raw ? rawProperties["PASS_REGULAR_EXPRESSION"]
+          : DumpRegExToJsonArray(testProperties.RequiredRegularExpressions)));
   }
   if (!testProperties.ResourceGroups.empty()) {
     properties.append(DumpCTestProperty(
       "RESOURCE_GROUPS",
-      DumpResourceGroupsToJsonArray(testProperties.ResourceGroups)));
+      raw ? rawProperties["RESOURCE_GROUPS"]
+          : DumpResourceGroupsToJsonArray(testProperties.ResourceGroups)));
   }
   if (testProperties.WantAffinity) {
     properties.append(
-      DumpCTestProperty("PROCESSOR_AFFINITY", testProperties.WantAffinity));
+      DumpCTestProperty("PROCESSOR_AFFINITY",
+                        raw ? rawProperties["PROCESSOR_AFFINITY"]
+                            : Json::Value(testProperties.WantAffinity)));
   }
   if (testProperties.Processors != 1) {
     properties.append(
-      DumpCTestProperty("PROCESSORS", testProperties.Processors));
+      DumpCTestProperty("PROCESSORS",
+                        raw ? rawProperties["PROCESSORS"]
+                            : Json::Value(testProperties.Processors)));
   }
   if (!testProperties.RequiredFiles.empty()) {
-    properties.append(DumpCTestProperty(
-      "REQUIRED_FILES", DumpToJsonArray(testProperties.RequiredFiles)));
+    properties.append(
+      DumpCTestProperty("REQUIRED_FILES",
+                        raw ? rawProperties["REQUIRED_FILES"]
+                            : DumpToJsonArray(testProperties.RequiredFiles)));
   }
   if (!testProperties.ProjectResources.empty()) {
     properties.append(DumpCTestProperty(
-      "RESOURCE_LOCK", DumpToJsonArray(testProperties.ProjectResources)));
+      "RESOURCE_LOCK",
+      raw ? rawProperties["RESOURCE_LOCK"]
+          : DumpToJsonArray(testProperties.ProjectResources)));
   }
   if (testProperties.RunSerial) {
     properties.append(
-      DumpCTestProperty("RUN_SERIAL", testProperties.RunSerial));
+      DumpCTestProperty("RUN_SERIAL",
+                        raw ? rawProperties["RUN_SERIAL"]
+                            : Json::Value(testProperties.RunSerial)));
   }
   if (testProperties.SkipReturnCode != -1) {
     properties.append(
-      DumpCTestProperty("SKIP_RETURN_CODE", testProperties.SkipReturnCode));
+      DumpCTestProperty("SKIP_RETURN_CODE",
+                        raw ? rawProperties["SKIP_RETURN_CODE"]
+                            : Json::Value(testProperties.SkipReturnCode)));
   }
   if (testProperties.Timeout) {
     properties.append(
-      DumpCTestProperty("TIMEOUT", testProperties.Timeout->count()));
+      DumpCTestProperty("TIMEOUT",
+                        raw ? rawProperties["TIMEOUT"]
+                            : Json::Value(testProperties.Timeout->count())));
   }
   if (testProperties.TimeoutSignal) {
-    properties.append(DumpCTestProperty("TIMEOUT_SIGNAL_NAME",
-                                        testProperties.TimeoutSignal->Name));
+    properties.append(
+      DumpCTestProperty("TIMEOUT_SIGNAL_NAME",
+                        raw ? rawProperties["TIMEOUT_SIGNAL_NAME"]
+                            : testProperties.TimeoutSignal->Name));
   }
   if (testProperties.TimeoutGracePeriod) {
-    properties.append(
-      DumpCTestProperty("TIMEOUT_SIGNAL_GRACE_PERIOD",
-                        testProperties.TimeoutGracePeriod->count()));
+    properties.append(DumpCTestProperty(
+      "TIMEOUT_SIGNAL_GRACE_PERIOD",
+      raw ? rawProperties["TIMEOUT_SIGNAL_GRACE_PERIOD"]
+          : Json::Value(testProperties.TimeoutGracePeriod->count())));
   }
   if (!testProperties.TimeoutRegularExpressions.empty()) {
-    properties.append(DumpCTestProperty(
-      "TIMEOUT_AFTER_MATCH", DumpTimeoutAfterMatch(testProperties)));
+    properties.append(
+      DumpCTestProperty("TIMEOUT_AFTER_MATCH",
+                        raw ? rawProperties["TIMEOUT_AFTER_MATCH"]
+                            : DumpTimeoutAfterMatch(testProperties)));
   }
   if (testProperties.WillFail) {
-    properties.append(DumpCTestProperty("WILL_FAIL", testProperties.WillFail));
+    properties.append(
+      DumpCTestProperty("WILL_FAIL",
+                        raw ? rawProperties["WILL_FAIL"]
+                            : Json::Value(testProperties.WillFail)));
   }
   if (!testProperties.Directory.empty()) {
-    properties.append(
-      DumpCTestProperty("WORKING_DIRECTORY", testProperties.Directory));
+    properties.append(DumpCTestProperty(
+      "WORKING_DIRECTORY",
+      raw ? rawProperties["WORKING_DIRECTORY"] : testProperties.Directory));
   }
   if (!testProperties.CustomProperties.empty()) {
     for (auto const& it : testProperties.CustomProperties) {
-      properties.append(DumpCTestProperty(it.first, it.second));
+      Json::Value property = raw ? DumpCTestPropertyRaw(it.first, it.second)
+                                 : DumpCTestProperty(it.first, it.second);
+      properties.append(std::move(property));
     }
   }
   return properties;
@@ -1378,7 +1472,8 @@ static Json::Value DumpCTestInfo(
     }
     testInfo["command"] = DumpToJsonArray(commandAndArgs);
   }
-  Json::Value properties = DumpCTestProperties(testProperties);
+  Json::Value properties = DumpCTestProperties(
+    testProperties, testRun.GetCTest()->GetOutputAsJsonRaw());
   if (!properties.empty()) {
     testInfo["properties"] = properties;
   }
@@ -1615,14 +1710,6 @@ bool cmCTestMultiProcessHandler::CheckGeneratedResourceSpec()
         cmCTestLog(this->CTest, ERROR_MESSAGE,
                    "Test that defines GENERATED_RESOURCE_SPEC_FILE must have "
                    "exactly one FIXTURES_SETUP"
-                     << std::endl);
-        return false;
-      }
-
-      if (!cmSystemTools::FileIsFullPath(
-            test.second->GeneratedResourceSpecFile)) {
-        cmCTestLog(this->CTest, ERROR_MESSAGE,
-                   "GENERATED_RESOURCE_SPEC_FILE must be an absolute path"
                      << std::endl);
         return false;
       }

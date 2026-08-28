@@ -28,6 +28,7 @@
 #include "cmGlobalGenerator.h"
 #include "cmInstallScriptHandler.h"
 #include "cmInstrumentation.h"
+#include "cmInstrumentationInterrupt.h"
 #include "cmInstrumentationQuery.h"
 #include "cmList.h"
 #include "cmMakefile.h"
@@ -532,8 +533,16 @@ int do_build(int ac, char const* const* av)
                      CommandArgument::setToValue(presetsArgs.PresetName) },
     CommandArgument{ "--presets-file", "No file specified for --presets-file",
                      CommandArgument::Values::One, presetFileLambda },
-    CommandArgument{ "--list-presets", CommandArgument::Values::Zero,
-                     CommandArgument::setToTrue(presetsArgs.ListPresets) },
+    CommandArgument{ "--list-presets", CommandArgument::Values::ZeroOrOne,
+                     [&presetsArgs](std::string const& value) -> bool {
+                       if (presetsArgs.SetListPresets(value)) {
+                         return true;
+                       }
+                       cmSystemTools::Error(
+                         "Invalid value specified for --list-presets.\n"
+                         "The only supported value is \"defined\".");
+                       return false;
+                     } },
     CommandArgument{ "-j", CommandArgument::Values::ZeroOrOne,
                      CommandArgument::RequiresSeparator::No, jLambda },
     CommandArgument{ "--parallel", CommandArgument::Values::ZeroOrOne,
@@ -643,8 +652,8 @@ int do_build(int ac, char const* const* av)
       "                 = Specify a build preset.\n"
       "  --presets-file <file>, --presets-file=<file>\n"
       "                 = Specify the path to a presets file.\n"
-      "  --list-presets[=<type>]\n"
-      "                 = List available build presets.\n"
+      "  --list-presets[=defined]\n"
+      "                 = List available or all defined build presets.\n"
       "  --parallel [<jobs>], -j [<jobs>]\n"
       "                 = Build in parallel using the given number of jobs. \n"
       "                   If <jobs> is omitted the native build tool's \n"
@@ -958,6 +967,12 @@ int do_install(int ac, char const* const* av)
       ret_ = handler.Install(jobs, instrumentation);
     } else {
       for (auto const& script : handler.GetScripts()) {
+        if (cmInstrumentationInterrupt::PendingInterruptSignal() != 0) {
+          // Interrupted (e.g. Ctrl+C): launch no further scripts.  The script
+          // currently running executes in-process and finishes on its own; we
+          // simply stop starting new ones.
+          break;
+        }
         std::vector<std::string> cmd = script.command;
         cmake cm(cmState::Role::Script);
         cmSystemTools::SetMessageCallback(
@@ -976,15 +991,41 @@ int do_install(int ac, char const* const* av)
         }
       }
     }
+    if (cmInstrumentationInterrupt::PendingInterruptSignal() != 0) {
+      // Any caught interrupt makes the install unsuccessful even if the work
+      // that did run happened to succeed.  Windows has no signal to re-raise,
+      // so this is what forces a non-zero exit status there; on POSIX it also
+      // keeps the snippet `result` consistent with the re-raised signal.
+      ret_ = 1;
+    }
     return int(ret_ > 0);
   };
 
   std::vector<std::string> cmd;
   cm::append(cmd, av, av + ac);
-  ret = instrumentation.InstrumentCommand(
-    "cmakeInstall", cmd, [doInstall]() -> cmInstrumentation::CommandResult {
-      return { doInstall(), cm::nullopt, cm::nullopt };
-    });
+  // Run the install under an interrupt handler so that a user interrupt (e.g.
+  // Ctrl+C) still writes the overall `cmakeInstall` snippet before we exit.
+  cmInstrumentationInterrupt::InterruptOutcome installOutcome =
+    cmInstrumentationInterrupt::HandleInterrupt(
+      instrumentation.HasQuery(),
+      [&instrumentation, &cmd, &doInstall]() -> int {
+        return instrumentation.InstrumentCommand(
+          "cmakeInstall", cmd,
+          [&doInstall]() -> cmInstrumentation::CommandResult {
+            return { doInstall(), cm::nullopt, cm::nullopt, cm::nullopt };
+          });
+      });
+  ret = installOutcome.ExitCode;
+  if (installOutcome.Interrupted) {
+    // The install was interrupted and its snippet has been written.  Skip the
+    // post-install indexing hook (which would run callbacks and delete data).
+    // For a real OS interrupt, re-raise so the exit status reflects it; for a
+    // test-injected interrupt, exit cleanly.
+    if (installOutcome.ShouldRaise) {
+      cmInstrumentationInterrupt::RaiseInterrupt(installOutcome.Signal);
+    }
+    return ret;
+  }
   instrumentation.CollectTimingData(
     cmInstrumentationQuery::Hook::PostCMakeInstall);
   return ret;
@@ -1013,8 +1054,17 @@ int do_workflow(int ac, char const* const* av)
                          cmSystemTools::ToNormalizedPathOnDisk(value);
                        return true;
                      } },
-    CommandArgument{ "--list-presets", CommandArgument::Values::Zero,
-                     CommandArgument::setToTrue(presetsArgs.ListPresets) },
+    CommandArgument{ "--list-presets", CommandArgument::Values::ZeroOrOne,
+                     [&presetsArgs](std::string const& value) -> bool {
+                       if (presetsArgs.SetListPresets(value)) {
+                         return true;
+                       }
+                       std::cerr
+                         << "Invalid value specified for --list-presets.\n"
+                            "The only supported value in workflow mode is "
+                            "\"defined\".\n";
+                       return false;
+                     } },
     CommandArgument{ "--fresh", CommandArgument::Values::Zero,
                      CommandArgument::setToTrue(presetsArgs.Fresh) }
   };
@@ -1055,11 +1105,12 @@ int do_workflow(int ac, char const* const* av)
     std::cerr <<
       "Usage: cmake --workflow <options>\n"
       "Options:\n"
-      "  --preset <preset>     = Workflow preset to execute.\n"
-      "  --presets-file <file> = Path to a presets file.\n"
-      "  --list-presets        = List available workflow presets.\n"
-      "  --fresh               = Configure a fresh build tree, removing any "
-                                "existing cache file.\n"
+      "  --preset <preset>        = Workflow preset to execute.\n"
+      "  --presets-file <file>    = Path to a presets file.\n"
+      "  --list-presets[=defined] = List available or all defined workflow "
+                                    "presets.\n"
+      "  --fresh                  = Configure a fresh build tree, removing "
+                                   "any existing cache file.\n"
       ;
     /* clang-format on */
     return 1;

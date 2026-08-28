@@ -55,6 +55,7 @@
 #include "cmSystemTools.h"
 #include "cmTarget.h"
 #include "cmTargetTypes.h"
+#include "cmUnreachable.h"
 #include "cmValue.h"
 #include "cmake.h"
 
@@ -492,8 +493,8 @@ static const struct EqualNode : public cmGeneratorExpressionNode
     for (int i = 0; i < 2; ++i) {
       if (!ParameterToLong(parameters[i].c_str(), &numbers[i])) {
         reportError(eval, content->GetOriginalExpression(),
-                    "$<EQUAL> parameter " + parameters[i] +
-                      " is not a valid integer.");
+                    cmStrCat("$<EQUAL> parameter ", parameters[i],
+                             " is not a valid integer."));
         return {};
       }
     }
@@ -2998,8 +2999,8 @@ struct CompilerIdNode : public cmGeneratorExpressionNode
                                    std::string const& lang) const
   {
     std::string const& compilerId =
-      eval->Context.LG->GetMakefile()->GetSafeDefinition("CMAKE_" + lang +
-                                                         "_COMPILER_ID");
+      eval->Context.LG->GetMakefile()->GetSafeDefinition(
+        cmStrCat("CMAKE_", lang, "_COMPILER_ID"));
     if (parameters.empty()) {
       return compilerId;
     }
@@ -3063,8 +3064,8 @@ struct CompilerVersionNode : public cmGeneratorExpressionNode
                                    std::string const& lang) const
   {
     std::string const& compilerVersion =
-      eval->Context.LG->GetMakefile()->GetSafeDefinition("CMAKE_" + lang +
-                                                         "_COMPILER_VERSION");
+      eval->Context.LG->GetMakefile()->GetSafeDefinition(
+        cmStrCat("CMAKE_", lang, "_COMPILER_VERSION"));
     if (parameters.empty()) {
       return compilerVersion;
     }
@@ -3388,8 +3389,7 @@ static const struct ConfigurationTestNode : public cmGeneratorExpressionNode
               return false;
           }
 
-          // Should be unreachable
-          assert(false);
+          CM_UNREACHABLE;
           return false;
         }();
 
@@ -3627,8 +3627,8 @@ struct LinkerId
                               std::string const& lang)
   {
     std::string const& linkerId =
-      eval->Context.LG->GetMakefile()->GetSafeDefinition("CMAKE_" + lang +
-                                                         "_COMPILER_ID");
+      eval->Context.LG->GetMakefile()->GetSafeDefinition(
+        cmStrCat("CMAKE_", lang, "_COMPILER_ID"));
     if (parameters.empty()) {
       return linkerId;
     }
@@ -5140,7 +5140,7 @@ static cmPolicies::PolicyStatus statusForTarget(cmGeneratorTarget const* tgt,
 
 #undef RETURN_POLICY
 
-  assert(false && "Unreachable code. Not a valid policy");
+  CM_UNREACHABLE;
   return cmPolicies::WARN;
 }
 
@@ -5155,7 +5155,7 @@ static cmPolicies::PolicyID policyForString(char const* policy_id)
 
 #undef RETURN_POLICY_ID
 
-  assert(false && "Unreachable code. Not a valid policy");
+  CM_UNREACHABLE;
   return cmPolicies::CMPCOUNT;
 }
 

@@ -111,7 +111,9 @@ Languages
 Compilers
 ---------
 
-* C++ 20 named modules are now supported with ``clang-cl``.
+* C++ 20 named modules are now supported with ``clang-cl``, except with the
+  :ref:`Visual Studio Generators` (i.e., the ``ClangCl``
+  :variable:`toolset <CMAKE_GENERATOR_TOOLSET>`).
   See :manual:`cmake-cxxmodules(7)`.
 
 * The ``ibm-flang`` compiler is now supported with
@@ -320,7 +322,9 @@ Swift
   :prop_tgt:`Swift_SEPARATE_MODULE_EMISSION` target property, initialized by
   the :variable:`CMAKE_Swift_SEPARATE_MODULE_EMISSION` variable, to control
   whether importable Swift targets emit ``.swiftmodule`` from a dedicated
-  build edge.  Policy :policy:`CMP0215` enables this by default.
+  build edge.  Policy :policy:`CMP0215` enables this by default.  The
+  behavior requires policies :policy:`CMP0157` and :policy:`CMP0195` to be
+  set to ``NEW``.
 
 * The default :prop_tgt:`Swift_MODULE_NAME` now replaces hyphens with
   underscores, since hyphens are not valid in Swift module identifiers.
@@ -430,3 +434,28 @@ Other Changes
 * Targets which provide C++ modules may now be consumed by targets with
   different :prop_tgt:`compile features <COMPILE_FEATURES>` and
   :prop_tgt:`options <COMPILE_OPTIONS>` than the provider.
+
+Updates
+=======
+
+Changes made since CMake 4.4.0 include the following.
+
+4.4.1
+-----
+
+* The :module:`FindPython`, :module:`FindPython3` modules learned
+  to manage, on ``Windows`` systems, the ``pydebug`` ABI flag.
+
+4.4.2
+-----
+
+* This version made no changes to documented features or interfaces.
+  Some implementation updates were made to support ecosystem changes
+  and/or fix regressions.
+
+4.4.3
+-----
+
+* Swift policy :policy:`CMP0215`'s ``NEW`` behavior has been updated
+  to require policies :policy:`CMP0157` and :policy:`CMP0195` to also
+  be set to ``NEW``.

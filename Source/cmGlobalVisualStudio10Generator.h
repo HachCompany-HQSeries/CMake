@@ -71,6 +71,9 @@ public:
   char const* GetPlatformToolset() const;
   std::string const& GetPlatformToolsetString() const;
 
+  /** Return true when using a Visual Studio clang-cl toolset.  */
+  bool IsClangClToolset() const override;
+
   /** The toolset version props file, if any.  */
   std::string const& GetPlatformToolsetVersionProps() const;
 
@@ -273,7 +276,6 @@ private:
   std::string MSBuildCommand;
   std::set<std::string> AndroidExecutableWarnings;
   virtual std::string FindMSBuildCommand();
-  std::string FindDevEnvCommand() override;
   std::string GetVSMakeProgram() override { return this->GetMSBuildCommand(); }
 
   std::string GeneratorToolsetVersion;

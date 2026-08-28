@@ -3,7 +3,6 @@
 #include "cmGlobalNinjaGenerator.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstdio>
 #include <functional>
 #include <iterator>
@@ -18,11 +17,9 @@
 #include <cmext/memory>
 #include <cmext/string_view>
 
-#include <cm3p/json/reader.h>
 #include <cm3p/json/value.h>
 #include <cm3p/json/writer.h>
 
-#include "cmsys/FStream.hxx"
 #include "cmsys/String.h"
 
 #include "cmCustomCommand.h"
@@ -34,6 +31,7 @@
 #include "cmGeneratorTarget.h"
 #include "cmGlobalGenerator.h"
 #include "cmInstrumentation.h"
+#include "cmJSONState.h"
 #include "cmLinkLineComputer.h"
 #include "cmList.h"
 #include "cmListFileCache.h"
@@ -58,6 +56,7 @@
 #include "cmTargetTypes.h"
 #include "cmTest.h"
 #include "cmTestGenerator.h"
+#include "cmUnreachable.h"
 #include "cmValue.h"
 #include "cmVersion.h"
 #include "cmake.h"
@@ -1313,7 +1312,7 @@ void cmGlobalNinjaGenerator::WriteTestPrepTargets()
       auto const& testGenerators = lg->GetMakefile()->GetTestGenerators();
       for (auto const& tester : testGenerators) {
         cmTestGenerator::BuildDependencies testDeps;
-        if (!tester->GetBuildDependencies(lg, testDeps)) {
+        if (!tester->GetBuildDependencies(lg, config, testDeps)) {
           continue;
         }
         std::string const depName = this->ConvertToNinjaPath(
@@ -2584,12 +2583,11 @@ cm::optional<cmSourceInfo> cmcmd_cmake_ninja_depends_fortran(
     Json::Value tdio;
     Json::Value const& tdi = tdio;
     {
-      cmsys::ifstream tdif(arg_tdi.c_str(), std::ios::in | std::ios::binary);
-      Json::Reader reader;
-      if (!reader.parse(tdif, tdio, false)) {
+      cmJSONState parseState(arg_tdi, &tdio, cmJSONState::StrictMode::Relaxed);
+      if (!parseState.errors.empty()) {
         cmSystemTools::Error(
           cmStrCat("-E cmake_ninja_depends failed to parse ", arg_tdi,
-                   reader.getFormattedErrorMessages()));
+                   parseState.GetErrorMessage()));
         return info;
       }
     }
@@ -2680,7 +2678,8 @@ bool cmGlobalNinjaGenerator::WriteDyndepFile(
   std::vector<std::string> const& linked_target_dirs,
   std::vector<std::string> const& forward_modules_from_target_dirs,
   std::string const& native_target_dir, std::string const& arg_lang,
-  std::string const& arg_modmapfmt, cmCxxModuleExportInfo const& export_info)
+  std::string const& arg_modmapfmt, cmCxxModuleExportInfo const& export_info,
+  Json::Value const* cxx_interface_objects)
 {
   // Setup path conversions.
   {
@@ -2715,22 +2714,24 @@ bool cmGlobalNinjaGenerator::WriteDyndepFile(
   };
   std::map<std::string, AvailableModuleInfo> mod_files;
 
+  struct ImportErrorInfo
+  {
+    std::string Message;
+    std::set<std::string> Modules;
+  };
+  std::vector<ImportErrorInfo> importErrors;
+  Json::Value transitiveInterfaceObjects(Json::objectValue);
+
   // Populate the module map with those provided by linked targets first.
   for (std::string const& linked_target_dir : linked_target_dirs) {
     std::string const ltmn =
       cmStrCat(linked_target_dir, '/', arg_lang, "Modules.json");
     Json::Value ltm;
-    cmsys::ifstream ltmf(ltmn.c_str(), std::ios::in | std::ios::binary);
-    if (!ltmf) {
-      cmSystemTools::Error(cmStrCat("-E cmake_ninja_dyndep failed to open ",
-                                    ltmn, " for module information"));
-      return false;
-    }
-    Json::Reader reader;
-    if (!reader.parse(ltmf, ltm, false)) {
+    cmJSONState parseState(ltmn, &ltm, cmJSONState::StrictMode::Relaxed);
+    if (!parseState.errors.empty()) {
       cmSystemTools::Error(cmStrCat("-E cmake_ninja_dyndep failed to parse ",
                                     linked_target_dir,
-                                    reader.getFormattedErrorMessages()));
+                                    parseState.GetErrorMessage()));
       return false;
     }
     if (ltm.isObject()) {
@@ -2781,6 +2782,42 @@ bool cmGlobalNinjaGenerator::WriteDyndepFile(
             for (auto j = i->begin(); j != i->end(); ++j) {
               usages.Usage[i.key().asString()].insert(j->asString());
             }
+          }
+        }
+      }
+      Json::Value const& import_error = ltm["import-error"];
+      if (import_error.isObject()) {
+        ImportErrorInfo info;
+        info.Message = import_error["message"].asString();
+        Json::Value const& errModules = import_error["modules"];
+        if (errModules.isArray()) {
+          for (auto const& m : errModules) {
+            info.Modules.insert(m.asString());
+          }
+        }
+        if (!info.Modules.empty()) {
+          importErrors.push_back(std::move(info));
+        }
+      }
+      Json::Value const& linked_interface_objects = ltm["interface-objects"];
+      if (linked_interface_objects.isObject()) {
+        for (auto i = linked_interface_objects.begin();
+             i != linked_interface_objects.end(); ++i) {
+          if (!transitiveInterfaceObjects.isMember(i.key().asString())) {
+            transitiveInterfaceObjects[i.key().asString()] = *i;
+          }
+        }
+      }
+    }
+  }
+
+  if (!importErrors.empty()) {
+    for (cmScanDepInfo const& object : objects) {
+      for (auto const& r : object.Requires) {
+        for (auto const& ie : importErrors) {
+          if (ie.Modules.count(r.LogicalName)) {
+            cmSystemTools::Error(ie.Message);
+            return false;
           }
         }
       }
@@ -2846,19 +2883,12 @@ bool cmGlobalNinjaGenerator::WriteDyndepFile(
     std::string const modules_info_path =
       cmStrCat(native_target_dir, '/', arg_lang, "Modules.json");
     Json::Value native_modules_info;
-    cmsys::ifstream modules_file(modules_info_path.c_str(),
-                                 std::ios::in | std::ios::binary);
-    if (!modules_file) {
-      cmSystemTools::Error(cmStrCat("-E cmake_ninja_dyndep failed to open ",
-                                    modules_info_path,
-                                    " for module information"));
-      return false;
-    }
-    Json::Reader reader;
-    if (!reader.parse(modules_file, native_modules_info, false)) {
+    cmJSONState parseState(modules_info_path, &native_modules_info,
+                           cmJSONState::StrictMode::Relaxed);
+    if (!parseState.errors.empty()) {
       cmSystemTools::Error(cmStrCat("-E cmake_ninja_dyndep failed to parse ",
                                     modules_info_path,
-                                    reader.getFormattedErrorMessages()));
+                                    parseState.GetErrorMessage()));
       return false;
     }
     if (native_modules_info.isObject()) {
@@ -2991,7 +3021,7 @@ bool cmGlobalNinjaGenerator::WriteDyndepFile(
       case LookupMethod::IncludeQuote:
         return "include-quote"_s;
     }
-    assert(false && "unsupported lookup method");
+    CM_UNREACHABLE;
     return ""_s;
   };
 
@@ -3014,17 +3044,11 @@ bool cmGlobalNinjaGenerator::WriteDyndepFile(
     std::string const fmftn =
       cmStrCat(forward_modules_from_target_dir, '/', arg_lang, "Modules.json");
     Json::Value fmft;
-    cmsys::ifstream fmftf(fmftn.c_str(), std::ios::in | std::ios::binary);
-    if (!fmftf) {
-      cmSystemTools::Error(cmStrCat("-E cmake_ninja_dyndep failed to open ",
-                                    fmftn, " for module information"));
-      return false;
-    }
-    Json::Reader reader;
-    if (!reader.parse(fmftf, fmft, false)) {
+    cmJSONState parseState(fmftn, &fmft, cmJSONState::StrictMode::Relaxed);
+    if (!parseState.errors.empty()) {
       cmSystemTools::Error(cmStrCat("-E cmake_ninja_dyndep failed to parse ",
                                     forward_modules_from_target_dir,
-                                    reader.getFormattedErrorMessages()));
+                                    parseState.GetErrorMessage()));
       return false;
     }
     if (!fmft.isObject()) {
@@ -3050,7 +3074,36 @@ bool cmGlobalNinjaGenerator::WriteDyndepFile(
     forward_info(tmi_target_modules, fmft["modules"]);
     forward_info(target_references, fmft["references"]);
     forward_info(target_usages, fmft["usages"]);
+    forward_info(transitiveInterfaceObjects, fmft["interface-objects"]);
   }
+
+  // Compute the set of modules actually imported by sources in this target.
+  std::set<std::string> usedModules;
+  for (cmScanDepInfo const& object : objects) {
+    for (auto const& r : object.Requires) {
+      usedModules.insert(r.LogicalName);
+    }
+  }
+
+  // Merge direct interface objects into the accumulated set.
+  // Direct objects are filtered: only keep those for modules that are
+  // actually imported by sources in this target. Transitive objects from
+  // linked targets were already filtered in their originating target.
+  if (cxx_interface_objects && cxx_interface_objects->isObject()) {
+    Json::Value const& directObjects =
+      (*cxx_interface_objects)["module-objects"];
+    if (directObjects.isObject()) {
+      for (auto i = directObjects.begin(); i != directObjects.end(); ++i) {
+        std::string moduleName = i.key().asString();
+        if (usedModules.count(moduleName) &&
+            !transitiveInterfaceObjects.isMember(moduleName)) {
+          transitiveInterfaceObjects[i.key().asString()] = *i;
+        }
+      }
+    }
+  }
+
+  target_module_info["interface-objects"] = transitiveInterfaceObjects;
 
   cmGeneratedFileStream tmf(target_mods_file);
   tmf.SetCopyIfDifferent(true);
@@ -3066,8 +3119,29 @@ bool cmGlobalNinjaGenerator::WriteDyndepFile(
     return {};
   };
 
-  return cmDyndepCollation::WriteDyndepMetadata(arg_lang, objects, export_info,
-                                                cb);
+  if (!cmDyndepCollation::WriteDyndepMetadata(arg_lang, objects, export_info,
+                                              cb)) {
+    return false;
+  }
+
+  // Write the interface objects response file if configured.
+  if (cxx_interface_objects && cxx_interface_objects->isObject()) {
+    Json::Value const& rspFile = (*cxx_interface_objects)["rsp-file"];
+    if (rspFile.isString()) {
+      cmGeneratedFileStream rsp(rspFile.asString());
+      rsp.SetCopyIfDifferent(true);
+      auto* lg = this->LocalGenerators.back().get();
+
+      for (auto const& objPath : transitiveInterfaceObjects) {
+        rsp << lg->ConvertToOutputFormat(
+                 lg->MaybeRelativeToTopBinDir(objPath.asString()),
+                 cmOutputConverter::RESPONSE)
+            << "\n";
+      }
+    }
+  }
+
+  return true;
 }
 
 int cmcmd_cmake_ninja_dyndep(std::vector<std::string>::const_iterator argBeg,
@@ -3115,12 +3189,10 @@ int cmcmd_cmake_ninja_dyndep(std::vector<std::string>::const_iterator argBeg,
   Json::Value tdio;
   Json::Value const& tdi = tdio;
   {
-    cmsys::ifstream tdif(arg_tdi.c_str(), std::ios::in | std::ios::binary);
-    Json::Reader reader;
-    if (!reader.parse(tdif, tdio, false)) {
+    cmJSONState parseState(arg_tdi, &tdio, cmJSONState::StrictMode::Relaxed);
+    if (!parseState.errors.empty()) {
       cmSystemTools::Error(cmStrCat("-E cmake_ninja_dyndep failed to parse ",
-                                    arg_tdi,
-                                    reader.getFormattedErrorMessages()));
+                                    arg_tdi, parseState.GetErrorMessage()));
       return 1;
     }
   }
@@ -3182,6 +3254,11 @@ int cmcmd_cmake_ninja_dyndep(std::vector<std::string>::const_iterator argBeg,
 
   auto export_info = cmDyndepCollation::ParseExportInfo(tdi);
 
+  Json::Value const* cxx_interface_objects = nullptr;
+  if (tdi.isMember("cxx-interface-objects")) {
+    cxx_interface_objects = &tdi["cxx-interface-objects"];
+  }
+
   cmake cm(cmState::Role::Internal);
   cm.SetHomeDirectory(dir_top_src);
   cm.SetHomeOutputDirectory(dir_top_bld);
@@ -3200,7 +3277,7 @@ int cmcmd_cmake_ninja_dyndep(std::vector<std::string>::const_iterator argBeg,
                             arg_dd, arg_ddis, module_dir, linked_target_dirs,
                             forward_modules_from_target_dirs,
                             native_target_dir, arg_lang, arg_modmapfmt,
-                            *export_info)
+                            *export_info, cxx_interface_objects)
     ? 0
     : 1;
 }

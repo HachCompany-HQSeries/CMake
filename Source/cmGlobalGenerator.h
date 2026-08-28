@@ -99,7 +99,6 @@ struct GeneratedMakeCommand
   std::string QuotedPrintable() const;
 
   std::vector<std::string> PrimaryCommand;
-  bool RequiresOutputForward = false;
 };
 }
 namespace Json {
@@ -812,6 +811,7 @@ protected:
   virtual bool CheckALLOW_DUPLICATE_CUSTOM_TARGETS() const;
 
   bool ApplyCXXStdTarget();
+  void WriteCxxImportErrorModules();
   bool DiscoverSyntheticTargets();
 
   bool AddHeaderSetVerification();
